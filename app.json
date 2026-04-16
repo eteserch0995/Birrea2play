@@ -1,0 +1,65 @@
+{
+  "expo": {
+    "name": "Birrea2Play",
+    "slug": "birrea2play",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#07101F"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.birrea2play.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Birrea2Play necesita acceso a tu cámara para tu foto de perfil.",
+        "NSPhotoLibraryUsageDescription": "Birrea2Play necesita acceso a tus fotos para tu foto de perfil."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#07101F"
+      },
+      "package": "com.birrea2play.app",
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "birrea2play"
+      }
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Birrea2Play necesita acceso a tus fotos para tu foto de perfil."
+        }
+      ],
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#C8102E",
+          "sounds": []
+        }
+      ]
+    ]
+  }
+}

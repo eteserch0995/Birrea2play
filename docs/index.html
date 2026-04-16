@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Birrea2Play — Torneos y Ligas Deportivas en Panamá</title>
+  <meta name="description" content="La plataforma de torneos y ligas deportivas amateur de Panamá. Inscríbete, compite y gana." />
+  <link rel="icon" type="image/png" href="icon.png" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #07101F;
+      --navy: #0D1B3E;
+      --blue: #1246A8;
+      --red: #C8102E;
+      --gold: #F5A623;
+      --white: #FFFFFF;
+      --gray: #7A8BA0;
+      --card: #0F1E38;
+    }
+    body {
+      background: var(--bg);
+      color: var(--white);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      line-height: 1.6;
+    }
+    /* NAV */
+    nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 40px;
+      background: var(--navy);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .logo { font-size: 22px; font-weight: 900; letter-spacing: 3px; color: var(--white); }
+    .logo span { color: var(--red); }
+    nav a { color: var(--gray); text-decoration: none; font-size: 14px; margin-left: 24px; transition: color 0.2s; }
+    nav a:hover { color: var(--white); }
+    /* HERO */
+    .hero {
+      text-align: center;
+      padding: 100px 20px 80px;
+      background: radial-gradient(ellipse at center top, #1246A820 0%, transparent 70%);
+    }
+    .hero-badge {
+      display: inline-block;
+      background: var(--red);
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 3px;
+      padding: 6px 18px;
+      border-radius: 999px;
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      font-size: clamp(40px, 8vw, 80px);
+      font-weight: 900;
+      letter-spacing: 6px;
+      line-height: 1.1;
+      margin-bottom: 20px;
+    }
+    .hero h1 span { color: var(--red); }
+    .hero p {
+      font-size: 18px;
+      color: var(--gray);
+      max-width: 520px;
+      margin: 0 auto 40px;
+    }
+    .btn-group { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 32px;
+      border-radius: 999px;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-decoration: none;
+      transition: transform 0.2s, opacity 0.2s;
+    }
+    .btn:hover { transform: translateY(-2px); opacity: 0.9; }
+    .btn-primary { background: var(--red); color: white; }
+    .btn-secondary { background: var(--card); color: white; border: 1px solid rgba(255,255,255,0.1); }
+    /* FEATURES */
+    .section { padding: 80px 20px; max-width: 1100px; margin: 0 auto; }
+    .section-label { font-size: 11px; letter-spacing: 4px; color: var(--gold); font-weight: 700; margin-bottom: 12px; }
+    .section h2 { font-size: 36px; font-weight: 900; letter-spacing: 2px; margin-bottom: 48px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+    .card {
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+      padding: 28px;
+      transition: transform 0.2s;
+    }
+    .card:hover { transform: translateY(-4px); }
+    .card-icon { font-size: 36px; margin-bottom: 16px; }
+    .card h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .card p { color: var(--gray); font-size: 14px; }
+    /* SCREENSHOTS */
+    .screenshots {
+      padding: 80px 20px;
+      text-align: center;
+      background: var(--navy);
+    }
+    .screenshots h2 { font-size: 36px; font-weight: 900; letter-spacing: 2px; margin-bottom: 16px; }
+    .screenshots p { color: var(--gray); margin-bottom: 48px; }
+    .phone-mockup {
+      display: inline-flex;
+      gap: 20px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .phone {
+      width: 160px;
+      height: 320px;
+      background: var(--card);
+      border-radius: 28px;
+      border: 2px solid rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+    }
+    /* DOWNLOAD */
+    .download {
+      text-align: center;
+      padding: 100px 20px;
+    }
+    .download h2 { font-size: 42px; font-weight: 900; letter-spacing: 3px; margin-bottom: 16px; }
+    .download p { color: var(--gray); margin-bottom: 40px; font-size: 16px; }
+    .store-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--card);
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 14px;
+      padding: 14px 28px;
+      text-decoration: none;
+      color: white;
+      margin: 8px;
+      transition: background 0.2s;
+    }
+    .store-btn:hover { background: var(--blue); }
+    .store-btn-icon { font-size: 28px; }
+    .store-btn-text { text-align: left; }
+    .store-btn-sub { font-size: 11px; color: var(--gray); display: block; }
+    .store-btn-name { font-size: 16px; font-weight: 700; }
+    /* FOOTER */
+    footer {
+      background: var(--navy);
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding: 40px 20px;
+      text-align: center;
+    }
+    .footer-links { display: flex; gap: 24px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
+    .footer-links a { color: var(--gray); text-decoration: none; font-size: 13px; }
+    .footer-links a:hover { color: white; }
+    footer p { color: var(--gray); font-size: 12px; }
+    @media (max-width: 600px) {
+      nav { padding: 14px 20px; }
+      nav a { display: none; }
+      .hero { padding: 60px 20px 50px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- NAV -->
+  <nav>
+    <div class="logo">BIRREA<span>2</span>PLAY</div>
+    <div>
+      <a href="#features">Funciones</a>
+      <a href="#download">Descargar</a>
+      <a href="privacidad.html">Privacidad</a>
+      <a href="terminos.html">Términos</a>
+    </div>
+  </nav>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero-badge">🇵🇦 HECHO EN PANAMÁ</div>
+    <h1>BIRREA<span>2</span>PLAY</h1>
+    <p>La plataforma de torneos y ligas deportivas amateur de Panamá. Inscríbete, compite y gana.</p>
+    <div class="btn-group">
+      <a href="#download" class="btn btn-primary">📱 Descargar App</a>
+      <a href="#features" class="btn btn-secondary">Ver funciones →</a>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <div id="features" class="section">
+    <div class="section-label">FUNCIONALIDADES</div>
+    <h2>Todo lo que necesitas para jugar</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="card-icon">⚽</div>
+        <h3>Eventos Deportivos</h3>
+        <p>Inscríbete a torneos, ligas y amistosos. Fútbol, baloncesto, vóleibol y más deportes.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🏆</div>
+        <h3>MVP del Evento</h3>
+        <p>Vota por el mejor jugador de cada evento y compite por el premio de $1.00 en tu wallet.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">💰</div>
+        <h3>Wallet Digital</h3>
+        <p>Recarga con Yappy y paga inscripciones directamente desde la app. Sin filas ni efectivo.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">📊</div>
+        <h3>Tabla de Posiciones</h3>
+        <p>Sigue los resultados de tu liga en tiempo real. Partidos, goles y standings actualizados.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🛒</div>
+        <h3>Tienda de Productos</h3>
+        <p>Compra jerseys, equipamiento y más. Pedidos gestionados directamente por el organizador.</p>
+      </div>
+      <div class="card">
+        <div class="card-icon">🔔</div>
+        <h3>Notificaciones</h3>
+        <p>Recibe alertas de nuevos eventos, resultados y declaraciones de MVP en tiempo real.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- DOWNLOAD -->
+  <section id="download" class="download">
+    <h2>DESCARGA LA APP</h2>
+    <p>Disponible para iOS y Android. Gratis.</p>
+    <div>
+      <a href="#" class="store-btn">
+        <span class="store-btn-icon">🍎</span>
+        <span class="store-btn-text">
+          <span class="store-btn-sub">Descargar en</span>
+          <span class="store-btn-name">App Store</span>
+        </span>
+      </a>
+      <a href="#" class="store-btn">
+        <span class="store-btn-icon">▶️</span>
+        <span class="store-btn-text">
+          <span class="store-btn-sub">Disponible en</span>
+          <span class="store-btn-name">Google Play</span>
+        </span>
+      </a>
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer>
+    <div class="footer-links">
+      <a href="privacidad.html">Política de Privacidad</a>
+      <a href="terminos.html">Términos y Condiciones</a>
+      <a href="mailto:info@birrea2play.com">Contacto</a>
+    </div>
+    <p>© 2026 Birrea2Play. República de Panamá. Todos los derechos reservados.</p>
+  </footer>
+
+</body>
+</html>
