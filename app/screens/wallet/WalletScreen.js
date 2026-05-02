@@ -115,24 +115,24 @@ export default function WalletScreen() {
   // ─── Recarga Yappy — link estático ───────────────────────────────────────────
   async function recargarYappyBoton() {
     if (!user?.id) { Alert.alert('Error', 'Debes iniciar sesión para recargar.'); return; }
-    const amt = parseFloat(monto);
-    if (!amt || amt < 1) { Alert.alert('Error', 'Monto mínimo $1.00'); return; }
-    if (amt > 500)       { Alert.alert('Error', 'Monto máximo por recarga: $500.00'); return; }
 
     if (yappyPaso === 'idle') {
-      // Paso 1: abrir el link de Yappy
+      // Paso 1: abrir el link de Yappy directamente, sin pedir monto
       await Linking.openURL(YAPPY_LINK);
       setYappyPaso('opened');
       return;
     }
 
-    // Paso 2: confirmar que el usuario ya pagó
+    // Paso 2: usuario regresó — confirmar monto que pagó en Yappy
+    const amt = parseFloat(monto);
+    if (!amt || amt < 1) { Alert.alert('Error', 'Ingresa el monto que recargaste en Yappy'); return; }
+    if (amt > 500)       { Alert.alert('Error', 'Monto máximo $500.00'); return; }
     if (procesando) return;
+
     setProcesando(true);
     try {
       await confirmarYappyLink(amt);
       setMonto('');
-      // Mostrar alerta ANTES de cerrar el modal para que no quede bloqueada
       Alert.alert(
         '✅ Recarga exitosa',
         `Se acreditaron $${amt.toFixed(2)} a tu wallet.`,
@@ -266,19 +266,22 @@ export default function WalletScreen() {
               {metodo === 'tarjeta'
                 ? 'Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.'
                 : yappyPaso === 'opened'
-                  ? '✅ Link de Yappy abierto. Completa el pago en Yappy y regresa aquí para confirmar.'
-                  : 'Ingresa el monto y toca "Abrir Yappy". Luego regresa aquí para confirmar tu recarga.'}
+                  ? '✅ Pago enviado. Ingresa el monto que recargaste en Yappy y toca Confirmar.'
+                  : 'Toca el botón para abrir Yappy y pagar el monto que desees.'}
             </Text>
 
-            <TextInput
-              style={styles.input}
-              placeholder="Monto a recargar (ej. 10.00)"
-              placeholderTextColor={COLORS.gray}
-              keyboardType="decimal-pad"
-              value={monto}
-              onChangeText={setMonto}
-              editable={!procesando}
-            />
+            {/* Monto: siempre visible para tarjeta; solo tras pagar en Yappy */}
+            {(metodo === 'tarjeta' || yappyPaso === 'opened') && (
+              <TextInput
+                style={styles.input}
+                placeholder={yappyPaso === 'opened' ? 'Monto que pagaste en Yappy' : 'Monto a recargar (ej. 10.00)'}
+                placeholderTextColor={COLORS.gray}
+                keyboardType="decimal-pad"
+                value={monto}
+                onChangeText={setMonto}
+                editable={!procesando}
+              />
+            )}
 
             <View style={styles.modalBtns}>
               <TouchableOpacity style={styles.modalCancel} onPress={cerrarModal} disabled={procesando}>
