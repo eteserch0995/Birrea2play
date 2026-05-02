@@ -211,16 +211,10 @@ export default function CartScreen({ navigation }) {
           }
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={styles.btnYappy}
-          onPress={() => checkout('yappy')}
-          disabled={paying}
-        >
-          {paying && method === 'yappy'
-            ? <ActivityIndicator color={COLORS.white} />
-            : <Text style={styles.btnText}>📱 Pagar con Yappy</Text>
-          }
-        </TouchableOpacity>
+        <View style={[styles.btnYappy, { opacity: 0.45, alignItems: 'center' }]}>
+          <Text style={styles.btnText}>📱 Yappy</Text>
+          <Text style={[styles.btnText, { fontSize: 10, opacity: 0.8, marginTop: 2 }]}>Próximamente</Text>
+        </View>
       </View>
     </SafeAreaView>
   );

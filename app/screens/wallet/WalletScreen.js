@@ -31,7 +31,7 @@ export default function WalletScreen() {
 
   // Modal de recarga
   const [recargarModal, setRecargarModal] = useState(false);
-  const [metodo,        setMetodo]        = useState('yappy'); // 'yappy' | 'tarjeta'
+  const [metodo,        setMetodo]        = useState('tarjeta'); // 'yappy' | 'tarjeta'
   const [monto,         setMonto]         = useState('');
   const [procesando,    setProcesando]    = useState(false);
 
@@ -445,35 +445,26 @@ export default function WalletScreen() {
                 {/* Selector de método */}
                 <View style={styles.metodoBtns}>
                   <TouchableOpacity
-                    style={[styles.metodoBtn, metodo === 'yappy' && styles.metodoBtnActivo]}
-                    onPress={() => setMetodo('yappy')}
-                    disabled={procesando}
+                    style={[styles.metodoBtn, styles.metodoBtnDisabled]}
+                    disabled={true}
                   >
-                    <Text style={[styles.metodoBtnText, metodo === 'yappy' && styles.metodoBtnTextActivo]}>
-                      📱 Yappy
-                    </Text>
+                    <Text style={styles.metodoBtnText}>📱 Yappy</Text>
+                    <Text style={styles.proximamenteBadge}>Próximamente</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.metodoBtn, metodo === 'tarjeta' && styles.metodoBtnActivo]}
+                    style={[styles.metodoBtn, styles.metodoBtnActivo]}
                     onPress={() => setMetodo('tarjeta')}
                     disabled={procesando}
                   >
-                    <Text style={[styles.metodoBtnText, metodo === 'tarjeta' && styles.metodoBtnTextActivo]}>
+                    <Text style={[styles.metodoBtnText, styles.metodoBtnTextActivo]}>
                       💳 Tarjeta
                     </Text>
                   </TouchableOpacity>
                 </View>
 
-                {metodo === 'yappy' && (
-                  <Text style={styles.metodoInfo}>
-                    Toca "Pagar con Yappy", se abrirá la app Yappy con el monto listo. Confírma el pago allí y el wallet se recarga automáticamente.
-                  </Text>
-                )}
-                {metodo === 'tarjeta' && (
-                  <Text style={styles.metodoInfo}>
-                    Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.
-                  </Text>
-                )}
+                <Text style={styles.metodoInfo}>
+                  Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.
+                </Text>
 
                 <TextInput
                   style={styles.input}
@@ -599,9 +590,14 @@ const styles = StyleSheet.create({
     flex: 1, padding: SPACING.md, borderRadius: RADIUS.md, alignItems: 'center',
     borderWidth: 1, borderColor: COLORS.navy, backgroundColor: COLORS.card,
   },
-  metodoBtnActivo: { borderColor: COLORS.blue, backgroundColor: COLORS.blue + '22' },
+  metodoBtnActivo:   { borderColor: COLORS.blue, backgroundColor: COLORS.blue + '22' },
+  metodoBtnDisabled: { opacity: 0.45 },
   metodoBtnText:       { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray },
   metodoBtnTextActivo: { fontFamily: FONTS.bodyMedium, color: COLORS.white },
+  proximamenteBadge: {
+    fontFamily: FONTS.body, fontSize: 9, color: COLORS.gray,
+    letterSpacing: 1, marginTop: 2,
+  },
 
   metodoInfo: {
     fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, textAlign: 'center',
