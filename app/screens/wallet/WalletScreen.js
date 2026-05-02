@@ -130,12 +130,14 @@ export default function WalletScreen() {
     if (procesando) return;
     setProcesando(true);
     try {
-      const amt = parseFloat(monto);
       await confirmarYappyLink(amt);
-      cerrarModal();
       setMonto('');
-      setTimeout(() => { if (fetchDataRef.current) fetchDataRef.current(); }, 1000);
-      Alert.alert('✅ Recarga exitosa', `Se acreditaron $${amt.toFixed(2)} a tu wallet.`);
+      // Mostrar alerta ANTES de cerrar el modal para que no quede bloqueada
+      Alert.alert(
+        '✅ Recarga exitosa',
+        `Se acreditaron $${amt.toFixed(2)} a tu wallet.`,
+        [{ text: 'OK', onPress: () => { cerrarModal(); fetchData(); } }],
+      );
     } catch (e) {
       Alert.alert('Error', e.message);
     } finally {
