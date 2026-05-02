@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
-import { getYappyAlias, buildYappyDeepLink, pollForYappyPayment, YAPPY_FALLBACK_URL } from '../../../lib/yappy';
+import { getYappyAlias, buildYappyDeepLink, pollForYappyPayment, buscarPagoYappy, confirmarPagoServidor, YAPPY_FALLBACK_URL } from '../../../lib/yappy';
 import { iniciarPagoTarjeta } from '../../../lib/paguelofacil';
 import PlanesModal from '../../../components/PlanesModal';
 
@@ -42,7 +42,11 @@ export default function WalletScreen() {
   const [yappyAmt,    setYappyAmt]    = useState(0);
   const [yappyStatus, setYappyStatus] = useState('');
   const [secondsLeft, setSecondsLeft] = useState(300);
-  const yappyCancelRef = useRef(null);
+  const yappyCancelRef    = useRef(null);
+  // FIX #7/#8: guardar datos de la última transacción pendiente para recuperación
+  const yappyPendingRef   = useRef(null); // { reference, amount, userId }
+  // FIX #4: flag para evitar doble-tap mientras ya se está iniciando el proceso
+  const yappyStartingRef  = useRef(false);
 
   // Modal de planes
   const [planesModal,   setPlanesModal]  = useState(false);
@@ -113,7 +117,9 @@ export default function WalletScreen() {
     setYappyAmt(0);
     setYappyStatus('');
     setSecondsLeft(300);
-    yappyCancelRef.current = null;
+    yappyCancelRef.current   = null;
+    yappyPendingRef.current  = null;
+    yappyStartingRef.current = false;
   }
 
   function abrirRecargarModal() {
@@ -129,9 +135,37 @@ export default function WalletScreen() {
     setRecargarModal(false);
   }
 
-  function cancelarYappy() {
+  // FIX #8: al cancelar, ofrecer verificación manual si el pago pudo haber llegado
+  async function cancelarYappy() {
     if (yappyCancelRef.current) yappyCancelRef.current();
+    const pending = yappyPendingRef.current;
     resetYappy();
+
+    if (!pending) return;
+
+    // Consultar una última vez si el pago ya estaba en el historial
+    const found = await buscarPagoYappy({ reference: pending.reference, amount: pending.amount });
+    if (found) {
+      Alert.alert(
+        'Pago detectado',
+        'Se encontró un pago Yappy pendiente de confirmar. ¿Deseas acreditarlo a tu wallet?',
+        [
+          { text: 'No', style: 'cancel' },
+          {
+            text: 'Sí, acreditar',
+            onPress: async () => {
+              try {
+                await confirmarPagoServidor({ userId: pending.userId, amount: pending.amount, reference: pending.reference });
+                fetchData();
+                Alert.alert('Wallet actualizado', 'El pago fue acreditado correctamente.');
+              } catch (e) {
+                Alert.alert('Error', e.message);
+              }
+            },
+          },
+        ]
+      );
+    }
   }
 
   function abrirAppYappy() {
@@ -146,6 +180,9 @@ export default function WalletScreen() {
   }
 
   // Countdown mientras se espera el pago Yappy
+  // FIX #7: el polling (`pollForYappyPayment`) ya rechaza con "Tiempo de espera agotado"
+  // cuando llega a MAX_ATTEMPTS; este countdown de UI es solo visual y NO cancela el flujo —
+  // la cancelación real la maneja el catch en recargarYappy con la oferta de recuperación.
   useEffect(() => {
     if (yappyStep !== 'waiting') return;
     setSecondsLeft(300);
@@ -153,10 +190,6 @@ export default function WalletScreen() {
       setSecondsLeft(prev => {
         if (prev <= 1) {
           clearInterval(timer);
-          if (yappyCancelRef.current) yappyCancelRef.current();
-          resetYappy();
-          setRecargarModal(false);
-          Alert.alert('Tiempo agotado', 'No se detectó el pago en 5 minutos. Intenta nuevamente.');
           return 0;
         }
         return prev - 1;
@@ -170,6 +203,10 @@ export default function WalletScreen() {
     const amt = parseFloat(monto);
     if (!amt || amt < 1) { Alert.alert('Error', 'Monto mínimo $1.00'); return; }
 
+    // FIX #4: evitar doble-tap mientras ya se está iniciando el flujo
+    if (yappyStartingRef.current || procesando) return;
+    yappyStartingRef.current = true;
+
     setProcesando(true);
     setYappyStatus('Conectando con Yappy...');
 
@@ -177,12 +214,16 @@ export default function WalletScreen() {
       const alias     = await getYappyAlias();
       const reference = `wallet-${user.id.slice(0, 8)}-${Date.now()}`;
 
+      // FIX #7/#8: guardar datos del pago pendiente para recuperación post-timeout/cancel
+      yappyPendingRef.current = { reference, amount: amt, userId: user.id };
+
       setYappyAlias(alias);
       setYappyRef(reference);
       setYappyAmt(amt);
       setYappyStatus('Verificando pago...');
       setYappyStep('waiting');
       setProcesando(false);
+      yappyStartingRef.current = false;
 
       const { promise, cancel } = pollForYappyPayment({
         userId:    user.id,
@@ -196,17 +237,50 @@ export default function WalletScreen() {
 
       await promise;
 
-      yappyCancelRef.current = null;
+      yappyCancelRef.current  = null;
+      yappyPendingRef.current = null;
       resetYappy();
       setRecargarModal(false);
       setMonto('');
       fetchData();
       Alert.alert('✅ Recarga exitosa', `Se acreditaron $${amt.toFixed(2)} a tu wallet.`);
     } catch (e) {
+      const pending = yappyPendingRef.current;
       resetYappy();
+
+      if (e.message?.includes('Tiempo de espera agotado') && pending) {
+        // FIX #7: timeout — ofrecer verificación manual por si el pago llegó justo al final
+        Alert.alert(
+          'Tiempo agotado',
+          '¿Ya realizaste el pago en Yappy? Podemos verificarlo manualmente.',
+          [
+            { text: 'No pagué', style: 'cancel' },
+            {
+              text: 'Sí, verificar',
+              onPress: async () => {
+                const found = await buscarPagoYappy({ reference: pending.reference, amount: pending.amount });
+                if (found) {
+                  try {
+                    await confirmarPagoServidor({ userId: pending.userId, amount: pending.amount, reference: pending.reference });
+                    fetchData();
+                    Alert.alert('✅ Pago encontrado', `Se acreditaron $${pending.amount.toFixed(2)} a tu wallet.`);
+                  } catch (err) {
+                    Alert.alert('Error', err.message);
+                  }
+                } else {
+                  Alert.alert('Sin pago detectado', 'No se encontró ningún pago en tu historial de Yappy. Intenta nuevamente.');
+                }
+              },
+            },
+          ]
+        );
+        return;
+      }
+
       if (e.message !== 'Pago cancelado') Alert.alert('Error Yappy', e.message);
     } finally {
       setProcesando(false);
+      yappyStartingRef.current = false;
     }
   }
 

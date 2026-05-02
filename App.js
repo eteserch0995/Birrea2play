@@ -31,7 +31,9 @@ export default function App() {
     Barlow_700Bold,
   });
   const [authReady, setAuthReady] = useState(false);
-  const { isAuthenticated, loadProfile, user } = useAuthStore();
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const loadProfile     = useAuthStore((s) => s.loadProfile);
+  const user            = useAuthStore((s) => s.user);
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {

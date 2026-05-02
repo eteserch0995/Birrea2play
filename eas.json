@@ -1,0 +1,37 @@
+{
+  "cli": {
+    "version": ">= 18.0.0"
+  },
+  "build": {
+    "development": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://rumreditrvxkcnlhawut.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_U56Yg1Y7h0zDcrpwH8AlTQ_H7ir7oBK",
+        "EXPO_PUBLIC_YAPPY_API_KEY": "ODIMQ-71981313",
+        "EXPO_PUBLIC_YAPPY_SEED_CODE": "JTIBV-49150514",
+        "EXPO_PUBLIC_YAPPY_SECRET_KEY": "WVBfRkY4MEU1QTYtODE0Qi0zMTEwLUI1QjMtMEYzNjcxNkU4Qjk3",
+        "EXPO_PUBLIC_YAPPY_BASE_URL": "https://api.yappy.com.pa",
+        "EXPO_PUBLIC_YAPPY_ALIAS_FALLBACK": "birrea2play"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

@@ -3,6 +3,7 @@ node_modules/
 dist/
 web-build/
 .env
+supabase/set-secrets.sh
 *.env.local
 *.env.production
 *.env.development

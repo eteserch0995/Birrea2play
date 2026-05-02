@@ -18,7 +18,8 @@ export default function StoreScreen({ navigation }) {
   const [error,      setError]      = useState(null);
   const [tallaModal, setTallaModal] = useState(null);
   const [talla,      setTalla]      = useState(null);
-  const { addItem, itemCount } = useCartStore();
+  const { addItem } = useCartStore();
+  const itemCount = useCartStore(s => s.itemCount());
 
   const fetchProducts = useCallback(async () => {
     setError(null);
