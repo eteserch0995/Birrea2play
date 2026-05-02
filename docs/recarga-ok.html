@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Pago Exitoso — Birrea2Play</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg:    #07101F;
+      --navy:  #0D1B3E;
+      --red:   #C8102E;
+      --card:  #0F1E38;
+      --white: #FFFFFF;
+      --gray:  #7A8BA0;
+      --green: #22C55E;
+      --yappy: #00B3A4;
+    }
+    body {
+      background: var(--bg);
+      color: var(--white);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+
+    .logo { font-size: 16px; font-weight: 900; letter-spacing: 3px; margin-bottom: 48px; }
+    .logo span { color: var(--red); }
+
+    /* Checkmark animation */
+    .check-wrap {
+      width: 96px;
+      height: 96px;
+      border-radius: 50%;
+      background: rgba(34,197,94,0.12);
+      border: 2px solid var(--green);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 28px;
+      animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+    }
+    @keyframes popIn {
+      0% { transform: scale(0); opacity: 0; }
+      100% { transform: scale(1); opacity: 1; }
+    }
+    .check-icon {
+      font-size: 48px;
+      animation: fadeIn 0.3s 0.3s both;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    h1 {
+      font-size: 28px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      margin-bottom: 12px;
+      animation: slideUp 0.4s 0.2s both;
+    }
+    .amount-display {
+      font-size: 48px;
+      font-weight: 900;
+      color: var(--green);
+      margin-bottom: 12px;
+      animation: slideUp 0.4s 0.3s both;
+    }
+    .subtitle {
+      color: var(--gray);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 300px;
+      margin: 0 auto 40px;
+      animation: slideUp 0.4s 0.35s both;
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Card */
+    .card {
+      background: var(--card);
+      border: 1px solid rgba(34,197,94,0.2);
+      border-radius: 20px;
+      padding: 20px 24px;
+      width: 100%;
+      max-width: 320px;
+      margin-bottom: 28px;
+      animation: slideUp 0.4s 0.4s both;
+    }
+    .card-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 0;
+      font-size: 14px;
+    }
+    .card-row:not(:last-child) { border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .card-label { color: var(--gray); }
+    .card-value { font-weight: 700; color: var(--white); }
+    .card-value.green { color: var(--green); }
+    .card-value.yappy { color: var(--yappy); }
+
+    /* Buttons */
+    .btn-app {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--red);
+      color: white;
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      padding: 16px 36px;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      transition: transform 0.15s, opacity 0.15s;
+      animation: slideUp 0.4s 0.5s both;
+    }
+    .btn-app:hover { transform: translateY(-2px); opacity: 0.9; }
+
+    .hint {
+      color: var(--gray);
+      font-size: 12px;
+      margin-top: 16px;
+      animation: slideUp 0.4s 0.55s both;
+    }
+    .countdown {
+      color: var(--yappy);
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="logo">BIRREA<span>2</span>PLAY</div>
+
+  <div class="check-wrap">
+    <span class="check-icon">✓</span>
+  </div>
+
+  <h1>¡PAGO RECIBIDO!</h1>
+  <div class="amount-display" id="amountDisplay">—</div>
+  <p class="subtitle">
+    Tu wallet será acreditado en unos momentos. Puedes regresar al app.
+  </p>
+
+  <div class="card" id="infoCard" style="display:none">
+    <div class="card-row">
+      <span class="card-label">Monto</span>
+      <span class="card-value green" id="cardAmount">—</span>
+    </div>
+    <div class="card-row">
+      <span class="card-label">Orden</span>
+      <span class="card-value" id="cardOrder" style="font-size:12px;font-family:monospace">—</span>
+    </div>
+    <div class="card-row">
+      <span class="card-label">Estado</span>
+      <span class="card-value yappy">Pago enviado a Yappy ✓</span>
+    </div>
+  </div>
+
+  <a class="btn-app" id="backBtn" href="#">
+    📱 Volver al App
+  </a>
+
+  <p class="hint">
+    Regresando al app en <span class="countdown" id="countdown">3</span>s...
+  </p>
+
+  <script>
+    const p = new URLSearchParams(window.location.search);
+    const orderId = p.get('orderId') ?? '';
+    const amount  = p.get('amount')  ?? '';
+
+    // Mostrar monto
+    if (amount) {
+      const fmt = `$${parseFloat(amount).toFixed(2)}`;
+      document.getElementById('amountDisplay').textContent = fmt;
+      document.getElementById('cardAmount').textContent    = fmt;
+    }
+
+    // Mostrar card con detalles si hay orderId
+    if (orderId) {
+      document.getElementById('cardOrder').textContent = orderId;
+      document.getElementById('infoCard').style.display = 'block';
+    }
+
+    // Deep link de regreso al app
+    const deepLink = `birrea2play://wallet?status=success${amount ? '&amount=' + amount : ''}`;
+    document.getElementById('backBtn').href = deepLink;
+
+    // Cuenta regresiva y auto-redirect
+    let secs = 3;
+    const countEl = document.getElementById('countdown');
+    const timer = setInterval(() => {
+      secs--;
+      countEl.textContent = secs;
+      if (secs <= 0) {
+        clearInterval(timer);
+        window.location.href = deepLink;
+      }
+    }, 1000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Recargar Wallet — Birrea2Play</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg:     #07101F;
+      --navy:   #0D1B3E;
+      --blue:   #1246A8;
+      --red:    #C8102E;
+      --card:   #0F1E38;
+      --white:  #FFFFFF;
+      --gray:   #7A8BA0;
+      --yappy:  #00B3A4;
+      --yappy2: #009A8D;
+      --border: rgba(255,255,255,0.08);
+    }
+    body {
+      background: var(--bg);
+      color: var(--white);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 0 0 40px;
+    }
+
+    /* Header */
+    .header {
+      width: 100%;
+      background: var(--navy);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .logo { font-size: 18px; font-weight: 900; letter-spacing: 3px; color: var(--white); }
+    .logo span { color: var(--red); }
+
+    /* Card */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 36px 28px;
+      width: 100%;
+      max-width: 400px;
+      margin: 36px 20px 0;
+    }
+
+    /* Yappy badge */
+    .yappy-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--yappy) + '22';
+      background-color: rgba(0,179,164,0.12);
+      border: 1px solid rgba(0,179,164,0.3);
+      border-radius: 999px;
+      padding: 8px 16px;
+      width: fit-content;
+      margin: 0 auto 28px;
+    }
+    .yappy-dot {
+      width: 10px; height: 10px;
+      background: var(--yappy);
+      border-radius: 50%;
+    }
+    .yappy-badge-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--yappy);
+      letter-spacing: 1px;
+    }
+
+    .card-title {
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .card-sub {
+      font-size: 13px;
+      color: var(--gray);
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    /* Amount */
+    .amount-label {
+      font-size: 11px;
+      letter-spacing: 3px;
+      color: var(--gray);
+      font-weight: 700;
+      margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+    .amount-wrap {
+      position: relative;
+      margin-bottom: 28px;
+    }
+    .amount-prefix {
+      position: absolute;
+      left: 16px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--gray);
+      pointer-events: none;
+    }
+    .amount-input {
+      width: 100%;
+      background: var(--bg);
+      border: 2px solid var(--border);
+      border-radius: 14px;
+      padding: 18px 18px 18px 42px;
+      font-size: 32px;
+      font-weight: 900;
+      color: var(--white);
+      outline: none;
+      transition: border-color 0.2s;
+      -moz-appearance: textfield;
+    }
+    .amount-input::-webkit-inner-spin-button,
+    .amount-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+    .amount-input:focus { border-color: var(--yappy); }
+
+    /* Quick amounts */
+    .quick-btns {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 32px;
+    }
+    .quick-btn {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 4px;
+      color: var(--gray);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .quick-btn:hover, .quick-btn.active {
+      border-color: var(--yappy);
+      color: var(--yappy);
+      background: rgba(0,179,164,0.08);
+    }
+
+    /* Yappy button */
+    .yappy-btn {
+      width: 100%;
+      background: var(--yappy);
+      border: none;
+      border-radius: 14px;
+      padding: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      font-size: 16px;
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: 1px;
+    }
+    .yappy-btn:hover { background: var(--yappy2); transform: translateY(-1px); }
+    .yappy-btn:active { transform: translateY(0); }
+    .yappy-btn:disabled { background: #2a4040; color: var(--gray); cursor: not-allowed; transform: none; }
+
+    .yappy-logo-svg {
+      width: 28px;
+      height: 28px;
+    }
+
+    /* Loading overlay */
+    .loading {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 20px 0;
+    }
+    .loading.show { display: flex; }
+    .spinner {
+      width: 36px; height: 36px;
+      border: 3px solid rgba(0,179,164,0.2);
+      border-top-color: var(--yappy);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-text { color: var(--gray); font-size: 14px; }
+
+    /* Error */
+    .error-msg {
+      display: none;
+      background: rgba(200,16,46,0.12);
+      border: 1px solid rgba(200,16,46,0.3);
+      border-radius: 10px;
+      padding: 12px 16px;
+      font-size: 13px;
+      color: #ff6b7a;
+      text-align: center;
+      margin-top: 16px;
+    }
+    .error-msg.show { display: block; }
+
+    /* Info row */
+    .info-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 20px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+    }
+    .info-icon { font-size: 16px; }
+    .info-text { font-size: 12px; color: var(--gray); line-height: 1.5; }
+    .info-text a { color: var(--yappy); text-decoration: none; }
+
+    @media (max-width: 440px) {
+      .card { margin: 24px 16px 0; padding: 28px 20px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="header">
+    <div class="logo">BIRREA<span>2</span>PLAY</div>
+  </header>
+
+  <div class="card" id="formCard">
+    <div class="yappy-badge">
+      <div class="yappy-dot"></div>
+      <span class="yappy-badge-text">PAGO YAPPY SEGURO</span>
+    </div>
+
+    <h1 class="card-title">RECARGAR WALLET</h1>
+    <p class="card-sub">Ingresa el monto y paga con Yappy</p>
+
+    <p class="amount-label">Monto a recargar</p>
+    <div class="amount-wrap">
+      <span class="amount-prefix">$</span>
+      <input
+        id="amountInput"
+        class="amount-input"
+        type="number"
+        min="1"
+        max="500"
+        step="1"
+        inputmode="decimal"
+        placeholder="0.00"
+      />
+    </div>
+
+    <div class="quick-btns">
+      <button class="quick-btn" onclick="setAmount(5)">$5</button>
+      <button class="quick-btn" onclick="setAmount(10)">$10</button>
+      <button class="quick-btn" onclick="setAmount(20)">$20</button>
+      <button class="quick-btn" onclick="setAmount(50)">$50</button>
+    </div>
+
+    <button class="yappy-btn" id="payBtn" onclick="pagar()">
+      <!-- Yappy Y logo SVG -->
+      <svg class="yappy-logo-svg" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect width="40" height="40" rx="10" fill="white" fill-opacity="0.15"/>
+        <path d="M12 11L20 24V31H20.5V24L28 11H25L20.25 20L15.5 11H12Z" fill="white" stroke="white" stroke-width="0.5"/>
+      </svg>
+      PAGAR CON YAPPY
+    </button>
+
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      <span class="loading-text">Preparando tu pago...</span>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="info-row">
+      <span class="info-icon">🔒</span>
+      <p class="info-text">
+        Pago seguro procesado por <strong>Yappy / Banco General</strong>.
+        Recibirás una notificación en tu app Yappy para confirmar.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const FUNCTIONS_URL = 'https://rumreditrvxkcnlhawut.supabase.co/functions/v1';
+
+    // Leer params de la URL
+    const params = new URLSearchParams(window.location.search);
+    const TOKEN  = params.get('token') ?? '';
+    const AMT    = params.get('amount') ?? '';
+
+    // Pre-llenar monto si viene en la URL
+    if (AMT) {
+      document.getElementById('amountInput').value = parseFloat(AMT).toFixed(2);
+      highlightQuick(parseFloat(AMT));
+    }
+
+    function setAmount(val) {
+      document.getElementById('amountInput').value = val;
+      highlightQuick(val);
+    }
+
+    function highlightQuick(val) {
+      document.querySelectorAll('.quick-btn').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.textContent.replace('$','')) === val);
+      });
+    }
+
+    document.getElementById('amountInput').addEventListener('input', function() {
+      highlightQuick(parseFloat(this.value));
+    });
+
+    function showError(msg) {
+      const el = document.getElementById('errorMsg');
+      el.textContent = msg;
+      el.classList.add('show');
+    }
+    function clearError() {
+      document.getElementById('errorMsg').classList.remove('show');
+    }
+
+    async function pagar() {
+      clearError();
+
+      if (!TOKEN) {
+        showError('Sesión inválida. Regresa al app y vuelve a intentarlo.');
+        return;
+      }
+
+      const amount = parseFloat(document.getElementById('amountInput').value);
+      if (!amount || amount < 1) { showError('El monto mínimo es $1.00'); return; }
+      if (amount > 500)          { showError('El monto máximo es $500.00'); return; }
+
+      // Mostrar loading, ocultar botón
+      const btn = document.getElementById('payBtn');
+      const loading = document.getElementById('loading');
+      btn.style.display = 'none';
+      loading.classList.add('show');
+
+      try {
+        const res = await fetch(`${FUNCTIONS_URL}/yappy-checkout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type':  'application/json',
+            'Authorization': `Bearer ${TOKEN}`,
+          },
+          body: JSON.stringify({ amount }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok || !data.url) {
+          throw new Error(data.error ?? 'Error preparando el pago. Intenta de nuevo.');
+        }
+
+        // Redirigir a la página de pago de Yappy
+        window.location.href = data.url;
+      } catch (e) {
+        loading.classList.remove('show');
+        btn.style.display = 'flex';
+        showError(e.message ?? 'Error de conexión. Verifica tu internet.');
+      }
+    }
+  </script>
+</body>
+</html>

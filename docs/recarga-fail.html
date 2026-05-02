@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Pago Cancelado — Birrea2Play</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #07101F;
+      color: #fff;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      text-align: center;
+    }
+    .logo { font-size: 16px; font-weight: 900; letter-spacing: 3px; margin-bottom: 48px; }
+    .logo span { color: #C8102E; }
+    .icon-wrap {
+      width: 96px; height: 96px;
+      border-radius: 50%;
+      background: rgba(200,16,46,0.1);
+      border: 2px solid #C8102E;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 28px;
+    }
+    .icon { font-size: 44px; }
+    h1 { font-size: 26px; font-weight: 900; letter-spacing: 2px; margin-bottom: 12px; }
+    .sub { color: #7A8BA0; font-size: 15px; max-width: 280px; margin: 0 auto 40px; line-height: 1.6; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 10px;
+      background: #1246A8; color: white;
+      font-size: 15px; font-weight: 800;
+      padding: 16px 36px; border-radius: 999px;
+      border: none; cursor: pointer; text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="logo">BIRREA<span>2</span>PLAY</div>
+  <div class="icon-wrap"><span class="icon">✕</span></div>
+  <h1>PAGO CANCELADO</h1>
+  <p class="sub">El pago no fue completado. No se realizó ningún cargo. Puedes intentarlo nuevamente desde el app.</p>
+  <a class="btn" id="backBtn" href="birrea2play://wallet">📱 Volver al App</a>
+  <script>
+    setTimeout(() => { window.location.href = 'birrea2play://wallet'; }, 3000);
+  </script>
+</body>
+</html>

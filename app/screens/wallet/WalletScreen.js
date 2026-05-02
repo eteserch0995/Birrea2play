@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react'; // useRef kept for fetchDataRef
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Modal, TextInput, Alert, ActivityIndicator, Linking,
@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
-import { cobrarYappy, pollForYappyPayment, buscarPagoYappy, confirmarPagoServidor } from '../../../lib/yappy';
+import { iniciarPagoWebYappy } from '../../../lib/yappy';
 import { iniciarPagoTarjeta } from '../../../lib/paguelofacil';
 import PlanesModal from '../../../components/PlanesModal';
 
@@ -22,36 +22,25 @@ const TIPO_LABEL = {
   plan_mensual:    '🎖️ Plan mensual',
 };
 
+}
+
 export default function WalletScreen() {
   const { user, walletBalance, setWalletBalance } = useAuthStore();
 
-  const [txs,           setTxs]          = useState([]);
-  const [loading,       setLoading]      = useState(true);
-  const [planActivo,    setPlanActivo]   = useState(null);
+  const [txs,        setTxs]       = useState([]);
+  const [loading,    setLoading]   = useState(true);
+  const [planActivo, setPlanActivo] = useState(null);
 
   // Modal de recarga
   const [recargarModal, setRecargarModal] = useState(false);
-  const [metodo,        setMetodo]        = useState('yappy'); // 'yappy' | 'tarjeta'
+  const [metodo,        setMetodo]        = useState('yappy');
   const [monto,         setMonto]         = useState('');
   const [procesando,    setProcesando]    = useState(false);
 
-  // Yappy — pantalla de espera
-  const [yappyStep,   setYappyStep]   = useState('input'); // 'input' | 'waiting'
-  const [yappyPhone,  setYappyPhone]  = useState('');
-  const [yappyRef,    setYappyRef]    = useState('');
-  const [yappyAmt,    setYappyAmt]    = useState(0);
-  const [yappyStatus, setYappyStatus] = useState('');
-  const [secondsLeft, setSecondsLeft] = useState(300);
-  const yappyCancelRef    = useRef(null);
-  // FIX #7/#8: guardar datos de la última transacción pendiente para recuperación
-  const yappyPendingRef   = useRef(null); // { reference, amount, userId }
-  // FIX #4: flag para evitar doble-tap mientras ya se está iniciando el proceso
-  const yappyStartingRef  = useRef(false);
 
   // Modal de planes
-  const [planesModal,   setPlanesModal]  = useState(false);
+  const [planesModal, setPlanesModal] = useState(false);
 
-  // fetchData defined early so hooks below can reference it
   const fetchData = useCallback(async () => {
     if (!user?.id) { setLoading(false); return; }
     const [walletRes, planRes] = await Promise.all([
@@ -74,23 +63,14 @@ export default function WalletScreen() {
     setLoading(false);
   }, [user?.id, setWalletBalance]);
 
-  // Refrescar datos al volver a la pantalla. Cancel any Yappy polling when leaving.
   useFocusEffect(useCallback(() => {
     fetchData();
-    return () => {
-      // Screen lost focus (e.g., user tabbed away mid-payment) — cancel Yappy poll
-      if (yappyCancelRef.current) {
-        yappyCancelRef.current();
-        yappyCancelRef.current = null;
-      }
-    };
   }, [fetchData]));
 
-  // Keep a ref to fetchData so the deep link handler always calls the latest version
   const fetchDataRef = useRef(null);
   useEffect(() => { fetchDataRef.current = fetchData; }, [fetchData]);
 
-  // Escuchar deep link de PágueloFácil (birrea2play://wallet?status=success&amount=X)
+  // Escuchar deep link de PágueloFácil
   useEffect(() => {
     function handleDeepLink(url) {
       if (!url?.includes('wallet')) return;
@@ -111,199 +91,43 @@ export default function WalletScreen() {
         } else if (status === 'error') {
           Alert.alert('Error', 'Ocurrió un error procesando el pago. Contacta soporte si el cobro fue aplicado.');
         }
-      } catch {
-        // URL no parseable, ignorar
-      }
+      } catch { /* URL no parseable */ }
     }
 
     const handleUrl = ({ url }) => handleDeepLink(url);
     const sub = Linking.addEventListener('url', handleUrl);
-
-    // Revisar si la app fue abierta por un deep link
     Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); }).catch(() => {});
-
     return () => sub.remove();
   }, []);
 
-  function resetYappy() {
-    setYappyStep('input');
-    setYappyPhone('');
-    setYappyRef('');
-    setYappyAmt(0);
-    setYappyStatus('');
-    setSecondsLeft(300);
-    yappyCancelRef.current   = null;
-    yappyPendingRef.current  = null;
-    yappyStartingRef.current = false;
-  }
-
   function abrirRecargarModal() {
-    resetYappy();
     setMonto('');
     setMetodo('yappy');
     setRecargarModal(true);
   }
 
   function cerrarModal() {
-    if (yappyCancelRef.current) yappyCancelRef.current();
-    resetYappy();
     setRecargarModal(false);
   }
 
-  // FIX #8: al cancelar, ofrecer verificación manual si el pago pudo haber llegado
-  async function cancelarYappy() {
-    if (yappyCancelRef.current) yappyCancelRef.current();
-    const pending = yappyPendingRef.current;
-    resetYappy();
-
-    if (!pending) return;
-
-    // Consultar una última vez si el pago ya estaba en el historial
-    const found = await buscarPagoYappy({ reference: pending.reference, amount: pending.amount });
-    if (found) {
-      Alert.alert(
-        'Pago detectado',
-        'Se encontró un pago Yappy pendiente de confirmar. ¿Deseas acreditarlo a tu wallet?',
-        [
-          { text: 'No', style: 'cancel' },
-          {
-            text: 'Sí, acreditar',
-            onPress: async () => {
-              try {
-                await confirmarPagoServidor({ userId: pending.userId, amount: pending.amount, reference: pending.reference });
-                fetchData();
-                Alert.alert('Wallet actualizado', 'El pago fue acreditado correctamente.');
-              } catch (e) {
-                Alert.alert('Error', e.message);
-              }
-            },
-          },
-        ]
-      );
-    }
-  }
-
-  function abrirAppYappy() {
-    const link = buildYappyDeepLink({ alias: yappyAlias, amount: yappyAmt, reference: yappyRef });
-    Linking.openURL(link).catch(() => Linking.openURL(YAPPY_FALLBACK_URL));
-  }
-
-  function formatCountdown(secs) {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-  }
-
-  // Countdown mientras se espera el pago Yappy
-  // FIX #7: el polling (`pollForYappyPayment`) ya rechaza con "Tiempo de espera agotado"
-  // cuando llega a MAX_ATTEMPTS; este countdown de UI es solo visual y NO cancela el flujo —
-  // la cancelación real la maneja el catch en recargarYappy con la oferta de recuperación.
-  useEffect(() => {
-    if (yappyStep !== 'waiting') return;
-    setSecondsLeft(300);
-    const timer = setInterval(() => {
-      setSecondsLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    return () => clearInterval(timer);
-  }, [yappyStep]);
-
-  // ─── Recarga Yappy ──────────────────────────────────────────────────────────
-  async function recargarYappy() {
+  // ─── Recarga Yappy — flujo web redirect ─────────────────────────────────────
+  async function recargarYappyBoton() {
     if (!user?.id) { Alert.alert('Error', 'Debes iniciar sesión para recargar.'); return; }
     const amt = parseFloat(monto);
     if (!amt || amt < 1) { Alert.alert('Error', 'Monto mínimo $1.00'); return; }
-    if (amt > 500) { Alert.alert('Error', 'Monto máximo por recarga: $500.00'); return; }
+    if (amt > 500)       { Alert.alert('Error', 'Monto máximo por recarga: $500.00'); return; }
+    if (procesando) return;
 
-    const phone = yappyPhone.replace(/\D/g, '');
-    if (!phone || phone.length < 7) {
-      Alert.alert('Número requerido', 'Ingresa tu número de teléfono Yappy (ej. 6123-4567).');
-      return;
-    }
-
-    if (yappyStartingRef.current || procesando) return;
-    yappyStartingRef.current = true;
     setProcesando(true);
-    setYappyStatus('Enviando solicitud de cobro...');
-
     try {
-      const reference = `wallet-${user.id.slice(0, 8)}-${Date.now()}`;
-
-      await cobrarYappy({
-        phone,
-        amount:      amt,
-        reference,
-        description: `Recarga Birrea2Play $${amt.toFixed(2)}`,
-      });
-
-      yappyPendingRef.current = { reference, amount: amt, userId: user.id };
-      setYappyRef(reference);
-      setYappyAmt(amt);
-      setYappyStatus('Esperando confirmación...');
-      setYappyStep('waiting');
-      setProcesando(false);
-      yappyStartingRef.current = false;
-
-      const { promise, cancel } = pollForYappyPayment({
-        userId:    user.id,
-        amount:    amt,
-        reference,
-        onProgress: ({ attempts }) => {
-          setYappyStatus(`Esperando que aceptes en Yappy... (${attempts}/60)`);
-        },
-      });
-      yappyCancelRef.current = cancel;
-
-      await promise;
-
-      yappyCancelRef.current  = null;
-      yappyPendingRef.current = null;
-      resetYappy();
+      const url = await iniciarPagoWebYappy(amt);
       setRecargarModal(false);
       setMonto('');
-      fetchData();
-      Alert.alert('✅ Recarga exitosa', `Se acreditaron $${amt.toFixed(2)} a tu wallet.`);
+      await Linking.openURL(url);
     } catch (e) {
-      const pending = yappyPendingRef.current;
-      resetYappy();
-
-      if (e.message?.includes('Tiempo de espera agotado') && pending) {
-        Alert.alert(
-          'Tiempo agotado',
-          '¿Ya aceptaste el pago en Yappy? Podemos verificarlo manualmente.',
-          [
-            { text: 'No acepté', style: 'cancel' },
-            {
-              text: 'Sí, verificar',
-              onPress: async () => {
-                const found = await buscarPagoYappy({ reference: pending.reference, amount: pending.amount });
-                if (found) {
-                  try {
-                    await confirmarPagoServidor({ userId: pending.userId, amount: pending.amount, reference: pending.reference });
-                    fetchData();
-                    Alert.alert('✅ Pago encontrado', `Se acreditaron $${pending.amount.toFixed(2)} a tu wallet.`);
-                  } catch (err) {
-                    Alert.alert('Error', err.message);
-                  }
-                } else {
-                  Alert.alert('Sin pago detectado', 'No se encontró ningún pago confirmado. Intenta nuevamente.');
-                }
-              },
-            },
-          ]
-        );
-        return;
-      }
-
-      if (e.message !== 'Pago cancelado') Alert.alert('Error Yappy', e.message);
+      Alert.alert('Error Yappy', e.message);
     } finally {
       setProcesando(false);
-      yappyStartingRef.current = false;
     }
   }
 
@@ -320,7 +144,6 @@ export default function WalletScreen() {
         descripcion: `Recarga wallet Birrea2Play $${amt.toFixed(2)}`,
         tipo:        'recarga_tarjeta',
       });
-      // El resultado llega por deep link — cerrar modal
       setRecargarModal(false);
       setMonto('');
       Alert.alert(
@@ -334,7 +157,7 @@ export default function WalletScreen() {
     }
   }
 
-  const handleRecargar = () => metodo === 'yappy' ? recargarYappy() : recargarTarjeta();
+  const handleRecargar = () => metodo === 'yappy' ? recargarYappyBoton() : recargarTarjeta();
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -362,7 +185,7 @@ export default function WalletScreen() {
           </View>
         </View>
 
-        {/* Plan info si existe */}
+        {/* Plan info */}
         {planActivo && (
           <View style={styles.planInfo}>
             <Text style={styles.planInfoText}>
@@ -397,118 +220,67 @@ export default function WalletScreen() {
         <View style={{ height: SPACING.xxl }} />
       </ScrollView>
 
-      {/* Modal de Recarga */}
+      {/* ── Modal de Recarga ── */}
       <Modal visible={recargarModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modal}>
+            <Text style={styles.modalTitle}>RECARGAR WALLET</Text>
 
-            {/* ── Pantalla de espera Yappy ── */}
-            {metodo === 'yappy' && yappyStep === 'waiting' ? (
-              <>
-                <Text style={styles.modalTitle}>PAGO CON YAPPY</Text>
-
-                <View style={styles.yappyCountdownBox}>
-                  <Text style={styles.yappyCountdownTime}>{formatCountdown(secondsLeft)}</Text>
-                  <Text style={styles.yappyCountdownLabel}>tiempo para aceptar en tu Yappy</Text>
-                </View>
-
-                <View style={styles.yappyInfoBox}>
-                  <View style={styles.yappyInfoRow}>
-                    <Text style={styles.yappyInfoLabel}>MONTO</Text>
-                    <Text style={styles.yappyInfoVal}>${yappyAmt.toFixed(2)}</Text>
-                  </View>
-                  <View style={styles.yappyInfoRow}>
-                    <Text style={styles.yappyInfoLabel}>TELÉFONO</Text>
-                    <Text style={styles.yappyInfoVal}>{yappyPhone}</Text>
-                  </View>
-                </View>
-
-                <Text style={[styles.metodoInfo, { textAlign: 'center', fontSize: 13 }]}>
-                  📱 Revisa tu app Yappy — te llegó una solicitud de cobro por ${yappyAmt.toFixed(2)}. Acéptala para completar la recarga.
+            {/* Selector de método */}
+            <View style={styles.metodoBtns}>
+              <TouchableOpacity
+                style={[styles.metodoBtn, metodo === 'yappy' && styles.metodoBtnActivo]}
+                onPress={() => setMetodo('yappy')}
+                disabled={procesando}
+              >
+                <Text style={[styles.metodoBtnText, metodo === 'yappy' && styles.metodoBtnTextActivo]}>
+                  📱 Yappy
                 </Text>
-
-                {!!yappyStatus && (
-                  <Text style={styles.yappyPollingStatus}>{yappyStatus}</Text>
-                )}
-
-                <TouchableOpacity style={styles.modalCancel} onPress={cancelarYappy}>
-                  <Text style={styles.modalCancelText}>Cancelar</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              /* ── Formulario normal ── */
-              <>
-                <Text style={styles.modalTitle}>RECARGAR WALLET</Text>
-
-                {/* Selector de método */}
-                <View style={styles.metodoBtns}>
-                  <TouchableOpacity
-                    style={[styles.metodoBtn, metodo === 'yappy' && styles.metodoBtnActivo]}
-                    onPress={() => setMetodo('yappy')}
-                    disabled={procesando}
-                  >
-                    <Text style={[styles.metodoBtnText, metodo === 'yappy' && styles.metodoBtnTextActivo]}>
-                      📱 Yappy
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.metodoBtn, metodo === 'tarjeta' && styles.metodoBtnActivo]}
-                    onPress={() => setMetodo('tarjeta')}
-                    disabled={procesando}
-                  >
-                    <Text style={[styles.metodoBtnText, metodo === 'tarjeta' && styles.metodoBtnTextActivo]}>
-                      💳 Tarjeta
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.metodoInfo}>
-                  {metodo === 'yappy'
-                    ? 'Te enviaremos una solicitud de cobro a tu Yappy. Solo acéptala y la recarga se acredita.'
-                    : 'Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.'}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.metodoBtn, metodo === 'tarjeta' && styles.metodoBtnActivo]}
+                onPress={() => setMetodo('tarjeta')}
+                disabled={procesando}
+              >
+                <Text style={[styles.metodoBtnText, metodo === 'tarjeta' && styles.metodoBtnTextActivo]}>
+                  💳 Tarjeta
                 </Text>
+              </TouchableOpacity>
+            </View>
 
-                {metodo === 'yappy' && (
-                  <TextInput
-                    style={styles.input}
-                    placeholder="Tu número Yappy (ej. 6123-4567)"
-                    placeholderTextColor={COLORS.gray}
-                    keyboardType="phone-pad"
-                    value={yappyPhone}
-                    onChangeText={setYappyPhone}
-                    editable={!procesando}
-                  />
-                )}
+            <Text style={styles.metodoInfo}>
+              {metodo === 'yappy'
+                ? 'Se abrirá el browser con la página de pago de Yappy. Completa el pago y regresa al app.'
+                : 'Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.'}
+            </Text>
 
-                <TextInput
-                  style={styles.input}
-                  placeholder="Monto a recargar (ej. 10.00)"
-                  placeholderTextColor={COLORS.gray}
-                  keyboardType="decimal-pad"
-                  value={monto}
-                  onChangeText={setMonto}
-                  editable={!procesando}
-                />
+            <TextInput
+              style={styles.input}
+              placeholder="Monto a recargar (ej. 10.00)"
+              placeholderTextColor={COLORS.gray}
+              keyboardType="decimal-pad"
+              value={monto}
+              onChangeText={setMonto}
+              editable={!procesando}
+            />
 
-                <View style={styles.modalBtns}>
-                  <TouchableOpacity style={styles.modalCancel} onPress={cerrarModal} disabled={procesando}>
-                    <Text style={styles.modalCancelText}>Cancelar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.modalConfirm, metodo === 'tarjeta' && { backgroundColor: COLORS.blue + 'CC' }]}
-                    onPress={handleRecargar}
-                    disabled={procesando}
-                  >
-                    {procesando
-                      ? <ActivityIndicator color={COLORS.white} />
-                      : <Text style={styles.modalConfirmText}>
-                          {metodo === 'yappy' ? 'Pagar con Yappy' : 'Pagar con Tarjeta'}
-                        </Text>
-                    }
-                  </TouchableOpacity>
-                </View>
-              </>
-            )}
+            <View style={styles.modalBtns}>
+              <TouchableOpacity style={styles.modalCancel} onPress={cerrarModal} disabled={procesando}>
+                <Text style={styles.modalCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalConfirm, metodo === 'tarjeta' && { backgroundColor: COLORS.blue + 'CC' }]}
+                onPress={handleRecargar}
+                disabled={procesando}
+              >
+                {procesando
+                  ? <ActivityIndicator color={COLORS.white} />
+                  : <Text style={styles.modalConfirmText}>
+                      {metodo === 'yappy' ? 'Continuar con Yappy' : 'Pagar con Tarjeta'}
+                    </Text>
+                }
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -604,14 +376,9 @@ const styles = StyleSheet.create({
     flex: 1, padding: SPACING.md, borderRadius: RADIUS.md, alignItems: 'center',
     borderWidth: 1, borderColor: COLORS.navy, backgroundColor: COLORS.card,
   },
-  metodoBtnActivo:   { borderColor: COLORS.blue, backgroundColor: COLORS.blue + '22' },
-  metodoBtnDisabled: { opacity: 0.45 },
+  metodoBtnActivo:     { borderColor: COLORS.blue, backgroundColor: COLORS.blue + '22' },
   metodoBtnText:       { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray },
   metodoBtnTextActivo: { fontFamily: FONTS.bodyMedium, color: COLORS.white },
-  proximamenteBadge: {
-    fontFamily: FONTS.body, fontSize: 9, color: COLORS.gray,
-    letterSpacing: 1, marginTop: 2,
-  },
 
   metodoInfo: {
     fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, textAlign: 'center',
@@ -621,82 +388,34 @@ const styles = StyleSheet.create({
     padding: SPACING.md, color: COLORS.white, fontFamily: FONTS.body,
     fontSize: 16, borderWidth: 1, borderColor: COLORS.navy,
   },
-  // Yappy waiting screen
-  yappyCountdownBox: {
-    alignItems: 'center',
-    backgroundColor: COLORS.card,
-    borderRadius: RADIUS.lg,
-    padding: SPACING.lg,
-    borderWidth: 1,
-    borderColor: '#00A85944',
-  },
-  yappyCountdownTime: {
-    fontFamily: FONTS.heading,
-    fontSize: 52,
-    color: '#00A859',
-    letterSpacing: 4,
-  },
-  yappyCountdownLabel: {
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    color: COLORS.gray,
-    letterSpacing: 1,
-    marginTop: 4,
-  },
-  yappyInfoBox: {
-    backgroundColor: COLORS.card,
-    borderRadius: RADIUS.md,
-    padding: SPACING.md,
-    borderWidth: 1,
-    borderColor: COLORS.navy,
-    gap: 10,
-  },
-  yappyInfoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  yappyInfoLabel: {
-    fontFamily: FONTS.body,
-    fontSize: 11,
-    color: COLORS.gray,
-    letterSpacing: 1,
-  },
-  yappyInfoVal: {
-    fontFamily: FONTS.bodyMedium,
-    fontSize: 14,
-    color: COLORS.white,
-    flexShrink: 1,
-    textAlign: 'right',
-    marginLeft: SPACING.sm,
-  },
-  yappyOpenBtn: {
-    backgroundColor: '#00A859',
-    borderRadius: RADIUS.full,
-    paddingVertical: SPACING.md,
-    alignItems: 'center',
-  },
-  yappyOpenBtnText: {
-    fontFamily: FONTS.heading,
-    fontSize: 16,
-    color: COLORS.white,
-    letterSpacing: 3,
-  },
-  yappyPollingStatus: {
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    color: COLORS.gray,
-    textAlign: 'center',
-  },
   modalBtns:        { flexDirection: 'row', gap: SPACING.sm },
   modalCancel: {
-    flex: 1, backgroundColor: COLORS.card, borderRadius: RADIUS.md,
-    padding: SPACING.md, alignItems: 'center', borderWidth: 1, borderColor: COLORS.navy,
+    flex: 1, padding: SPACING.md, borderRadius: RADIUS.md, alignItems: 'center',
+    borderWidth: 1, borderColor: COLORS.navy, backgroundColor: COLORS.card,
   },
-  modalCancelText:  { fontFamily: FONTS.body, color: COLORS.gray2 ?? '#9CA3AF', fontSize: 15 },
+  modalCancelText:  { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray },
   modalConfirm: {
-    flex: 1, backgroundColor: COLORS.green + 'CC', borderRadius: RADIUS.md,
-    padding: SPACING.md, alignItems: 'center',
+    flex: 2, padding: SPACING.md, borderRadius: RADIUS.md, alignItems: 'center',
+    backgroundColor: COLORS.red,
   },
-  modalConfirmText: { fontFamily: FONTS.bodySemiBold ?? FONTS.bodyMedium, color: COLORS.white, fontSize: 15 },
+  modalConfirmText: { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.white, letterSpacing: 1 },
+
+  // WebView Yappy modal
+  webViewSafe: { flex: 1, backgroundColor: '#111827' },
+  webViewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1f2937',
+  },
+  webViewCancelBtn:  { padding: SPACING.sm, minWidth: 80 },
+  webViewCancelText: { fontFamily: FONTS.body, fontSize: 15, color: '#9ca3af' },
+  webViewTitle: {
+    fontFamily: FONTS.heading, fontSize: 14, color: COLORS.white,
+    letterSpacing: 2, textAlign: 'center',
+  },
+  webView: { flex: 1, backgroundColor: '#111827' },
 });
