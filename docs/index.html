@@ -164,10 +164,63 @@
     .footer-links a { color: var(--gray); text-decoration: none; font-size: 13px; }
     .footer-links a:hover { color: white; }
     footer p { color: var(--gray); font-size: 12px; }
+    /* GALLERY */
+    #galeria { padding: 80px 20px; background: var(--navy); }
+    #galeria .section-label { font-size: 11px; letter-spacing: 4px; color: var(--gold); font-weight: 700; margin-bottom: 12px; text-align: center; }
+    #galeria h2 { font-size: 36px; font-weight: 900; letter-spacing: 2px; margin-bottom: 40px; text-align: center; }
+    .gallery-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .gallery-item {
+      overflow: hidden;
+      border-radius: 10px;
+      aspect-ratio: 4/3;
+      cursor: pointer;
+      background: var(--card);
+    }
+    .gallery-item img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transition: transform 0.35s ease;
+      display: block;
+    }
+    .gallery-item:hover img { transform: scale(1.07); }
+    /* LIGHTBOX */
+    #lightbox {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.92);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+    }
+    #lightbox.open { display: flex; }
+    #lightbox img { max-width: 90vw; max-height: 88vh; border-radius: 8px; box-shadow: 0 8px 40px #000; }
+    .lb-btn {
+      position: absolute;
+      top: 50%; transform: translateY(-50%);
+      background: rgba(255,255,255,0.12);
+      border: none; color: white; font-size: 28px;
+      padding: 12px 18px; border-radius: 8px; cursor: pointer;
+    }
+    .lb-btn:hover { background: rgba(255,255,255,0.25); }
+    #lb-prev { left: 16px; }
+    #lb-next { right: 16px; }
+    #lb-close {
+      position: absolute; top: 16px; right: 20px;
+      background: rgba(255,255,255,0.12); border: none;
+      color: white; font-size: 22px; padding: 6px 14px;
+      border-radius: 8px; cursor: pointer;
+    }
     @media (max-width: 600px) {
       nav { padding: 14px 20px; }
       nav a { display: none; }
       .hero { padding: 60px 20px 50px; }
+      .gallery-grid { grid-template-columns: repeat(2, 1fr); }
     }
   </style>
 </head>
@@ -178,6 +231,7 @@
     <div class="logo">BIRREA<span>2</span>PLAY</div>
     <div>
       <a href="#features">Funciones</a>
+      <a href="#galeria">Galería</a>
       <a href="#download">Descargar</a>
       <a href="privacidad.html">Privacidad</a>
       <a href="terminos.html">Términos</a>
@@ -254,6 +308,84 @@
       </a>
     </div>
   </section>
+
+  <!-- GALLERY -->
+  <section id="galeria">
+    <div class="section-label">FOTOGRAFÍAS</div>
+    <h2>GALERÍA DE EVENTOS</h2>
+    <div class="gallery-grid">
+      <div class="gallery-item" onclick="openLb(0)"><img src="img/foto-01.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(1)"><img src="img/foto-02.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(2)"><img src="img/foto-03.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(3)"><img src="img/foto-04.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(4)"><img src="img/foto-05.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(5)"><img src="img/foto-06.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(6)"><img src="img/foto-07.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(7)"><img src="img/foto-08.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(8)"><img src="img/foto-09.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(9)"><img src="img/foto-10.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(10)"><img src="img/foto-11.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(11)"><img src="img/foto-12.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(12)"><img src="img/foto-13.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(13)"><img src="img/foto-14.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(14)"><img src="img/foto-15.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(15)"><img src="img/foto-16.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(16)"><img src="img/foto-17.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(17)"><img src="img/foto-18.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(18)"><img src="img/foto-19.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(19)"><img src="img/foto-20.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(20)"><img src="img/foto-21.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(21)"><img src="img/foto-22.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(22)"><img src="img/foto-23.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(23)"><img src="img/foto-24.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(24)"><img src="img/foto-25.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(25)"><img src="img/foto-26.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(26)"><img src="img/foto-27.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(27)"><img src="img/foto-28.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(28)"><img src="img/foto-29.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(29)"><img src="img/foto-30.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(30)"><img src="img/foto-31.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(31)"><img src="img/foto-32.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(32)"><img src="img/foto-33.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(33)"><img src="img/foto-34.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(34)"><img src="img/foto-35.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(35)"><img src="img/foto-36.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(36)"><img src="img/foto-37.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(37)"><img src="img/foto-38.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(38)"><img src="img/foto-39.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(39)"><img src="img/foto-40.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(40)"><img src="img/foto-41.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(41)"><img src="img/foto-42.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(42)"><img src="img/foto-43.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(43)"><img src="img/foto-44.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(44)"><img src="img/foto-45.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(45)"><img src="img/foto-46.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(46)"><img src="img/foto-47.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(47)"><img src="img/foto-48.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(48)"><img src="img/foto-49.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(49)"><img src="img/foto-50.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(50)"><img src="img/foto-51.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(51)"><img src="img/foto-52.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+      <div class="gallery-item" onclick="openLb(52)"><img src="img/foto-53.jpg" alt="Evento Birrea2Play" loading="lazy"/></div>
+    </div>
+  </section>
+
+  <!-- LIGHTBOX -->
+  <div id="lightbox">
+    <button id="lb-close" onclick="closeLb()">✕</button>
+    <button class="lb-btn" id="lb-prev" onclick="moveLb(-1)">‹</button>
+    <img id="lb-img" src="" alt=""/>
+    <button class="lb-btn" id="lb-next" onclick="moveLb(1)">›</button>
+  </div>
+  <script>
+    const photos = Array.from({length:53},(_,i)=>'img/foto-'+(i+1).toString().padStart(2,'0')+'.jpg');
+    let cur = 0;
+    function openLb(i){ cur=i; document.getElementById('lb-img').src=photos[i]; document.getElementById('lightbox').classList.add('open'); }
+    function closeLb(){ document.getElementById('lightbox').classList.remove('open'); }
+    function moveLb(d){ cur=(cur+d+photos.length)%photos.length; document.getElementById('lb-img').src=photos[cur]; }
+    document.getElementById('lightbox').addEventListener('click',function(e){ if(e.target===this) closeLb(); });
+    document.addEventListener('keydown',function(e){ if(!document.getElementById('lightbox').classList.contains('open')) return; if(e.key==='ArrowLeft') moveLb(-1); if(e.key==='ArrowRight') moveLb(1); if(e.key==='Escape') closeLb(); });
+  </script>
 
   <!-- FOOTER -->
   <footer>
