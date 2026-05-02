@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { createStackNavigator } from '@react-navigation/stack';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
-import { sendLocalNotification } from '../../lib/notifications';
+import { sendLocalNotification, sendPushNotificationsToEventPlayers } from '../../lib/notifications';
 import useAuthStore from '../../store/authStore';
 import {
   generateLigaFixture,
@@ -15,6 +15,7 @@ import {
   generateKnockoutBracket,
   generateRoundRobin,
   TEAM_COLORS,
+  calcTeams,
 } from '../../lib/eventHelpers';
 
 const Stack = createStackNavigator();
@@ -34,6 +35,12 @@ function GestorDashboard({ navigation }) {
   const [events,        setEvents]        = useState([]);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [loading,       setLoading]       = useState(true);
+
+  // Refresh whenever the screen is focused (so newly created events appear)
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('focus', fetchEvents);
+    return unsubscribe;
+  }, [navigation]);
 
   useEffect(() => { fetchEvents(); }, []);
 
@@ -69,12 +76,21 @@ function GestorDashboard({ navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView>
-        <Text style={styles.title}>PANEL GESTOR</Text>
+        {/* Header with "Crear evento" button */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingRight: SPACING.md }}>
+          <Text style={styles.title}>PANEL GESTOR</Text>
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: COLORS.red, paddingHorizontal: SPACING.md, flex: 0 }]}
+            onPress={() => navigation.navigate('GestorCreateEvent')}
+          >
+            <Text style={styles.btnText}>+ Crear evento</Text>
+          </TouchableOpacity>
+        </View>
 
         {loading ? (
           <ActivityIndicator color={COLORS.red} style={{ margin: SPACING.xl }} />
         ) : events.length === 0 ? (
-          <Text style={styles.empty}>No tienes eventos activos.</Text>
+          <Text style={styles.empty}>No tienes eventos activos. Crea uno con el botón de arriba.</Text>
         ) : (
           <>
             <Text style={styles.sectionTitle}>Mis eventos</Text>
@@ -111,6 +127,247 @@ function GestorDashboard({ navigation }) {
           </>
         )}
         <View style={{ height: SPACING.xxl }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+// ── Crear Evento (gestor) ──────────────────────────────────────────────────
+function GestorCreateEvent({ navigation }) {
+  const { user } = useAuthStore();
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    nombre: '', formato: 'Liga', deporte: 'Fútbol 7', fecha: '', hora: '',
+    lugar: '', precio: '0', cupos_total: '', cupos_ilimitado: false,
+    descripcion: '', jugadores_por_equipo: null, jornadas: '1',
+    num_grupos: '2', equipos_por_grupo: '3',
+    tiene_octavos: false, tiene_cuartos: false,
+    tiene_semis: true, tiene_tercer_lugar: true, tiene_final: true,
+    ida_y_vuelta: false,
+  });
+
+  const upd = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const cuposNum = parseInt(form.cupos_total) || 0;
+  const teamCalc = form.jugadores_por_equipo && cuposNum
+    ? calcTeams(cuposNum, form.jugadores_por_equipo) : null;
+
+  async function saveEvent() {
+    if (!form.nombre.trim() || !form.fecha || !form.hora || !form.lugar.trim()) {
+      Alert.alert('Error', 'Nombre, fecha, hora y lugar son obligatorios.'); return;
+    }
+    // BUG FIX: validate fecha is not in the past
+    const eventDateTime = new Date(`${form.fecha}T${form.hora}`);
+    if (isNaN(eventDateTime.getTime())) {
+      Alert.alert('Fecha inválida', 'Usa el formato YYYY-MM-DD y HH:MM.'); return;
+    }
+    if (eventDateTime < new Date()) {
+      Alert.alert('Fecha inválida', 'La fecha del evento no puede ser en el pasado.'); return;
+    }
+    // BUG FIX: validate cupos > 0 when not ilimitado
+    if (!form.cupos_ilimitado) {
+      const cuposVal = parseInt(form.cupos_total);
+      if (!cuposVal || cuposVal <= 0) {
+        Alert.alert('Cupos inválidos', 'Los cupos deben ser mayor a 0, o activa "Cupos ilimitados".'); return;
+      }
+    }
+    // BUG FIX: validate precio is a valid non-negative number (0 = gratis, handled fine)
+    const precioVal = parseFloat(form.precio);
+    if (isNaN(precioVal) || precioVal < 0) {
+      Alert.alert('Precio inválido', 'El precio debe ser 0 (gratis) o un monto positivo.'); return;
+    }
+    // Cupos must be exact multiple of jugadores_por_equipo — HARD BLOCK
+    if (teamCalc && !teamCalc.esExacto) {
+      const jpq  = form.jugadores_por_equipo;
+      const numEq = Math.floor(cuposNum / jpq);
+      Alert.alert(
+        'Cupos inválidos',
+        `Con ${jpq} jugadores por equipo, los cupos deben ser múltiplo de ${jpq}.\n\n• ${numEq} equipos → ${numEq * jpq} cupos\n• ${numEq + 1} equipos → ${(numEq + 1) * jpq} cupos`
+      );
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('events').insert({
+        nombre:              form.nombre.trim(),
+        formato:             form.formato,
+        deporte:             form.deporte,
+        fecha:               form.fecha,
+        hora:                form.hora,
+        lugar:               form.lugar.trim(),
+        precio:              precioVal,
+        cupos_total:         form.cupos_ilimitado ? null : (parseInt(form.cupos_total) || null),
+        cupos_ilimitado:     form.cupos_ilimitado,
+        descripcion:         form.descripcion || null,
+        status:              'draft',
+        created_by:          user?.id,
+        jugadores_por_equipo:form.jugadores_por_equipo,
+        jornadas:            form.formato === 'Liga' ? (parseInt(form.jornadas) || 1) : 1,
+        num_grupos:          form.formato === 'Torneo' ? (parseInt(form.num_grupos) || 2) : null,
+        equipos_por_grupo:   form.formato === 'Torneo' ? (parseInt(form.equipos_por_grupo) || 3) : null,
+        tiene_octavos:       form.formato === 'Torneo' ? form.tiene_octavos : false,
+        tiene_cuartos:       form.formato === 'Torneo' ? form.tiene_cuartos : false,
+        tiene_semis:         form.formato === 'Torneo' ? form.tiene_semis : false,
+        tiene_tercer_lugar:  form.formato === 'Torneo' ? form.tiene_tercer_lugar : false,
+        tiene_final:         form.formato === 'Torneo' ? form.tiene_final : false,
+        ida_y_vuelta:        form.ida_y_vuelta,
+      });
+      if (error) throw error;
+      Alert.alert('¡Evento creado!', `"${form.nombre}" creado en borrador. Publica cuando esté listo.`);
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, padding: SPACING.md }}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={{ fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white }}>←</Text>
+        </TouchableOpacity>
+        <Text style={[styles.title, { padding: 0, flex: 1 }]}>NUEVO EVENTO</Text>
+      </View>
+      <ScrollView contentContainerStyle={[styles.list, { paddingBottom: 60 }]}>
+        <Text style={styles.fieldLabel}>Nombre *</Text>
+        <TextInput style={styles.input} placeholder="Nombre del evento" placeholderTextColor={COLORS.gray} value={form.nombre} onChangeText={(v) => upd('nombre', v)} />
+
+        <Text style={styles.fieldLabel}>Deporte</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <View style={{ flexDirection: 'row', gap: SPACING.sm, paddingVertical: SPACING.sm }}>
+            {['Fútbol','Fútbol 7','Fútbol Sala','Volleyball','Pádel','Basketball','Otro'].map((d) => (
+              <TouchableOpacity key={d} style={[styles.chip, form.deporte === d && styles.chipActive]} onPress={() => upd('deporte', d)}>
+                <Text style={[styles.chipText, form.deporte === d && { color: COLORS.white }]}>{d}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </ScrollView>
+
+        <Text style={styles.fieldLabel}>Formato</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.sm }}>
+          {['Liga','Torneo','Amistoso'].map((f) => (
+            <TouchableOpacity key={f} style={[styles.chip, form.formato === f && styles.chipActive]} onPress={() => upd('formato', f)}>
+              <Text style={[styles.chipText, form.formato === f && { color: COLORS.white }]}>{f}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={styles.fieldLabel}>Fecha * (YYYY-MM-DD)</Text>
+        <TextInput style={styles.input} placeholder="2026-06-15" placeholderTextColor={COLORS.gray} value={form.fecha} onChangeText={(v) => upd('fecha', v)} />
+
+        <Text style={styles.fieldLabel}>Hora * (HH:MM)</Text>
+        <TextInput style={styles.input} placeholder="08:00" placeholderTextColor={COLORS.gray} value={form.hora} onChangeText={(v) => upd('hora', v)} />
+
+        <Text style={styles.fieldLabel}>Lugar *</Text>
+        <TextInput style={styles.input} placeholder="Cancha / Estadio" placeholderTextColor={COLORS.gray} value={form.lugar} onChangeText={(v) => upd('lugar', v)} />
+
+        <Text style={styles.fieldLabel}>Precio ($) — deja 0 para gratis</Text>
+        <TextInput style={styles.input} placeholder="0.00" placeholderTextColor={COLORS.gray} keyboardType="decimal-pad" value={form.precio} onChangeText={(v) => upd('precio', v)} />
+
+        {/* Cupos */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: SPACING.sm }}>
+          <Text style={styles.fieldLabel}>Cupos ilimitados</Text>
+          <TouchableOpacity
+            style={[styles.toggle, form.cupos_ilimitado && styles.toggleActive]}
+            onPress={() => upd('cupos_ilimitado', !form.cupos_ilimitado)}
+          >
+            <Text style={styles.toggleText}>{form.cupos_ilimitado ? 'ON' : 'OFF'}</Text>
+          </TouchableOpacity>
+        </View>
+        {!form.cupos_ilimitado && (
+          <>
+            <Text style={styles.fieldLabel}>Cupos totales</Text>
+            <TextInput style={styles.input} placeholder="20" placeholderTextColor={COLORS.gray} keyboardType="number-pad" value={form.cupos_total} onChangeText={(v) => upd('cupos_total', v)} />
+          </>
+        )}
+
+        <Text style={styles.fieldLabel}>Jugadores por equipo</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.sm }}>
+          {[null, 4, 5, 6, 7, 8, 9, 10, 11].map((n) => (
+            <TouchableOpacity key={String(n)} style={[styles.chip, form.jugadores_por_equipo === n && styles.chipActive]} onPress={() => upd('jugadores_por_equipo', n)}>
+              <Text style={[styles.chipText, form.jugadores_por_equipo === n && { color: COLORS.white }]}>{n === null ? 'Libre' : `${n}v${n}`}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {teamCalc && (
+          <View style={[styles.card, { borderColor: teamCalc.esExacto ? COLORS.green : COLORS.gold }]}>
+            <Text style={{ fontFamily: FONTS.bodyMedium, color: teamCalc.esExacto ? COLORS.green : COLORS.gold, fontSize: 13 }}>
+              {teamCalc.esExacto
+                ? `✓ ${teamCalc.numEquipos} equipos de ${form.jugadores_por_equipo} jugadores`
+                : `⚠ ${teamCalc.numEquipos} equipos + ${teamCalc.sobrantes} sobrante(s). Recomendado: ${teamCalc.sugerido} cupos`
+              }
+            </Text>
+          </View>
+        )}
+
+        {/* Liga: jornadas */}
+        {form.formato === 'Liga' && (
+          <>
+            <Text style={styles.fieldLabel}>Jornadas (vueltas)</Text>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm }}>
+              {['1','2','3'].map((j) => (
+                <TouchableOpacity key={j} style={[styles.chip, form.jornadas === j && styles.chipActive]} onPress={() => upd('jornadas', j)}>
+                  <Text style={[styles.chipText, form.jornadas === j && { color: COLORS.white }]}>{j}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm }}>
+              <TouchableOpacity
+                style={[styles.chip, form.ida_y_vuelta && styles.chipActive]}
+                onPress={() => upd('ida_y_vuelta', !form.ida_y_vuelta)}
+              >
+                <Text style={[styles.chipText, form.ida_y_vuelta && { color: COLORS.white }]}>Ida y vuelta</Text>
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        {/* Torneo: grupos */}
+        {form.formato === 'Torneo' && (
+          <>
+            <Text style={styles.fieldLabel}>Grupos</Text>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm }}>
+              {['2','3','4'].map((n) => (
+                <TouchableOpacity key={n} style={[styles.chip, form.num_grupos === n && styles.chipActive]} onPress={() => upd('num_grupos', n)}>
+                  <Text style={[styles.chipText, form.num_grupos === n && { color: COLORS.white }]}>{n} grupos</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Text style={styles.fieldLabel}>Fases eliminatorias</Text>
+            {[['tiene_cuartos','Cuartos de final'],['tiene_semis','Semifinales'],['tiene_tercer_lugar','3er lugar'],['tiene_final','Final']].map(([key, label]) => (
+              <View key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: 4 }}>
+                <TouchableOpacity
+                  style={[styles.chip, form[key] && styles.chipActive]}
+                  onPress={() => upd(key, !form[key])}
+                >
+                  <Text style={[styles.chipText, form[key] && { color: COLORS.white }]}>{label}</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+          </>
+        )}
+
+        <Text style={styles.fieldLabel}>Descripción (opcional)</Text>
+        <TextInput
+          style={[styles.input, { height: 80, textAlignVertical: 'top' }]}
+          placeholder="Detalles del evento..."
+          placeholderTextColor={COLORS.gray}
+          multiline
+          value={form.descripcion}
+          onChangeText={(v) => upd('descripcion', v)}
+        />
+
+        <TouchableOpacity
+          style={[styles.btn, { backgroundColor: COLORS.blue, marginTop: SPACING.md }]}
+          onPress={saveEvent}
+          disabled={saving}
+        >
+          {saving
+            ? <ActivityIndicator color={COLORS.white} size="small" />
+            : <Text style={styles.btnText}>✓ Crear evento</Text>
+          }
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -645,16 +902,30 @@ function GestorResults({ route }) {
     try {
       const now      = new Date().toISOString();
       const closesAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-      const { error } = await supabase.from('matches').update({
+      // BUG FIX: add .neq('status','finished') guard so a re-save on an already-finished
+      // match (e.g. app closed mid-save, screen not yet refreshed) does NOT overwrite.
+      const { error, count } = await supabase.from('matches').update({
         goles_home:    homeGoals,
         goles_away:    awayGoals,
         status:        'finished',
         finished_at:   now,
         mvp_closes_at: closesAt,
-      }).eq('id', match.id);
+      }).eq('id', match.id).neq('status', 'finished').select('id', { count: 'exact', head: true });
       if (error) { Alert.alert('Error', error.message); return; }
+      if (count === 0) {
+        // 0 rows affected — already finished by another session
+        Alert.alert('Ya registrado', 'Este partido ya fue registrado por otra sesión.');
+        setMatches((prev) => prev.filter((m) => m.id !== match.id));
+        return;
+      }
       setMatches((prev) => prev.filter((m) => m.id !== match.id));
       // Standings se actualizan automáticamente via VIEW en Supabase
+      // Notify all registered players about the result
+      sendPushNotificationsToEventPlayers(
+        eventId,
+        `Resultado registrado`,
+        `${match.home?.nombre} ${homeGoals} - ${awayGoals} ${match.away?.nombre}`
+      );
       Alert.alert('✓ Guardado', `${match.home?.nombre} ${homeGoals} - ${awayGoals} ${match.away?.nombre}\n\n🏆 Votación MVP abierta por 2 horas.`);
     } finally {
       setSaving(null);
@@ -888,12 +1159,12 @@ function GestorMvp({ route }) {
 // ── Config Evento ──────────────────────────────────────────────────────────
 function GestorConfig({ route }) {
   const { eventId } = route.params ?? {};
-  const [event,   setEvent]   = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [event,      setEvent]      = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     if (!eventId) { setLoading(false); return; }
-    // WC fix M3: try/catch + setLoading(false) siempre — nunca dejar spinner permanente
     supabase.from('events').select('*').eq('id', eventId).single()
       .then(({ data, error }) => {
         if (error) console.warn('GestorConfig load:', error.message);
@@ -907,7 +1178,6 @@ function GestorConfig({ route }) {
       const newsTitle = `🏁 ${event?.nombre ?? 'Evento'} — Finalizado`;
       const newsBody  = `El evento ${event?.nombre ?? ''} ha concluido. Revisa los resultados y la tabla de posiciones.`;
       const finishedAt = new Date().toISOString();
-      // Guardar timestamp para auto-ocultar 24h después
       const { error } = await supabase.from('events').update({ status: newStatus, event_finished_at: finishedAt }).eq('id', eventId);
       if (error) { Alert.alert('Error', error.message); return; }
       setEvent((e) => ({ ...e, status: newStatus, event_finished_at: finishedAt }));
@@ -917,6 +1187,8 @@ function GestorConfig({ route }) {
         tipo:      'resultados',
       }).catch(() => {});
       sendLocalNotification(newsTitle, newsBody);
+      // Notify all players of this event via push
+      sendPushNotificationsToEventPlayers(eventId, newsTitle, newsBody);
       Alert.alert('Evento finalizado', 'Se publicó una noticia automáticamente. El evento se ocultará a los jugadores en 24 horas.');
       return;
     }
@@ -931,7 +1203,76 @@ function GestorConfig({ route }) {
     setEvent((e) => ({ ...e, [field]: value }));
   }
 
-  // WC fix M3: loading state separado — no spinner permanente si event es null por error
+  // BUG FIX: cancel event with automatic refunds to all confirmed registrations
+  async function cancelEventWithRefunds() {
+    Alert.alert(
+      'Cancelar evento',
+      `¿Cancelar "${event.nombre}"?\n\nTodos los jugadores con inscripción confirmada recibirán un reembolso automático a su wallet. Esta acción NO se puede deshacer.`,
+      [
+        { text: 'No cancelar', style: 'cancel' },
+        { text: 'Cancelar evento', style: 'destructive', onPress: async () => {
+          setCancelling(true);
+          try {
+            // 1. Get all confirmed paid registrations
+            const { data: regs, error: regsErr } = await supabase
+              .from('event_registrations')
+              .select('id, user_id, monto_pagado')
+              .eq('event_id', eventId)
+              .eq('status', 'confirmed');
+            if (regsErr) throw regsErr;
+
+            // 2. Cancel all registrations atomically
+            await supabase.from('event_registrations').update({ status: 'cancelled' }).eq('event_id', eventId).eq('status', 'confirmed');
+
+            // 3. Refund each paid player
+            let refundCount = 0;
+            let refundTotal = 0;
+            for (const reg of (regs ?? [])) {
+              const monto = reg.monto_pagado ?? 0;
+              if (monto > 0) {
+                try {
+                  await supabase.rpc('credit_wallet', {
+                    p_user_id:     reg.user_id,
+                    p_monto:       monto,
+                    p_tipo:        'reembolso',
+                    p_descripcion: `Reembolso: cancelación de ${event.nombre}`,
+                  });
+                  refundCount++;
+                  refundTotal += monto;
+                } catch (e) {
+                  console.warn(`cancelEvent refund error for ${reg.user_id}:`, e.message);
+                }
+              }
+            }
+
+            // 4. Mark event as cancelled and hidden
+            await supabase.from('events').update({ status: 'cancelled', visible: false }).eq('id', eventId);
+            setEvent((e) => ({ ...e, status: 'cancelled', visible: false }));
+
+            // 5. Auto-news
+            await supabase.from('news').insert({
+              titulo:    `🚫 ${event.nombre} — Cancelado`,
+              contenido: `El evento "${event.nombre}" fue cancelado. ${refundCount} jugador(es) recibieron reembolso automático por un total de $${refundTotal.toFixed(2)}.`,
+              tipo:      'general',
+            }).catch(() => {});
+            sendLocalNotification(`🚫 ${event.nombre} cancelado`, `Se emitieron ${refundCount} reembolso(s) automáticos.`);
+            // Notify all players via push
+            sendPushNotificationsToEventPlayers(eventId, `🚫 ${event.nombre} cancelado`, `El evento fue cancelado. ${refundCount > 0 ? `Recibiste un reembolso.` : 'Contacta al organizador.'}`);
+
+            Alert.alert(
+              'Evento cancelado',
+              `${refundCount} jugador(es) reembolsados ($${refundTotal.toFixed(2)} en total). El evento ya no es visible.`
+            );
+          } catch (e) {
+            Alert.alert('Error al cancelar', e.message);
+          } finally {
+            setCancelling(false);
+          }
+        }},
+      ]
+    );
+  }
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
   if (!event)  return (
     <SafeAreaView style={styles.safe}>
@@ -947,6 +1288,7 @@ function GestorConfig({ route }) {
     ],
     active:   [{ label: '🏁 Finalizar evento',   next: 'finished',  color: COLORS.red  }],
     finished: [],
+    cancelled: [],
   };
 
   return (
@@ -1005,6 +1347,34 @@ function GestorConfig({ route }) {
               <Text style={styles.toggleText}>{event.visible !== false ? 'ON' : 'OFF'}</Text>
             </TouchableOpacity>
           </View>
+
+          {/* BUG FIX: Cancel event with automatic refunds — only for non-cancelled events */}
+          {event.status !== 'cancelled' && event.status !== 'finished' && (
+            <View style={[{ borderTopWidth: 1, borderTopColor: COLORS.navy, marginTop: SPACING.sm, paddingTop: SPACING.sm }]}>
+              <Text style={[styles.cardSub, { color: COLORS.red, marginBottom: SPACING.sm }]}>
+                Zona de peligro
+              </Text>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: COLORS.red + '99' }]}
+                onPress={cancelEventWithRefunds}
+                disabled={cancelling}
+              >
+                {cancelling
+                  ? <ActivityIndicator color={COLORS.white} size="small" />
+                  : <Text style={styles.btnText}>🚫 Cancelar evento y reembolsar</Text>
+                }
+              </TouchableOpacity>
+              <Text style={[styles.cardSub, { color: COLORS.gray, fontSize: 11, marginTop: 4 }]}>
+                Cancela el evento y emite reembolsos automáticos a todos los inscritos con pago.
+              </Text>
+            </View>
+          )}
+
+          {event.status === 'cancelled' && (
+            <Text style={[styles.cardSub, { color: COLORS.red, marginTop: SPACING.sm }]}>
+              Este evento fue cancelado. Los reembolsos fueron emitidos.
+            </Text>
+          )}
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -1072,13 +1442,14 @@ function GestorVentas() {
 export default function GestorPanel() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="GestorDashboard" component={GestorDashboard} />
-      <Stack.Screen name="GestorTeams"     component={GestorTeams}     />
-      <Stack.Screen name="GestorMatches"   component={GestorMatches}   />
-      <Stack.Screen name="GestorResults"   component={GestorResults}   />
-      <Stack.Screen name="GestorMvp"       component={GestorMvp}       />
-      <Stack.Screen name="GestorConfig"    component={GestorConfig}    />
-      <Stack.Screen name="GestorVentas"    component={GestorVentas}    />
+      <Stack.Screen name="GestorDashboard"   component={GestorDashboard}   />
+      <Stack.Screen name="GestorCreateEvent" component={GestorCreateEvent} />
+      <Stack.Screen name="GestorTeams"       component={GestorTeams}       />
+      <Stack.Screen name="GestorMatches"     component={GestorMatches}     />
+      <Stack.Screen name="GestorResults"     component={GestorResults}     />
+      <Stack.Screen name="GestorMvp"         component={GestorMvp}         />
+      <Stack.Screen name="GestorConfig"      component={GestorConfig}      />
+      <Stack.Screen name="GestorVentas"      component={GestorVentas}      />
     </Stack.Navigator>
   );
 }
@@ -1126,4 +1497,9 @@ const styles = StyleSheet.create({
   modalBox:       { backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.lg, width: '80%', borderWidth: 1, borderColor: COLORS.navy },
   modalTitle:     { fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white, letterSpacing: 2, marginBottom: SPACING.sm },
   modalSub:       { fontFamily: FONTS.body, color: COLORS.gray, fontSize: 14 },
+  // GestorCreateEvent styles
+  fieldLabel:     { fontFamily: FONTS.bodyMedium, fontSize: 12, color: COLORS.gray, marginTop: SPACING.sm, marginBottom: 4 },
+  input:          { backgroundColor: COLORS.navy, borderRadius: RADIUS.sm, padding: SPACING.sm, fontFamily: FONTS.body, fontSize: 14, color: COLORS.white, borderWidth: 1, borderColor: COLORS.navy + 'CC' },
+  btnSmall:       { borderRadius: RADIUS.sm, paddingHorizontal: SPACING.sm, paddingVertical: 4, backgroundColor: COLORS.navy, borderWidth: 1, borderColor: COLORS.navy },
+  btnSmallText:   { fontFamily: FONTS.bodyMedium, fontSize: 12, color: COLORS.white },
 });

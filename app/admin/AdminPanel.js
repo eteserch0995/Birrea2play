@@ -714,7 +714,7 @@ function AdminEvents({ navigation }) {
 
   async function changeStatus(ev) {
     const next = STATUS_FLOW[ev.status];
-    if (!next) { Alert.alert('Info', 'Este evento ya está finalizado.'); return; }
+    if (!next) { Alert.alert('Info', 'Este evento ya está finalizado o cancelado.'); return; }
     if (next === 'finished') {
       const newsTitle = `🏁 ${ev.nombre} — Evento Finalizado`;
       const newsBody  = `El evento "${ev.nombre}" ha concluido. Revisa los resultados y la tabla de posiciones.`;
@@ -743,6 +743,21 @@ function AdminEvents({ navigation }) {
     if (!form.nombre || !form.fecha || !form.hora || !form.lugar) {
       Alert.alert('Error', 'Nombre, fecha, hora y lugar son obligatorios.');
       return;
+    }
+    // BUG FIX: validate fecha is not in the past
+    const eventDateTime = new Date(`${form.fecha}T${form.hora}`);
+    if (isNaN(eventDateTime.getTime())) {
+      Alert.alert('Error', 'Fecha u hora inválida. Usa el formato YYYY-MM-DD y HH:MM.'); return;
+    }
+    if (eventDateTime < new Date()) {
+      Alert.alert('Fecha inválida', 'La fecha del evento no puede ser en el pasado.'); return;
+    }
+    // BUG FIX: validate cupos > 0 when not ilimitado
+    if (!form.cupos_ilimitado) {
+      const cuposVal = parseInt(form.cupos_total);
+      if (!cuposVal || cuposVal <= 0) {
+        Alert.alert('Cupos inválidos', 'Los cupos deben ser un número mayor a 0, o activa "Cupos ilimitados".'); return;
+      }
     }
     // Cupos must be exact multiple of jugadores_por_equipo — HARD BLOCK
     if (teamCalc && !teamCalc.esExacto) {
@@ -996,6 +1011,7 @@ function AdminManageEvent({ route, navigation }) {
   const [matches,    setMatches]    = useState([]);
   const [event,      setEvent]      = useState(null);
   const [scores,     setScores]     = useState({});
+  const [savingMatch, setSavingMatch] = useState(null); // BUG FIX: double-submit guard for saveResult
   const [mvpResult,        setMvpResult]        = useState(null);   // single event MVP or null
   const [mvpVotesByPlayer, setMvpVotesByPlayer] = useState({});     // { userId: voteCount }
   const [mvpTotalVotes,    setMvpTotalVotes]    = useState(0);
@@ -1278,30 +1294,39 @@ function AdminManageEvent({ route, navigation }) {
 
   // ── Guardar resultado ──
   async function saveResult(match) {
+    // BUG FIX: double-submit guard — prevents double-tap and re-saving finished matches
+    if (savingMatch === match.id) return;
+    if (match.status === 'finished') {
+      Alert.alert('Ya registrado', 'Este partido ya tiene resultado. No se puede registrar dos veces.'); return;
+    }
     const { home, away } = scores[match.id] ?? {};
     if (home === undefined || home === '' || away === undefined || away === '') {
       Alert.alert('Error', 'Ingresa los goles de ambos equipos.'); return;
     }
     const gh = parseInt(home, 10);
     const ga = parseInt(away, 10);
-    // WC fix C8: NaN check — parseInt("abc") = NaN, pasa el check de undefined/""
+    // NaN check — parseInt("abc") = NaN, pasa el check de undefined/""
     if (isNaN(gh) || isNaN(ga) || gh < 0 || ga < 0) {
       Alert.alert('Error', 'Ingresa un número válido (0 o más) para cada equipo.'); return;
     }
-    const now = new Date().toISOString();
+    setSavingMatch(match.id);
+    try {
+      const now = new Date().toISOString();
+      const { error } = await supabase.from('matches').update({
+        goles_home: gh, goles_away: ga,
+        goles_local: gh, goles_visitante: ga,
+        status: 'finished', jugado: true,
+        finished_at: now,
+      }).eq('id', match.id).neq('status', 'finished'); // extra guard: don't overwrite finished
+      if (error) { Alert.alert('Error', error.message); return; }
 
-    const { error } = await supabase.from('matches').update({
-      goles_home: gh, goles_away: ga,
-      goles_local: gh, goles_visitante: ga,
-      status: 'finished', jugado: true,
-      finished_at: now,
-    }).eq('id', match.id);
-    if (error) { Alert.alert('Error', error.message); return; }
-
-    setScores((s) => { const n = { ...s }; delete n[match.id]; return n; });
-    loadAll();
-    // Nota: standings se calculan automáticamente via VIEW en Supabase
-    Alert.alert('✓ Guardado', `${match.home?.nombre ?? match.equipo_local} ${gh} - ${ga} ${match.away?.nombre ?? match.equipo_visitante}`);
+      setScores((s) => { const n = { ...s }; delete n[match.id]; return n; });
+      loadAll();
+      // Nota: standings se calculan automáticamente via VIEW en Supabase
+      Alert.alert('✓ Guardado', `${match.home?.nombre ?? match.equipo_local} ${gh} - ${ga} ${match.away?.nombre ?? match.equipo_visitante}`);
+    } finally {
+      setSavingMatch(null);
+    }
   }
 
   // ── Abrir votación MVP del evento ──
@@ -1363,19 +1388,33 @@ function AdminManageEvent({ route, navigation }) {
   }
 
   async function toggleStatus(field, value) {
-    if (field === 'status' && value === 'finished') {
-      const newsTitle = `🏁 ${event?.nombre} — Evento Finalizado`;
-      const newsBody  = `El evento "${event?.nombre}" ha concluido. Revisa los resultados y la tabla de posiciones.`;
-      await supabase.from('news').insert({
-        titulo:   newsTitle,
-        contenido: newsBody,
-        tipo:     'resultados',
-      }).catch(() => {});
-      sendLocalNotification(newsTitle, newsBody);
-      // Guardar timestamp de finalización para auto-ocultar tras 24h
-      const finishedAt = new Date().toISOString();
-      await supabase.from('events').update({ status: value, event_finished_at: finishedAt }).eq('id', eventId);
-      setEvent((e) => ({ ...e, status: value, event_finished_at: finishedAt }));
+    if (field === 'status') {
+      // BUG FIX: prevent backward status transitions (e.g. finished → draft)
+      const STATUS_ORDER = { draft: 0, open: 1, active: 2, finished: 3, cancelled: 4 };
+      const currentOrder = STATUS_ORDER[event?.status] ?? -1;
+      const nextOrder    = STATUS_ORDER[value] ?? -1;
+      if (nextOrder < currentOrder && value !== 'draft') {
+        // Allow draft ↔ open only, otherwise block backward movement
+        Alert.alert('Transición inválida', `No se puede cambiar de "${event?.status}" a "${value}".`);
+        return;
+      }
+
+      if (value === 'finished') {
+        const newsTitle = `🏁 ${event?.nombre} — Evento Finalizado`;
+        const newsBody  = `El evento "${event?.nombre}" ha concluido. Revisa los resultados y la tabla de posiciones.`;
+        await supabase.from('news').insert({
+          titulo:    newsTitle,
+          contenido: newsBody,
+          tipo:      'resultados',
+        }).catch(() => {});
+        sendLocalNotification(newsTitle, newsBody);
+        const finishedAt = new Date().toISOString();
+        await supabase.from('events').update({ status: value, event_finished_at: finishedAt }).eq('id', eventId);
+        setEvent((e) => ({ ...e, status: value, event_finished_at: finishedAt }));
+        return;
+      }
+      await supabase.from('events').update({ status: value }).eq('id', eventId);
+      setEvent((e) => ({ ...e, status: value }));
       return;
     }
     await supabase.from('events').update({ [field]: value }).eq('id', eventId);
@@ -1592,8 +1631,15 @@ function AdminManageEvent({ route, navigation }) {
                       <TextInput style={[styles.input, { width: 52, textAlign:'center', fontFamily: FONTS.heading, fontSize: 24, padding: 4 }]} keyboardType="number-pad" maxLength={2} placeholder="0" placeholderTextColor={COLORS.gray} value={scores[m.id]?.away ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], away: v } }))} />
                       <Text style={[styles.cardName, { flex: 1, textAlign:'center', fontSize: 13 }]}>{m.away?.nombre ?? m.equipo_visitante}</Text>
                     </View>
-                    <TouchableOpacity style={[styles.btn, { backgroundColor: COLORS.green + 'CC', marginTop: SPACING.sm }]} onPress={() => saveResult(m)}>
-                      <Text style={styles.btnText}>✓ Guardar resultado</Text>
+                    <TouchableOpacity
+                      style={[styles.btn, { backgroundColor: COLORS.green + 'CC', marginTop: SPACING.sm, opacity: savingMatch === m.id ? 0.6 : 1 }]}
+                      onPress={() => saveResult(m)}
+                      disabled={savingMatch === m.id}
+                    >
+                      {savingMatch === m.id
+                        ? <ActivityIndicator color={COLORS.white} size="small" />
+                        : <Text style={styles.btnText}>✓ Guardar resultado</Text>
+                      }
                     </TouchableOpacity>
                   </View>
                 ))}
