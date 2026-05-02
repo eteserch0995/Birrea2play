@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
-import { getYappyAlias, buildYappyDeepLink, pollForYappyPayment, buscarPagoYappy, confirmarPagoServidor, YAPPY_FALLBACK_URL } from '../../../lib/yappy';
+import { cobrarYappy, pollForYappyPayment, buscarPagoYappy, confirmarPagoServidor } from '../../../lib/yappy';
 import { iniciarPagoTarjeta } from '../../../lib/paguelofacil';
 import PlanesModal from '../../../components/PlanesModal';
 
@@ -37,7 +37,7 @@ export default function WalletScreen() {
 
   // Yappy — pantalla de espera
   const [yappyStep,   setYappyStep]   = useState('input'); // 'input' | 'waiting'
-  const [yappyAlias,  setYappyAlias]  = useState('');
+  const [yappyPhone,  setYappyPhone]  = useState('');
   const [yappyRef,    setYappyRef]    = useState('');
   const [yappyAmt,    setYappyAmt]    = useState(0);
   const [yappyStatus, setYappyStatus] = useState('');
@@ -127,7 +127,7 @@ export default function WalletScreen() {
 
   function resetYappy() {
     setYappyStep('input');
-    setYappyAlias('');
+    setYappyPhone('');
     setYappyRef('');
     setYappyAmt(0);
     setYappyStatus('');
@@ -220,24 +220,31 @@ export default function WalletScreen() {
     if (!amt || amt < 1) { Alert.alert('Error', 'Monto mínimo $1.00'); return; }
     if (amt > 500) { Alert.alert('Error', 'Monto máximo por recarga: $500.00'); return; }
 
-    // FIX #4: evitar doble-tap mientras ya se está iniciando el flujo
+    const phone = yappyPhone.replace(/\D/g, '');
+    if (!phone || phone.length < 7) {
+      Alert.alert('Número requerido', 'Ingresa tu número de teléfono Yappy (ej. 6123-4567).');
+      return;
+    }
+
     if (yappyStartingRef.current || procesando) return;
     yappyStartingRef.current = true;
-
     setProcesando(true);
-    setYappyStatus('Conectando con Yappy...');
+    setYappyStatus('Enviando solicitud de cobro...');
 
     try {
-      const alias     = await getYappyAlias();
       const reference = `wallet-${user.id.slice(0, 8)}-${Date.now()}`;
 
-      // FIX #7/#8: guardar datos del pago pendiente para recuperación post-timeout/cancel
-      yappyPendingRef.current = { reference, amount: amt, userId: user.id };
+      await cobrarYappy({
+        phone,
+        amount:      amt,
+        reference,
+        description: `Recarga Birrea2Play $${amt.toFixed(2)}`,
+      });
 
-      setYappyAlias(alias);
+      yappyPendingRef.current = { reference, amount: amt, userId: user.id };
       setYappyRef(reference);
       setYappyAmt(amt);
-      setYappyStatus('Verificando pago...');
+      setYappyStatus('Esperando confirmación...');
       setYappyStep('waiting');
       setProcesando(false);
       yappyStartingRef.current = false;
@@ -247,7 +254,7 @@ export default function WalletScreen() {
         amount:    amt,
         reference,
         onProgress: ({ attempts }) => {
-          setYappyStatus(`Verificando pago... (${attempts}/60)`);
+          setYappyStatus(`Esperando que aceptes en Yappy... (${attempts}/60)`);
         },
       });
       yappyCancelRef.current = cancel;
@@ -266,12 +273,11 @@ export default function WalletScreen() {
       resetYappy();
 
       if (e.message?.includes('Tiempo de espera agotado') && pending) {
-        // FIX #7: timeout — ofrecer verificación manual por si el pago llegó justo al final
         Alert.alert(
           'Tiempo agotado',
-          '¿Ya realizaste el pago en Yappy? Podemos verificarlo manualmente.',
+          '¿Ya aceptaste el pago en Yappy? Podemos verificarlo manualmente.',
           [
-            { text: 'No pagué', style: 'cancel' },
+            { text: 'No acepté', style: 'cancel' },
             {
               text: 'Sí, verificar',
               onPress: async () => {
@@ -285,7 +291,7 @@ export default function WalletScreen() {
                     Alert.alert('Error', err.message);
                   }
                 } else {
-                  Alert.alert('Sin pago detectado', 'No se encontró ningún pago en tu historial de Yappy. Intenta nuevamente.');
+                  Alert.alert('Sin pago detectado', 'No se encontró ningún pago confirmado. Intenta nuevamente.');
                 }
               },
             },
@@ -401,34 +407,26 @@ export default function WalletScreen() {
               <>
                 <Text style={styles.modalTitle}>PAGO CON YAPPY</Text>
 
-                {/* Cuenta regresiva */}
                 <View style={styles.yappyCountdownBox}>
                   <Text style={styles.yappyCountdownTime}>{formatCountdown(secondsLeft)}</Text>
-                  <Text style={styles.yappyCountdownLabel}>tiempo para completar el pago</Text>
+                  <Text style={styles.yappyCountdownLabel}>tiempo para aceptar en tu Yappy</Text>
                 </View>
 
-                {/* Datos del pago */}
                 <View style={styles.yappyInfoBox}>
                   <View style={styles.yappyInfoRow}>
                     <Text style={styles.yappyInfoLabel}>MONTO</Text>
                     <Text style={styles.yappyInfoVal}>${yappyAmt.toFixed(2)}</Text>
                   </View>
                   <View style={styles.yappyInfoRow}>
-                    <Text style={styles.yappyInfoLabel}>ALIAS</Text>
-                    <Text style={styles.yappyInfoVal}>{yappyAlias}</Text>
-                  </View>
-                  <View style={styles.yappyInfoRow}>
-                    <Text style={styles.yappyInfoLabel}>REFERENCIA</Text>
-                    <Text style={[styles.yappyInfoVal, { fontSize: 11 }]}>{yappyRef}</Text>
+                    <Text style={styles.yappyInfoLabel}>TELÉFONO</Text>
+                    <Text style={styles.yappyInfoVal}>{yappyPhone}</Text>
                   </View>
                 </View>
 
-                {/* Botón principal */}
-                <TouchableOpacity style={styles.yappyOpenBtn} onPress={abrirAppYappy}>
-                  <Text style={styles.yappyOpenBtnText}>📱  ABRIR YAPPY</Text>
-                </TouchableOpacity>
+                <Text style={[styles.metodoInfo, { textAlign: 'center', fontSize: 13 }]}>
+                  📱 Revisa tu app Yappy — te llegó una solicitud de cobro por ${yappyAmt.toFixed(2)}. Acéptala para completar la recarga.
+                </Text>
 
-                {/* Estado del polling */}
                 {!!yappyStatus && (
                   <Text style={styles.yappyPollingStatus}>{yappyStatus}</Text>
                 )}
@@ -466,9 +464,21 @@ export default function WalletScreen() {
 
                 <Text style={styles.metodoInfo}>
                   {metodo === 'yappy'
-                    ? 'Abre Yappy, envía el pago al alias indicado y la recarga se acredita automáticamente.'
+                    ? 'Te enviaremos una solicitud de cobro a tu Yappy. Solo acéptala y la recarga se acredita.'
                     : 'Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.'}
                 </Text>
+
+                {metodo === 'yappy' && (
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Tu número Yappy (ej. 6123-4567)"
+                    placeholderTextColor={COLORS.gray}
+                    keyboardType="phone-pad"
+                    value={yappyPhone}
+                    onChangeText={setYappyPhone}
+                    editable={!procesando}
+                  />
+                )}
 
                 <TextInput
                   style={styles.input}

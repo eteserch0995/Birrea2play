@@ -215,9 +215,47 @@ async function handleMovementHistory(): Promise<Response> {
 }
 
 async function handleLogin(): Promise<Response> {
-  // Expuesto por compatibilidad / debugging. Devuelve solo "ok" — nunca el token real.
   await getYappyToken(true);
   return json({ ok: true, cachedAt: _tokenCache.date, expiresAt: _tokenCache.expiresAt });
+}
+
+// Envía solicitud de cobro al teléfono del usuario.
+// Endpoint Yappy: POST /v1/charge
+async function handleCharge(payload: any): Promise<Response> {
+  const { phone, amount, reference, description } = payload;
+  if (!phone || !amount) return json({ error: 'Faltan phone o amount' }, 400);
+
+  let token = await getYappyToken();
+  const body = JSON.stringify({
+    body: {
+      phone:       String(phone).replace(/\D/g, ''), // solo dígitos
+      amount:      Number(amount),
+      description: description ?? `Birrea2Play $${Number(amount).toFixed(2)}`,
+      reference:   reference ?? '',
+    },
+  });
+
+  let res = await yappyFetch('/v1/charge', {
+    method:  'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body,
+  });
+
+  if (res.httpStatus === 401 || res.body?.status?.code === 'YP-0401') {
+    token = await getYappyToken(true);
+    res = await yappyFetch('/v1/charge', {
+      method:  'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body,
+    });
+  }
+
+  const yCode = res.body?.status?.code ?? res.body?.code;
+  if (yCode && yCode !== 'YP-0000') {
+    return json({ error: `Yappy ${yCode}: ${res.body?.status?.description ?? 'Error'}` }, 502);
+  }
+
+  return json({ ok: true, data: res.body?.body ?? res.body });
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
@@ -225,18 +263,15 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (req.method !== 'POST')    return json({ error: 'Method not allowed' }, 405);
 
-  // Validar config mínima (early fail)
   if (!API_KEY || !SECRET_KEY) {
     console.error('[yappy-proxy] faltan YAPPY_API_KEY / YAPPY_SECRET_KEY en env');
     return json({ error: 'Servidor mal configurado' }, 500);
   }
 
-  // Auth
   const auth = await requireUser(req);
   if (!auth.ok) return auth.res;
 
-  // Parse body
-  let payload: { action?: string };
+  let payload: { action?: string; [key: string]: any };
   try { payload = await req.json(); }
   catch { return json({ error: 'Body inválido' }, 400); }
 
@@ -248,6 +283,7 @@ serve(async (req) => {
       case 'login':             return await handleLogin();
       case 'collection-method': return await handleCollectionMethod();
       case 'movement-history':  return await handleMovementHistory();
+      case 'charge':            return await handleCharge(payload);
       default:                  return json({ error: `Acción desconocida: ${action}` }, 400);
     }
   } catch (e) {
