@@ -8,7 +8,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
-import { iniciarPagoWebYappy } from '../../../lib/yappy';
+import { YAPPY_LINK, confirmarYappyLink } from '../../../lib/yappy';
 import { iniciarPagoTarjeta } from '../../../lib/paguelofacil';
 import PlanesModal from '../../../components/PlanesModal';
 
@@ -22,8 +22,6 @@ const TIPO_LABEL = {
   plan_mensual:    '🎖️ Plan mensual',
 };
 
-}
-
 export default function WalletScreen() {
   const { user, walletBalance, setWalletBalance } = useAuthStore();
 
@@ -36,6 +34,8 @@ export default function WalletScreen() {
   const [metodo,        setMetodo]        = useState('yappy');
   const [monto,         setMonto]         = useState('');
   const [procesando,    setProcesando]    = useState(false);
+  // Yappy link — paso: 'idle' → 'opened' → 'confirming'
+  const [yappyPaso,     setYappyPaso]     = useState('idle');
 
 
   // Modal de planes
@@ -103,29 +103,41 @@ export default function WalletScreen() {
   function abrirRecargarModal() {
     setMonto('');
     setMetodo('yappy');
+    setYappyPaso('idle');
     setRecargarModal(true);
   }
 
   function cerrarModal() {
     setRecargarModal(false);
+    setYappyPaso('idle');
   }
 
-  // ─── Recarga Yappy — flujo web redirect ─────────────────────────────────────
+  // ─── Recarga Yappy — link estático ───────────────────────────────────────────
   async function recargarYappyBoton() {
     if (!user?.id) { Alert.alert('Error', 'Debes iniciar sesión para recargar.'); return; }
     const amt = parseFloat(monto);
     if (!amt || amt < 1) { Alert.alert('Error', 'Monto mínimo $1.00'); return; }
     if (amt > 500)       { Alert.alert('Error', 'Monto máximo por recarga: $500.00'); return; }
-    if (procesando) return;
 
+    if (yappyPaso === 'idle') {
+      // Paso 1: abrir el link de Yappy
+      await Linking.openURL(YAPPY_LINK);
+      setYappyPaso('opened');
+      return;
+    }
+
+    // Paso 2: confirmar que el usuario ya pagó
+    if (procesando) return;
     setProcesando(true);
     try {
-      const url = await iniciarPagoWebYappy(amt);
-      setRecargarModal(false);
+      const amt = parseFloat(monto);
+      await confirmarYappyLink(amt);
+      cerrarModal();
       setMonto('');
-      await Linking.openURL(url);
+      setTimeout(() => { if (fetchDataRef.current) fetchDataRef.current(); }, 1000);
+      Alert.alert('✅ Recarga exitosa', `Se acreditaron $${amt.toFixed(2)} a tu wallet.`);
     } catch (e) {
-      Alert.alert('Error Yappy', e.message);
+      Alert.alert('Error', e.message);
     } finally {
       setProcesando(false);
     }
@@ -249,9 +261,11 @@ export default function WalletScreen() {
             </View>
 
             <Text style={styles.metodoInfo}>
-              {metodo === 'yappy'
-                ? 'Se abrirá el browser con la página de pago de Yappy. Completa el pago y regresa al app.'
-                : 'Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.'}
+              {metodo === 'tarjeta'
+                ? 'Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.'
+                : yappyPaso === 'opened'
+                  ? '✅ Link de Yappy abierto. Completa el pago en Yappy y regresa aquí para confirmar.'
+                  : 'Ingresa el monto y toca "Abrir Yappy". Luego regresa aquí para confirmar tu recarga.'}
             </Text>
 
             <TextInput
@@ -276,7 +290,11 @@ export default function WalletScreen() {
                 {procesando
                   ? <ActivityIndicator color={COLORS.white} />
                   : <Text style={styles.modalConfirmText}>
-                      {metodo === 'yappy' ? 'Continuar con Yappy' : 'Pagar con Tarjeta'}
+                      {metodo === 'tarjeta'
+                        ? 'Pagar con Tarjeta'
+                        : yappyPaso === 'opened'
+                          ? '✓ Ya pagué — Confirmar'
+                          : '📱 Abrir Yappy'}
                     </Text>
                 }
               </TouchableOpacity>
