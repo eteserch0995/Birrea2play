@@ -49,10 +49,9 @@ export default function PaymentModal({
             }
           </TouchableOpacity>
 
-          <View style={[styles.btn, styles.btnYappy, styles.btnDisabled]}>
-            <Text style={styles.btnText}>📱 Yappy</Text>
-            <Text style={styles.btnSub}>Próximamente</Text>
-          </View>
+          <TouchableOpacity style={[styles.btn, styles.btnYappy]} onPress={onPayYappy} disabled={loading}>
+            <Text style={styles.btnText}>📱 Pagar con Yappy</Text>
+          </TouchableOpacity>
 
           <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
             <Text style={styles.cancelText}>Cancelar</Text>

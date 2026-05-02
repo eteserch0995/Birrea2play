@@ -31,7 +31,7 @@ export default function WalletScreen() {
 
   // Modal de recarga
   const [recargarModal, setRecargarModal] = useState(false);
-  const [metodo,        setMetodo]        = useState('tarjeta'); // 'yappy' | 'tarjeta'
+  const [metodo,        setMetodo]        = useState('yappy'); // 'yappy' | 'tarjeta'
   const [monto,         setMonto]         = useState('');
   const [procesando,    setProcesando]    = useState(false);
 
@@ -445,25 +445,29 @@ export default function WalletScreen() {
                 {/* Selector de método */}
                 <View style={styles.metodoBtns}>
                   <TouchableOpacity
-                    style={[styles.metodoBtn, styles.metodoBtnDisabled]}
-                    disabled={true}
+                    style={[styles.metodoBtn, metodo === 'yappy' && styles.metodoBtnActivo]}
+                    onPress={() => setMetodo('yappy')}
+                    disabled={procesando}
                   >
-                    <Text style={styles.metodoBtnText}>📱 Yappy</Text>
-                    <Text style={styles.proximamenteBadge}>Próximamente</Text>
+                    <Text style={[styles.metodoBtnText, metodo === 'yappy' && styles.metodoBtnTextActivo]}>
+                      📱 Yappy
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.metodoBtn, styles.metodoBtnActivo]}
+                    style={[styles.metodoBtn, metodo === 'tarjeta' && styles.metodoBtnActivo]}
                     onPress={() => setMetodo('tarjeta')}
                     disabled={procesando}
                   >
-                    <Text style={[styles.metodoBtnText, styles.metodoBtnTextActivo]}>
+                    <Text style={[styles.metodoBtnText, metodo === 'tarjeta' && styles.metodoBtnTextActivo]}>
                       💳 Tarjeta
                     </Text>
                   </TouchableOpacity>
                 </View>
 
                 <Text style={styles.metodoInfo}>
-                  Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.
+                  {metodo === 'yappy'
+                    ? 'Abre Yappy, envía el pago al alias indicado y la recarga se acredita automáticamente.'
+                    : 'Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.'}
                 </Text>
 
                 <TextInput
