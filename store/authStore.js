@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { signIn, signOut, getUserProfile, updateUserProfile, uploadAvatar } from '../lib/auth';
 import { supabase } from '../lib/supabase';
+// Lazy import to avoid circular dependency
+const getCartStore = () => require('./cartStore').default;
 
 const useAuthStore = create((set, get) => ({
   user: null,
@@ -14,14 +16,20 @@ const useAuthStore = create((set, get) => ({
     set({ isLoading: true });
     try {
       const { user: authUser } = await signIn(email, password);
-      const profile = await getUserProfile(authUser.id);
-      // PostgREST returns one-to-many joins as arrays — normalize to single object
-      const wallet = Array.isArray(profile.wallets) ? (profile.wallets[0] ?? null) : (profile.wallets ?? null);
-      set({
-        user: { ...profile, wallets: wallet },
-        walletBalance: wallet?.balance ?? 0,
-        isAuthenticated: true,
-      });
+      try {
+        const profile = await getUserProfile(authUser.id);
+        // PostgREST returns one-to-many joins as arrays — normalize to single object
+        const wallet = Array.isArray(profile.wallets) ? (profile.wallets[0] ?? null) : (profile.wallets ?? null);
+        set({
+          user: { ...profile, wallets: wallet },
+          walletBalance: wallet?.balance ?? 0,
+          isAuthenticated: true,
+        });
+      } catch (profileErr) {
+        // Auth succeeded but profile load failed — sign out to avoid limbo state
+        signOut().catch(() => {});
+        throw new Error('No se pudo cargar tu perfil. Intenta nuevamente.');
+      }
     } finally {
       set({ isLoading: false });
     }
@@ -31,6 +39,8 @@ const useAuthStore = create((set, get) => ({
     set({ isLoading: true });
     try {
       await signOut();
+      // Clear cart so a subsequent user doesn't see previous user's items
+      getCartStore().getState().clearCart();
       set({ user: null, walletBalance: 0, isAuthenticated: false });
     } finally {
       set({ isLoading: false });

@@ -5,36 +5,42 @@ const useEventStore = create((set, get) => ({
   events: [],
   activeEvent: null,
   loading: false,
+  error: null,
 
   fetchEvents: async (filter = null) => {
-    set({ loading: true });
-    let q = supabase
-      .from('events')
-      .select('*, event_registrations(count)')
-      .eq('visible', true)   // Solo eventos visibles para jugadores
-      .order('fecha');
+    set({ loading: true, error: null });
+    try {
+      let q = supabase
+        .from('events')
+        .select('*, event_registrations(count)')
+        .eq('visible', true)   // Solo eventos visibles para jugadores
+        .order('fecha');
 
-    if (filter && filter !== 'Todos') {
-      if (['open', 'active', 'finished', 'draft'].includes(filter)) {
-        q = q.eq('status', filter);
-      } else {
-        q = q.eq('formato', filter);
+      if (filter && filter !== 'Todos') {
+        if (['open', 'active', 'finished', 'draft'].includes(filter)) {
+          q = q.eq('status', filter);
+        } else {
+          q = q.eq('formato', filter);
+        }
       }
+
+      const { data, error } = await q;
+      if (error) throw error;
+
+      // Auto-ocultar eventos finalizados hace más de 24 horas
+      // (lazy evaluation — sin cron job, solo filtramos en el cliente)
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const visible = (data ?? []).filter((ev) => {
+        if (ev.status === 'finished' && ev.event_finished_at) {
+          return new Date(ev.event_finished_at).getTime() > cutoff;
+        }
+        return true;
+      });
+
+      set({ events: visible, loading: false });
+    } catch (e) {
+      set({ loading: false, error: e.message ?? 'Error cargando eventos' });
     }
-
-    const { data } = await q;
-
-    // Auto-ocultar eventos finalizados hace más de 24 horas
-    // (lazy evaluation — sin cron job, solo filtramos en el cliente)
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    const visible = (data ?? []).filter((ev) => {
-      if (ev.status === 'finished' && ev.event_finished_at) {
-        return new Date(ev.event_finished_at).getTime() > cutoff;
-      }
-      return true;
-    });
-
-    set({ events: visible, loading: false });
   },
 
   fetchActiveEvent: async (eventId) => {

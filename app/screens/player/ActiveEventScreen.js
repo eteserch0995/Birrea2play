@@ -34,47 +34,53 @@ export default function ActiveEventScreen({ route, navigation }) {
   const [voting,        setVoting]        = useState(false);
 
   const load = useCallback(async () => {
-    const [{ data: ev }, { data: t }, { data: m }, { data: regs }] = await Promise.all([
-      supabase.from('events').select('*').eq('id', eventId).single(),
-      supabase.from('teams').select('*').eq('event_id', eventId),
-      supabase.from('matches')
-        .select('*, home:team_home_id(nombre,color), away:team_away_id(nombre,color)')
-        .eq('event_id', eventId)
-        .order('jornada'),
-      supabase.from('event_registrations')
-        .select('*, users(nombre, foto_url)')
-        .eq('event_id', eventId)
-        .eq('status', 'confirmed'),
-    ]);
+    try {
+      const [{ data: ev, error: evErr }, { data: t }, { data: m }, { data: regs }] = await Promise.all([
+        supabase.from('events').select('*').eq('id', eventId).single(),
+        supabase.from('teams').select('*').eq('event_id', eventId),
+        supabase.from('matches')
+          .select('*, home:team_home_id(nombre,color), away:team_away_id(nombre,color)')
+          .eq('event_id', eventId)
+          .order('jornada'),
+        supabase.from('event_registrations')
+          .select('*, users(id, nombre, foto_url)')
+          .eq('event_id', eventId)
+          .eq('status', 'confirmed'),
+      ]);
+      if (evErr) throw evErr;
 
-    setEvent(ev);
-    setTeams(t ?? []);
-    setMatches(m ?? []);
-    setPlayers(regs ?? []);
+      setEvent(ev);
+      setTeams(t ?? []);
+      setMatches(m ?? []);
+      setPlayers(regs ?? []);
 
-    // Standings for Liga / Torneo
-    if (FORMATS_WITH_TABLE.includes(ev?.formato)) {
-      const { data: st } = await supabase
-        .from('standings')
-        .select('*')
-        .eq('event_id', eventId)
-        .order('pts', { ascending: false });
-      setStandings(st ?? []);
+      // Standings for Liga / Torneo
+      if (FORMATS_WITH_TABLE.includes(ev?.formato)) {
+        const { data: st } = await supabase
+          .from('standings')
+          .select('*')
+          .eq('event_id', eventId)
+          .order('pts', { ascending: false });
+        setStandings(st ?? []);
+      }
+
+      // Event-level MVP data
+      const [{ data: evMvpResult }, { data: myVoteData }, { data: allVotesData }] = await Promise.all([
+        supabase.from('mvp_results').select('*, users(nombre, foto_url)').eq('event_id', eventId).maybeSingle(),
+        user?.id
+          ? supabase.from('mvp_votes').select('id').eq('event_id', eventId).eq('voter_id', user.id).maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase.from('mvp_votes').select('id').eq('event_id', eventId),
+      ]);
+      setMvpResult(evMvpResult ?? null);
+      setMvpHasVoted(!!myVoteData);
+      setMvpVoteCount((allVotesData ?? []).length);
+    } catch (e) {
+      console.warn('ActiveEventScreen load error:', e.message);
+      // event stays null — fallback UI renders
+    } finally {
+      setLoading(false);
     }
-
-    // Event-level MVP data
-    const [{ data: evMvpResult }, { data: myVoteData }, { data: allVotesData }] = await Promise.all([
-      supabase.from('mvp_results').select('*, users(nombre, foto_url)').eq('event_id', eventId).maybeSingle(),
-      user?.id
-        ? supabase.from('mvp_votes').select('id').eq('event_id', eventId).eq('voter_id', user.id).maybeSingle()
-        : Promise.resolve({ data: null }),
-      supabase.from('mvp_votes').select('id').eq('event_id', eventId),
-    ]);
-    setMvpResult(evMvpResult ?? null);
-    setMvpHasVoted(!!myVoteData);
-    setMvpVoteCount((allVotesData ?? []).length);
-
-    setLoading(false);
   }, [eventId, user?.id]);
 
   useEffect(() => { load(); }, [load]);
@@ -316,7 +322,7 @@ export default function ActiveEventScreen({ route, navigation }) {
             ) : (
               <FlatList
                 data={players.filter(p => p.user_id !== user?.id)}
-                keyExtractor={(p) => p.user_id}
+                keyExtractor={(p) => String(p.user_id)}
                 style={{ maxHeight: 320 }}
                 renderItem={({ item }) => (
                   <TouchableOpacity

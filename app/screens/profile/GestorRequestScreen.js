@@ -16,18 +16,20 @@ export default function GestorRequestScreen({ navigation }) {
   const [submitting,      setSubmitting]       = useState(false);
 
   useEffect(() => {
+    if (!user?.id) { setLoading(false); return; }
     supabase
       .from('gestor_requests')
       .select('*')
-      .eq('user_id', user?.id)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false })
       .limit(1)
-      .single()
+      .maybeSingle()
       .then(({ data }) => {
-        setExistingRequest(data);
+        setExistingRequest(data ?? null);
         setLoading(false);
-      });
-  }, []);
+      })
+      .catch(() => setLoading(false));
+  }, [user?.id]);
 
   const submit = async () => {
     if (!motivacion.trim() || motivacion.length < 20) {

@@ -36,12 +36,18 @@ export default function App() {
   const user            = useAuthStore((s) => s.user);
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (session?.user) {
-        await loadProfile(session.user.id);
-      }
-      setAuthReady(true);
-    });
+    supabase.auth.getSession()
+      .then(async ({ data: { session } }) => {
+        if (session?.user) {
+          await loadProfile(session.user.id);
+        }
+      })
+      .catch(() => {
+        // Network unavailable on cold start — show auth screen rather than infinite spinner
+      })
+      .finally(() => {
+        setAuthReady(true);
+      });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
@@ -49,6 +55,9 @@ export default function App() {
       }
       if (event === 'SIGNED_OUT') {
         useAuthStore.getState().setUser(null);
+        // Clear cart on sign-out so a subsequent user doesn't see stale items
+        const useCartStore = require('./store/cartStore').default;
+        useCartStore.getState().clearCart();
       }
     });
 

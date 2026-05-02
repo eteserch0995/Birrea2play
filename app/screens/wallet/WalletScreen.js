@@ -51,45 +51,9 @@ export default function WalletScreen() {
   // Modal de planes
   const [planesModal,   setPlanesModal]  = useState(false);
 
-  // Refrescar datos al volver a la pantalla
-  useFocusEffect(useCallback(() => { fetchData(); }, []));
-
-  // Escuchar deep link de PágueloFácil (birrea2play://wallet?status=success&amount=X)
-  useEffect(() => {
-    const handleUrl = ({ url }) => handleDeepLink(url);
-    const sub = Linking.addEventListener('url', handleUrl);
-
-    // Revisar si la app fue abierta por un deep link
-    Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); });
-
-    return () => sub.remove();
-  }, []);
-
-  function handleDeepLink(url) {
-    if (!url?.includes('wallet')) return;
-    try {
-      const parsed = new URL(url.replace('birrea2play://', 'https://app/'));
-      const status = parsed.searchParams.get('status');
-      const amount = parsed.searchParams.get('amount');
-
-      if (status === 'success') {
-        fetchData();
-        Alert.alert(
-          '✅ Pago exitoso',
-          amount ? `Se acreditaron $${parseFloat(amount).toFixed(2)} a tu wallet.` : 'Tu wallet fue recargado.'
-        );
-      } else if (status === 'failed') {
-        const razon = parsed.searchParams.get('razon') ?? 'Pago rechazado';
-        Alert.alert('Pago rechazado', decodeURIComponent(razon));
-      } else if (status === 'error') {
-        Alert.alert('Error', 'Ocurrió un error procesando el pago. Contacta soporte si el cobro fue aplicado.');
-      }
-    } catch {
-      // URL no parseable, ignorar
-    }
-  }
-
-  async function fetchData() {
+  // fetchData defined early so hooks below can reference it
+  const fetchData = useCallback(async () => {
+    if (!user?.id) { setLoading(false); return; }
     const [walletRes, planRes] = await Promise.all([
       supabase.from('wallets').select('id, balance').eq('user_id', user.id).single(),
       supabase.rpc('get_user_active_plan', { p_user_id: user.id }),
@@ -108,7 +72,58 @@ export default function WalletScreen() {
 
     setPlanActivo(planRes.data?.[0] ?? null);
     setLoading(false);
-  }
+  }, [user?.id, setWalletBalance]);
+
+  // Refrescar datos al volver a la pantalla. Cancel any Yappy polling when leaving.
+  useFocusEffect(useCallback(() => {
+    fetchData();
+    return () => {
+      // Screen lost focus (e.g., user tabbed away mid-payment) — cancel Yappy poll
+      if (yappyCancelRef.current) {
+        yappyCancelRef.current();
+        yappyCancelRef.current = null;
+      }
+    };
+  }, [fetchData]));
+
+  // Keep a ref to fetchData so the deep link handler always calls the latest version
+  const fetchDataRef = useRef(null);
+  useEffect(() => { fetchDataRef.current = fetchData; }, [fetchData]);
+
+  // Escuchar deep link de PágueloFácil (birrea2play://wallet?status=success&amount=X)
+  useEffect(() => {
+    function handleDeepLink(url) {
+      if (!url?.includes('wallet')) return;
+      try {
+        const parsed = new URL(url.replace('birrea2play://', 'https://app/'));
+        const status = parsed.searchParams.get('status');
+        const amount = parsed.searchParams.get('amount');
+
+        if (status === 'success') {
+          if (fetchDataRef.current) fetchDataRef.current();
+          Alert.alert(
+            '✅ Pago exitoso',
+            amount ? `Se acreditaron $${parseFloat(amount).toFixed(2)} a tu wallet.` : 'Tu wallet fue recargado.'
+          );
+        } else if (status === 'failed') {
+          const razon = parsed.searchParams.get('razon') ?? 'Pago rechazado';
+          Alert.alert('Pago rechazado', decodeURIComponent(razon));
+        } else if (status === 'error') {
+          Alert.alert('Error', 'Ocurrió un error procesando el pago. Contacta soporte si el cobro fue aplicado.');
+        }
+      } catch {
+        // URL no parseable, ignorar
+      }
+    }
+
+    const handleUrl = ({ url }) => handleDeepLink(url);
+    const sub = Linking.addEventListener('url', handleUrl);
+
+    // Revisar si la app fue abierta por un deep link
+    Linking.getInitialURL().then((url) => { if (url) handleDeepLink(url); }).catch(() => {});
+
+    return () => sub.remove();
+  }, []);
 
   function resetYappy() {
     setYappyStep('input');
@@ -200,8 +215,10 @@ export default function WalletScreen() {
 
   // ─── Recarga Yappy ──────────────────────────────────────────────────────────
   async function recargarYappy() {
+    if (!user?.id) { Alert.alert('Error', 'Debes iniciar sesión para recargar.'); return; }
     const amt = parseFloat(monto);
     if (!amt || amt < 1) { Alert.alert('Error', 'Monto mínimo $1.00'); return; }
+    if (amt > 500) { Alert.alert('Error', 'Monto máximo por recarga: $500.00'); return; }
 
     // FIX #4: evitar doble-tap mientras ya se está iniciando el flujo
     if (yappyStartingRef.current || procesando) return;

@@ -21,6 +21,7 @@ export default function CartScreen({ navigation }) {
 
   const checkout = async (payMethod) => {
     if (items.length === 0) return;
+    if (paying) return; // guard against double-tap
     if (payMethod === 'wallet' && !sufficient) {
       Alert.alert('Saldo insuficiente', 'Recarga tu wallet para continuar.');
       return;
@@ -77,11 +78,24 @@ export default function CartScreen({ navigation }) {
         ),
       ]);
 
-      // Deduct wallet if applicable
+      // Deduct wallet if applicable — re-read balance from DB to avoid stale value
       if (payMethod === 'wallet') {
-        const newBalance = walletBalance - cartTotal;
-        const { data: wallet } = await supabase.from('wallets').select('id').eq('user_id', user.id).single();
-        await supabase.from('wallets').update({ balance: newBalance }).eq('user_id', user.id);
+        const { data: wallet, error: wErr } = await supabase
+          .from('wallets')
+          .select('id, balance')
+          .eq('user_id', user.id)
+          .single();
+        if (wErr) throw wErr;
+        if (wallet.balance < cartTotal) {
+          throw new Error('Saldo insuficiente — el saldo cambió. Recarga tu wallet.');
+        }
+        const newBalance = wallet.balance - cartTotal;
+        const { error: updErr } = await supabase
+          .from('wallets')
+          .update({ balance: newBalance })
+          .eq('user_id', user.id)
+          .eq('balance', wallet.balance); // optimistic lock
+        if (updErr) throw new Error('El saldo cambió durante la operación. Intenta nuevamente.');
         await supabase.from('wallet_transactions').insert({
           wallet_id:   wallet.id,
           tipo:        'compra_tienda',
