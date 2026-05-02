@@ -16,38 +16,46 @@ export default function PlayerProfileScreen({ route, navigation }) {
   useEffect(() => { loadPlayer(); }, [userId]);
 
   async function loadPlayer() {
+    if (!userId) { setLoading(false); return; }
     setLoading(true);
-    const [
-      { data: u },
-      { data: regs },
-      { data: mvps },
-    ] = await Promise.all([
-      supabase.from('users').select('*').eq('id', userId).single(),
-      supabase.from('event_registrations')
-        .select('event_id, events(deporte)')
-        .eq('user_id', userId)
-        .eq('status', 'confirmed'),
-      supabase.from('mvp_results')
-        .select('id')
-        .eq('user_id', userId),
-    ]);
+    try {
+      const [
+        { data: u, error: uErr },
+        { data: regs },
+        { data: mvps },
+      ] = await Promise.all([
+        supabase.from('users').select('*').eq('id', userId).single(),
+        supabase.from('event_registrations')
+          .select('event_id, events(deporte)')
+          .eq('user_id', userId)
+          .eq('status', 'confirmed'),
+        supabase.from('mvp_results')
+          .select('id')
+          .eq('user_id', userId),
+      ]);
+      if (uErr) throw uErr;
 
-    setPlayer(u);
+      setPlayer(u);
 
-    // Deportes únicos jugados
-    const deportesSet = new Set(
-      (regs ?? [])
-        .map(r => r.events?.deporte)
-        .filter(Boolean)
-        .flatMap(d => d.split(', '))
-    );
+      // Deportes únicos jugados
+      const deportesSet = new Set(
+        (regs ?? [])
+          .map(r => r.events?.deporte)
+          .filter(Boolean)
+          .flatMap(d => d.split(', '))
+      );
 
-    setStats({
-      eventos:  regs?.length ?? 0,
-      mvps:     mvps?.length ?? 0,
-      deportes: [...deportesSet],
-    });
-    setLoading(false);
+      setStats({
+        eventos:  regs?.length ?? 0,
+        mvps:     mvps?.length ?? 0,
+        deportes: [...deportesSet],
+      });
+    } catch (e) {
+      console.warn('PlayerProfileScreen loadPlayer error:', e.message);
+      setPlayer(null);
+    } finally {
+      setLoading(false);
+    }
   }
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;

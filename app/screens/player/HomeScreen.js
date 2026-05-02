@@ -20,23 +20,28 @@ export default function HomeScreen({ navigation }) {
   const [loading,setLoading]  = React.useState(true);
 
   const fetchData = useCallback(async () => {
-    const [{ data: evs }, { data: mvpData }] = await Promise.all([
-      supabase
-        .from('events')
-        .select('*, event_registrations(count)')
-        .in('status', ['open', 'active'])
-        .eq('visible', true)
-        .order('fecha')
-        .limit(3),
-      supabase
-        .from('mvp_results')
-        .select('*, users(nombre, foto_url), matches(event_id, events(nombre))')
-        .order('created_at', { ascending: false })
-        .limit(3),
-    ]);
-    setEvents(evs ?? []);
-    setMvps(mvpData ?? []);
-    setLoading(false);
+    try {
+      const [{ data: evs }, { data: mvpData }] = await Promise.all([
+        supabase
+          .from('events')
+          .select('*, event_registrations(count)')
+          .in('status', ['open', 'active'])
+          .eq('visible', true)
+          .order('fecha')
+          .limit(3),
+        supabase
+          .from('mvp_results')
+          .select('*, users(nombre, foto_url), matches(event_id, events(nombre))')
+          .order('created_at', { ascending: false })
+          .limit(3),
+      ]);
+      setEvents(evs ?? []);
+      setMvps(mvpData ?? []);
+    } catch (e) {
+      console.warn('HomeScreen fetchData error:', e.message);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {

@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  Alert, ActivityIndicator, Image, RefreshControl,
+  Alert, ActivityIndicator, Image, RefreshControl, Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
@@ -9,7 +9,7 @@ import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
 import { getRefundStatus, getEventStatusInfo } from '../../../lib/eventHelpers';
 import { cancelRegistration } from '../../../lib/cancelRegistration';
-import { yappyLogin, getCollectionMethods } from '../../../lib/yappy';
+import { getYappyAlias, buildYappyDeepLink, YAPPY_FALLBACK_URL } from '../../../lib/yappy';
 import PaymentModal from '../../../components/PaymentModal';
 import CancelRegistrationModal from '../../../components/CancelRegistrationModal';
 import GuestModal from '../../../components/GuestModal';
@@ -35,19 +35,26 @@ export default function EventDetailScreen({ route, navigation }) {
   const [yappyLoading,setYappyLoading]= useState(false);
 
   const fetchEvent = useCallback(async () => {
-    const [{ data: ev }, { data: regs }, { data: gs }] = await Promise.all([
-      supabase.from('events').select('*').eq('id', eventId).single(),
-      supabase.from('event_registrations')
-        .select('*, users(nombre, foto_url)')
-        .eq('event_id', eventId)
-        .eq('status', 'confirmed'),
-      supabase.from('event_guests').select('*').eq('event_id', eventId),
-    ]);
-    setEvent(ev);
-    setRegistrations(regs ?? []);
-    setGuests(gs ?? []);
-    setMyReg(regs?.find((r) => r.user_id === user?.id) ?? null);
-    setLoading(false);
+    try {
+      const [{ data: ev, error: evErr }, { data: regs }, { data: gs }] = await Promise.all([
+        supabase.from('events').select('*').eq('id', eventId).single(),
+        supabase.from('event_registrations')
+          .select('*, users(id, nombre, foto_url)')
+          .eq('event_id', eventId)
+          .eq('status', 'confirmed'),
+        supabase.from('event_guests').select('*').eq('event_id', eventId),
+      ]);
+      if (evErr) throw evErr;
+      setEvent(ev);
+      setRegistrations(regs ?? []);
+      setGuests(gs ?? []);
+      setMyReg(regs?.find((r) => r.user_id === user?.id) ?? null);
+    } catch (e) {
+      // Leave event as null so the "no se pudo cargar" fallback renders
+      console.warn('fetchEvent error:', e.message);
+    } finally {
+      setLoading(false);
+    }
   }, [eventId, user?.id]);
 
   useEffect(() => { fetchEvent(); }, [fetchEvent]);
@@ -60,30 +67,88 @@ export default function EventDetailScreen({ route, navigation }) {
 
   // ── Wallet payment ────────────────────────────────────────────────────────
   const payWithWallet = async () => {
-    if (walletBalance < event.precio) {
+    const precio = event?.precio ?? 0;
+    if (precio <= 0) {
+      Alert.alert('Error', 'Este evento no tiene un precio válido.');
+      return;
+    }
+    if (walletBalance < precio) {
       Alert.alert('Saldo insuficiente', 'Recarga tu wallet antes de inscribirte.');
       return;
     }
+    // Guard: avoid double-tap submitting twice
+    if (paying) return;
     setPaying(true);
     try {
-      const { data: wallet } = await supabase.from('wallets').select('id').eq('user_id', user.id).single();
-      const newBalance = walletBalance - event.precio;
+      // Check for existing registration first to prevent double-inscription
+      const { data: existingReg } = await supabase
+        .from('event_registrations')
+        .select('id')
+        .eq('event_id', event.id)
+        .eq('user_id', user.id)
+        .eq('status', 'confirmed')
+        .maybeSingle();
+      if (existingReg) {
+        Alert.alert('Ya estás inscrito', 'Ya tienes una inscripción confirmada en este evento.');
+        setPayModal(false);
+        await fetchEvent();
+        return;
+      }
 
-      await supabase.from('wallets').update({ balance: newBalance }).eq('user_id', user.id);
-      await supabase.from('wallet_transactions').insert({
-        wallet_id:   wallet.id,
-        tipo:        'inscripcion',
-        monto:       -event.precio,
-        descripcion: `Inscripción: ${event.nombre}`,
+      // Use atomic RPC to debit wallet + record transaction + create registration
+      const { error } = await supabase.rpc('inscribir_con_wallet', {
+        p_user_id:   user.id,
+        p_event_id:  event.id,
+        p_monto:     precio,
+        p_descripcion: `Inscripción: ${event.nombre}`,
       });
-      await supabase.from('event_registrations').insert({
-        event_id:    event.id,
-        user_id:     user.id,
-        metodo_pago: 'wallet',
-        monto_pagado: event.precio,
-        status:      'confirmed',
-      });
-      setWalletBalance(newBalance);
+
+      // Fallback if RPC doesn't exist: do it manually with a fresh balance check
+      if (error && error.code === 'PGRST202') {
+        // RPC not found — use manual multi-step approach
+        const { data: wallet, error: wErr } = await supabase
+          .from('wallets')
+          .select('id, balance')
+          .eq('user_id', user.id)
+          .single();
+        if (wErr) throw wErr;
+        if (wallet.balance < precio) {
+          throw new Error('Saldo insuficiente — por favor recarga tu wallet.');
+        }
+        const newBalance = wallet.balance - precio;
+        const { error: updErr } = await supabase
+          .from('wallets')
+          .update({ balance: newBalance })
+          .eq('user_id', user.id)
+          .eq('balance', wallet.balance); // optimistic lock
+        if (updErr) throw new Error('El saldo cambió durante la operación. Intenta nuevamente.');
+
+        await supabase.from('wallet_transactions').insert({
+          wallet_id:   wallet.id,
+          tipo:        'inscripcion',
+          monto:       -precio,
+          descripcion: `Inscripción: ${event.nombre}`,
+        });
+        await supabase.from('event_registrations').insert({
+          event_id:     event.id,
+          user_id:      user.id,
+          metodo_pago:  'wallet',
+          monto_pagado: precio,
+          status:       'confirmed',
+        });
+        setWalletBalance(newBalance);
+      } else if (error) {
+        throw error;
+      } else {
+        // RPC succeeded — refresh balance from DB
+        const { data: wallet } = await supabase
+          .from('wallets')
+          .select('balance')
+          .eq('user_id', user.id)
+          .single();
+        if (wallet) setWalletBalance(wallet.balance);
+      }
+
       setPayModal(false);
       Alert.alert('¡Inscrito!', 'Te has inscrito exitosamente.', [{ text: 'OK', onPress: fetchEvent }]);
     } catch (e) {
@@ -97,12 +162,15 @@ export default function EventDetailScreen({ route, navigation }) {
   const payWithYappy = async () => {
     setYappyLoading(true);
     try {
-      const token   = await yappyLogin();
-      const methods = await getCollectionMethods(token);
-      Alert.alert(
-        'Pago Yappy',
-        `Alias: ${methods?.[0]?.alias ?? 'N/D'}\nMonto: $${event.precio.toFixed(2)}\n\nCobro Yappy en desarrollo.`,
-      );
+      const alias     = await getYappyAlias();
+      const reference = `event-${event.id.slice(0, 8)}-${Date.now()}`;
+      const link      = buildYappyDeepLink({ alias, amount: event.precio ?? 0, reference });
+      const canOpen = await Linking.canOpenURL(link);
+      if (canOpen) {
+        await Linking.openURL(link);
+      } else {
+        await Linking.openURL(YAPPY_FALLBACK_URL);
+      }
     } catch (e) {
       Alert.alert('Error Yappy', e.message);
     } finally {
@@ -113,6 +181,11 @@ export default function EventDetailScreen({ route, navigation }) {
 
   // ── Cancel registration ───────────────────────────────────────────────────
   const handleCancel = async () => {
+    if (!myReg?.id) {
+      Alert.alert('Error', 'No se encontró tu inscripción. Recarga la pantalla.');
+      return;
+    }
+    if (cancelling) return; // guard against double-tap
     setCancelling(true);
     try {
       const result = await cancelRegistration({
@@ -227,7 +300,7 @@ export default function EventDetailScreen({ route, navigation }) {
         {/* Payment / inscription */}
         {event.status === 'open' && !myReg && !cuposFull && (
           <View style={styles.paySection}>
-            <Text style={styles.payTitle}>INSCRIPCIÓN — ${event.precio.toFixed(2)}</Text>
+            <Text style={styles.payTitle}>INSCRIPCIÓN — ${(event.precio ?? 0).toFixed(2)}</Text>
             <TouchableOpacity style={styles.btnPay} onPress={() => setPayModal(true)}>
               <Text style={styles.btnPayText}>Inscribirse →</Text>
             </TouchableOpacity>
@@ -259,7 +332,7 @@ export default function EventDetailScreen({ route, navigation }) {
         onClose={() => setPayModal(false)}
         onPayWallet={payWithWallet}
         onPayYappy={payWithYappy}
-        amount={event.precio}
+        amount={event.precio ?? 0}
         walletBalance={walletBalance}
         loading={paying || yappyLoading}
       />

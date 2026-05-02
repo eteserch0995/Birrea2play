@@ -14,7 +14,7 @@ const FILTERS = ['Todos', 'Liga', 'Torneo', 'Amistoso', 'Abiertos'];
 
 export default function EventsScreen({ navigation }) {
   const [filter, setFilter] = React.useState('Todos');
-  const { events, loading, fetchEvents } = useEventStore();
+  const { events, loading, error, fetchEvents } = useEventStore();
 
   const fetch = useCallback(() => {
     const q = filter === 'Abiertos' ? 'open' : filter;
@@ -45,7 +45,19 @@ export default function EventsScreen({ navigation }) {
 
       {loading && events.length === 0
         ? <ActivityIndicator color={COLORS.red} style={{ marginTop: SPACING.xl }} />
-        : (
+        : error
+          ? (
+            <View style={{ alignItems: 'center', padding: SPACING.xl, gap: SPACING.md }}>
+              <Text style={styles.empty}>Error al cargar eventos</Text>
+              <TouchableOpacity
+                style={{ backgroundColor: COLORS.red, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.sm, borderRadius: SPACING.sm }}
+                onPress={fetch}
+              >
+                <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.white }}>Reintentar</Text>
+              </TouchableOpacity>
+            </View>
+          )
+          : (
           <FlatList
             data={events}
             keyExtractor={(i) => i.id}

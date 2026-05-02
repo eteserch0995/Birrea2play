@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
-import { signUp, createUserProfile, uploadAvatar } from '../../../lib/auth';
+import { signUp, signOut, createUserProfile, uploadAvatar } from '../../../lib/auth';
 
 const DEPORTES = [
   'Fútbol', 'Fútbol 7', 'Fútbol Sala',
@@ -58,10 +58,17 @@ export default function RegisterScreen({ navigation }) {
     if (!result.canceled) setPhotoUri(result.assets[0].uri);
   };
 
-  const next = () => {
-    if (step === 1 && (!form.nombre || !form.correo)) {
-      Alert.alert('Error', 'Nombre y correo son obligatorios.');
-      return;
+  const goNext = () => {
+    if (step === 1) {
+      if (!form.nombre.trim()) {
+        Alert.alert('Error', 'El nombre es obligatorio.');
+        return;
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!form.correo.trim() || !emailRegex.test(form.correo.trim())) {
+        Alert.alert('Error', 'Ingresa un correo electrónico válido.');
+        return;
+      }
     }
     if (step === 2) {
       if (form.password.length < 8) { Alert.alert('Error', 'La contraseña debe tener al menos 8 caracteres.'); return; }
@@ -73,9 +80,12 @@ export default function RegisterScreen({ navigation }) {
 
   const submit = async () => {
     if (!form.terminos) { Alert.alert('Error', 'Debes aceptar los términos.'); return; }
+    if (loading) return; // guard against double-tap
     setLoading(true);
+    let authUser = null;
     try {
-      const { user: authUser } = await signUp(form.correo.trim().toLowerCase(), form.password);
+      const { user: au } = await signUp(form.correo.trim().toLowerCase(), form.password);
+      authUser = au;
       let foto_url = null;
       if (photoUri) {
         try {
@@ -86,7 +96,7 @@ export default function RegisterScreen({ navigation }) {
         }
       }
       await createUserProfile(authUser.id, {
-        nombre: form.nombre,
+        nombre: form.nombre.trim(),
         correo: form.correo.trim().toLowerCase(),
         telefono: form.telefono,
         residencia: form.residencia,
@@ -103,6 +113,11 @@ export default function RegisterScreen({ navigation }) {
         { text: 'OK', onPress: () => navigation.replace('Login') },
       ]);
     } catch (e) {
+      // If signUp succeeded but profile creation failed, the auth user exists.
+      // Sign them out to avoid limbo state — they can re-register.
+      if (authUser) {
+        signOut().catch(() => {});
+      }
       Alert.alert('Error al registrarse', e.message);
     } finally {
       setLoading(false);
@@ -158,11 +173,11 @@ export default function RegisterScreen({ navigation }) {
                     key={d}
                     style={[chipStyles.chip, sel && chipStyles.chipActive]}
                     onPress={() => {
-                      const next = sel
+                      const updatedDeportes = sel
                         ? form.deportes.filter(x => x !== d)
                         : [...form.deportes, d];
-                      update('deportes', next);
-                      if (!next.includes('Otro')) update('otroDeporte', '');
+                      update('deportes', updatedDeportes);
+                      if (!updatedDeportes.includes('Otro')) update('otroDeporte', '');
                       // Reset posicion si cambia selección
                       update('posicion', '');
                     }}
@@ -226,7 +241,7 @@ export default function RegisterScreen({ navigation }) {
             </TouchableOpacity>
           )}
           {step < 5
-            ? <TouchableOpacity style={styles.btn} onPress={next}><Text style={styles.btnText}>SIGUIENTE</Text></TouchableOpacity>
+            ? <TouchableOpacity style={styles.btn} onPress={goNext}><Text style={styles.btnText}>SIGUIENTE</Text></TouchableOpacity>
             : <TouchableOpacity style={styles.btn} onPress={submit} disabled={loading}>
                 {loading ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.btnText}>CREAR CUENTA</Text>}
               </TouchableOpacity>
