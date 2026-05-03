@@ -1,7 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
   Alert, ActivityIndicator, Image, RefreshControl, Linking,
+  Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
@@ -9,7 +10,7 @@ import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
 import { getRefundStatus, getEventStatusInfo } from '../../../lib/eventHelpers';
 import { cancelRegistration } from '../../../lib/cancelRegistration';
-import { getYappyAlias, buildYappyDeepLink, YAPPY_FALLBACK_URL } from '../../../lib/yappy';
+import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 import PaymentModal from '../../../components/PaymentModal';
 import CancelRegistrationModal from '../../../components/CancelRegistrationModal';
 import GuestModal from '../../../components/GuestModal';
@@ -33,6 +34,12 @@ export default function EventDetailScreen({ route, navigation }) {
   const [paying,      setPaying]      = useState(false);
   const [cancelling,  setCancelling]  = useState(false);
   const [yappyLoading,setYappyLoading]= useState(false);
+
+  // Yappy Botón flow
+  const yappyCancelRef                          = useRef(null);
+  const [yappyStep,     setYappyStep]           = useState('idle'); // 'idle' | 'phone' | 'polling'
+  const [yappyPhone,    setYappyPhone]          = useState('');
+  const [yappyProgress, setYappyProgress]       = useState({ attempts: 0, maxAttempts: 60 });
 
   const fetchEvent = useCallback(async () => {
     try {
@@ -158,24 +165,97 @@ export default function EventDetailScreen({ route, navigation }) {
     }
   };
 
-  // ── Yappy payment ─────────────────────────────────────────────────────────
-  const payWithYappy = async () => {
+  // ── Yappy Botón flow ──────────────────────────────────────────────────────
+  const cancelYappy = () => {
+    if (yappyCancelRef.current) { yappyCancelRef.current(); yappyCancelRef.current = null; }
+    setYappyStep('idle');
+    setYappyLoading(false);
+  };
+
+  // Opens phone-input modal (closes PaymentModal first)
+  const payWithYappy = () => {
+    setPayModal(false);
+    setYappyPhone('');
+    setYappyStep('phone');
+  };
+
+  const confirmarYappyBoton = async () => {
+    const phone  = yappyPhone.replace(/\D/g, '');
+    const precio = event?.precio ?? 0;
+    if (phone.length < 7) { Alert.alert('Error', 'Ingresa un número Yappy válido (mínimo 7 dígitos).'); return; }
+    if (precio <= 0)       { Alert.alert('Error', 'Este evento no tiene un precio válido.'); return; }
+
     setYappyLoading(true);
+    let orderId;
     try {
-      const alias     = await getYappyAlias();
-      const reference = `event-${event.id.slice(0, 8)}-${Date.now()}`;
-      const link      = buildYappyDeepLink({ alias, amount: event.precio ?? 0, reference });
-      const canOpen = await Linking.canOpenURL(link);
-      if (canOpen) {
-        await Linking.openURL(link);
-      } else {
-        await Linking.openURL(YAPPY_FALLBACK_URL);
-      }
+      // tipo='evento' → IPN inscribirá directamente sin tocar wallet
+      const result = await iniciarBotonYappy({ phone, amount: precio, tipo: 'evento', event_id: event.id });
+      orderId = result.orderId;
     } catch (e) {
       Alert.alert('Error Yappy', e.message);
-    } finally {
       setYappyLoading(false);
+      return;
+    }
+
+    setYappyStep('polling');
+    setYappyProgress({ attempts: 0, maxAttempts: 60 });
+
+    const { promise, cancel } = pollBotonOrder({
+      orderId,
+      onProgress: (p) => setYappyProgress(p),
+    });
+    yappyCancelRef.current = cancel;
+
+    promise
+      .then(() => {
+        // El IPN ya inscribió al jugador vía inscribir_yappy_evento RPC
+        yappyCancelRef.current = null;
+        setYappyStep('idle');
+        Alert.alert('¡Inscrito!', `Pago de $${precio.toFixed(2)} con Yappy confirmado. ¡Estás inscrito!`, [
+          { text: 'OK', onPress: fetchEvent },
+        ]);
+      })
+      .catch((e) => {
+        yappyCancelRef.current = null;
+        setYappyStep('idle');
+        if (e.message !== 'cancelled') Alert.alert('Pago no completado', e.message);
+      })
+      .finally(() => setYappyLoading(false));
+  };
+
+  // ── Cash payment ─────────────────────────────────────────────────────────
+  const payWithEfectivo = async () => {
+    if (paying) return;
+    setPaying(true);
+    try {
+      // Fetch gestor contact info (nombre + telefono)
+      const { data: gestor } = await supabase
+        .from('users')
+        .select('nombre, telefono, correo')
+        .eq('id', event.created_by)
+        .maybeSingle();
+
+      const { error: insertErr } = await supabase.from('cash_payment_requests').insert({
+        user_id:   user.id,
+        event_id:  event.id,
+        amount:    event.precio ?? 0,
+      });
+
+      if (insertErr) throw new Error(insertErr.message);
+
       setPayModal(false);
+      const contacto = gestor?.telefono || gestor?.correo || '';
+      const gestorInfo = gestor
+        ? `\n\nContacta al gestor para pagar:\n👤 ${gestor.nombre}${contacto ? `\n📱 ${contacto}` : ''}`
+        : '';
+      Alert.alert(
+        '⏳ Pago en efectivo solicitado',
+        `Tienes 4 horas para contactar al gestor y completar el pago de $${(event.precio ?? 0).toFixed(2)}.${gestorInfo}\n\nSi el pago no se confirma en 4 horas, el cupo será liberado.`,
+      );
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setPaying(false);
     }
   };
 
@@ -255,6 +335,14 @@ export default function EventDetailScreen({ route, navigation }) {
           )}
         </View>
 
+        {/* Foto de cancha */}
+        {event.cancha_foto_url && (
+          <Image
+            source={{ uri: event.cancha_foto_url }}
+            style={{ width: '100%', height: 180, resizeMode: 'cover' }}
+          />
+        )}
+
         {/* Info card */}
         <View style={styles.card}>
           {event.deporte && <InfoRow icon="🏅" label={`${event.deporte} · ${event.formato}`} />}
@@ -263,6 +351,14 @@ export default function EventDetailScreen({ route, navigation }) {
           <InfoRow icon="👤" label={event.genero} />
           {!event.cupos_ilimitado && <InfoRow icon="👥" label={`${inscritos}/${event.cupos_total} jugadores`} />}
           {event.descripcion && <Text style={styles.desc}>{event.descripcion}</Text>}
+          {event.maps_url && (
+            <TouchableOpacity
+              style={styles.mapsBtn}
+              onPress={() => Linking.openURL(event.maps_url)}
+            >
+              <Text style={styles.mapsBtnText}>🗺 Ver en Google Maps</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Players */}
@@ -332,9 +428,11 @@ export default function EventDetailScreen({ route, navigation }) {
         onClose={() => setPayModal(false)}
         onPayWallet={payWithWallet}
         onPayYappy={payWithYappy}
+        onPayEfectivo={payWithEfectivo}
         amount={event.precio ?? 0}
         walletBalance={walletBalance}
         loading={paying || yappyLoading}
+        showEfectivo={true}
       />
 
       <CancelRegistrationModal
@@ -353,6 +451,78 @@ export default function EventDetailScreen({ route, navigation }) {
         eventId={event.id}
         onSuccess={fetchEvent}
       />
+
+      {/* Yappy Botón — phone input + polling (same UI as WalletScreen) */}
+      <Modal visible={yappyStep !== 'idle'} transparent animationType="slide" onRequestClose={cancelYappy}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={yappyStyles.modalOverlay}>
+            <View style={yappyStyles.modal}>
+              <Text style={yappyStyles.modalTitle}>PAGAR CON YAPPY</Text>
+
+              {yappyStep === 'phone' && (
+                <>
+                  <Text style={yappyStyles.metodoInfo}>
+                    Ingresa tu número Yappy. Recibirás una notificación en tu app para aprobar el cobro de{' '}
+                    <Text style={{ color: COLORS.green, fontFamily: FONTS.bodyMedium }}>
+                      ${(event?.precio ?? 0).toFixed(2)}
+                    </Text>.
+                  </Text>
+
+                  <TextInput
+                    style={yappyStyles.input}
+                    placeholder="Número Yappy (ej. 61234567)"
+                    placeholderTextColor={COLORS.gray}
+                    keyboardType="phone-pad"
+                    value={yappyPhone}
+                    onChangeText={setYappyPhone}
+                    maxLength={12}
+                    autoFocus
+                  />
+
+                  <View style={yappyStyles.modalBtns}>
+                    <TouchableOpacity style={yappyStyles.modalCancel} onPress={cancelYappy}>
+                      <Text style={yappyStyles.modalCancelText}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[yappyStyles.modalConfirm, {
+                        opacity: yappyPhone.replace(/\D/g, '').length >= 7 ? 1 : 0.4,
+                      }]}
+                      onPress={confirmarYappyBoton}
+                      disabled={yappyLoading || yappyPhone.replace(/\D/g, '').length < 7}
+                    >
+                      {yappyLoading
+                        ? <ActivityIndicator color={COLORS.white} />
+                        : <Text style={yappyStyles.modalConfirmText}>📱 Cobrar por Yappy</Text>
+                      }
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+
+              {yappyStep === 'polling' && (
+                <>
+                  <View style={yappyStyles.openedCard}>
+                    <ActivityIndicator color={COLORS.green} style={{ marginBottom: 12 }} />
+                    <Text style={yappyStyles.openedTitle}>Esperando aprobación...</Text>
+                    <Text style={yappyStyles.openedAmount}>${(event?.precio ?? 0).toFixed(2)}</Text>
+                    <Text style={yappyStyles.openedSub}>
+                      Abre tu app Yappy y acepta el cobro de Birrea2Play.
+                    </Text>
+                    <Text style={yappyStyles.pollingDots}>
+                      {yappyProgress.attempts}/{yappyProgress.maxAttempts} intentos
+                    </Text>
+                  </View>
+                  <View style={yappyStyles.modalBtns}>
+                    <TouchableOpacity style={yappyStyles.modalCancel} onPress={cancelYappy}>
+                      <Text style={yappyStyles.modalCancelText}>Cancelar</Text>
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -383,6 +553,8 @@ const styles = StyleSheet.create({
   statusText:   { fontFamily: FONTS.bodyMedium, fontSize: 12 },
   card:         { backgroundColor: COLORS.card, margin: SPACING.md, borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.navy },
   desc:         { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray, marginTop: SPACING.sm, lineHeight: 20 },
+  mapsBtn:      { marginTop: SPACING.sm, backgroundColor: COLORS.blue + '25', borderRadius: RADIUS.sm, padding: SPACING.sm, alignItems: 'center', borderWidth: 1, borderColor: COLORS.blue },
+  mapsBtnText:  { fontFamily: FONTS.bodyMedium, fontSize: 13, color: COLORS.blue2 ?? COLORS.blue },
   sectionTitle: { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 1, paddingHorizontal: SPACING.md, marginBottom: SPACING.sm },
   playersRow:   { paddingHorizontal: SPACING.md, marginBottom: SPACING.md },
   playerChip:   { alignItems: 'center', gap: 4, marginRight: SPACING.md },
@@ -402,4 +574,51 @@ const styles = StyleSheet.create({
   btnGuest:     { backgroundColor: COLORS.blue + '30', borderRadius: RADIUS.md, padding: SPACING.sm, alignItems: 'center', borderWidth: 1, borderColor: COLORS.blue2 },
   btnGuestText: { fontFamily: FONTS.bodyMedium, color: COLORS.blue2, fontSize: 14 },
   fullText:     { fontFamily: FONTS.body, color: COLORS.red, textAlign: 'center', margin: SPACING.md },
+});
+
+// Same styles as WalletScreen Yappy modal for visual consistency
+const yappyStyles = StyleSheet.create({
+  modalOverlay: { flex: 1, backgroundColor: '#00000099', justifyContent: 'flex-end' },
+  modal: {
+    backgroundColor: COLORS.card2 ?? COLORS.card,
+    borderTopLeftRadius: RADIUS.xl ?? 20,
+    borderTopRightRadius: RADIUS.xl ?? 20,
+    padding: SPACING.xl,
+    gap: SPACING.md,
+  },
+  modalTitle:       { fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white, letterSpacing: 2 },
+  metodoInfo:       { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, textAlign: 'center' },
+  input: {
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    color: COLORS.white,
+    fontFamily: FONTS.body,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: COLORS.navy,
+  },
+  modalBtns:        { flexDirection: 'row', gap: SPACING.sm },
+  modalCancel: {
+    flex: 1, padding: SPACING.md, borderRadius: RADIUS.md, alignItems: 'center',
+    borderWidth: 1, borderColor: COLORS.navy, backgroundColor: COLORS.card,
+  },
+  modalCancelText:  { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray },
+  modalConfirm: {
+    flex: 2, padding: SPACING.md, borderRadius: RADIUS.md, alignItems: 'center',
+    backgroundColor: COLORS.green,
+  },
+  modalConfirmText: { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.white, letterSpacing: 1 },
+  openedCard: {
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.md,
+    padding: SPACING.xl,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.green + '44',
+  },
+  openedTitle:  { fontFamily: FONTS.bodyMedium, fontSize: 13, color: COLORS.green, marginBottom: 4 },
+  openedAmount: { fontFamily: FONTS.heading, fontSize: 44, color: COLORS.white, marginVertical: 4 },
+  openedSub:    { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, textAlign: 'center', marginTop: 4 },
+  pollingDots:  { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 8 },
 });

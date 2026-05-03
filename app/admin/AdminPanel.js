@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Alert, ActivityIndicator, TextInput, Image, Modal,
@@ -17,11 +17,14 @@ import {
 
 const Stack = createStackNavigator();
 
+const FUNCTIONS_URL = process.env.EXPO_PUBLIC_SUPABASE_URL + '/functions/v1';
+const ANON_KEY      = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
 // ═══════════════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════════
 function AdminDashboard({ navigation }) {
-  const [stats, setStats]   = useState({ users: 0, events: 0, requests: 0, walletTotal: 0, orders: 0 });
+  const [stats, setStats]   = useState({ users: 0, events: 0, requests: 0, walletTotal: 0, orders: 0, pendingRecargas: 0 });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,18 +36,19 @@ function AdminDashboard({ navigation }) {
           { count: requests },
           { data: wallets },
           { count: orders },
+          { count: pendingRecargas },
         ] = await Promise.all([
           supabase.from('users').select('*', { count: 'exact', head: true }),
           supabase.from('events').select('*', { count: 'exact', head: true }).in('status', ['open', 'active']),
           supabase.from('gestor_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
           supabase.from('wallets').select('balance'),
           supabase.from('orders').select('*', { count: 'exact', head: true }).eq('status', 'paid'),
+          supabase.from('pending_recargas').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
         ]);
         const walletTotal = wallets?.reduce((s, w) => s + (w.balance ?? 0), 0) ?? 0;
-        setStats({ users: users ?? 0, events: events ?? 0, requests: requests ?? 0, walletTotal, orders: orders ?? 0 });
+        setStats({ users: users ?? 0, events: events ?? 0, requests: requests ?? 0, walletTotal, orders: orders ?? 0, pendingRecargas: pendingRecargas ?? 0 });
       } catch (e) {
         console.warn('AdminDashboard load error:', e.message);
-        // WC fix: setLoading(false) siempre — nunca dejar el spinner permanente
       } finally {
         setLoading(false);
       }
@@ -53,12 +57,13 @@ function AdminDashboard({ navigation }) {
   }, []);
 
   const sections = [
-    { label: 'Solicitudes', icon: '📋', route: 'AdminRequests', badge: stats.requests },
+    { label: 'Solicitudes', icon: '📋', route: 'AdminRequests',  badge: stats.requests },
+    { label: 'Recargas',    icon: '💳', route: 'AdminRecargas',  badge: stats.pendingRecargas },
     { label: 'Usuarios',    icon: '👥', route: 'AdminUsers' },
     { label: 'Wallets',     icon: '💰', route: 'AdminWallets' },
     { label: 'Inventario',  icon: '🛒', route: 'AdminInventory' },
     { label: 'Eventos',     icon: '📅', route: 'AdminEvents' },
-    { label: 'Órdenes',     icon: '📦', route: 'AdminOrders', badge: stats.orders },
+    { label: 'Órdenes',     icon: '📦', route: 'AdminOrders',    badge: stats.orders },
   ];
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
@@ -72,6 +77,7 @@ function AdminDashboard({ navigation }) {
           <StatCard label="Solicitudes"     value={stats.requests}                       icon="📋" color={stats.requests > 0 ? COLORS.gold : undefined} />
           <StatCard label="Wallet total"    value={`$${stats.walletTotal.toFixed(0)}`}   icon="💰" />
           <StatCard label="Órdenes pend."   value={stats.orders}                         icon="📦" color={stats.orders > 0 ? COLORS.gold : undefined} />
+          <StatCard label="Recargas pend."  value={stats.pendingRecargas}                icon="💳" color={stats.pendingRecargas > 0 ? COLORS.gold : undefined} />
         </View>
         <Text style={styles.sectionTitle}>Acciones rápidas</Text>
         <View style={styles.menuGrid}>
@@ -990,6 +996,23 @@ function AdminEvents({ navigation }) {
                 onPress={() => navigation.navigate('AdminManageEvent', { eventId: ev.id, eventNombre: ev.nombre, formato: ev.formato })}>
                 <Text style={[styles.actionBtnText, { color: COLORS.gold }]}>⚙️ Gestionar</Text>
               </TouchableOpacity>
+              {(ev.status === 'draft' || ev.status === 'cancelled') && (
+                <TouchableOpacity
+                  style={[styles.actionBtn, { backgroundColor: COLORS.red + '25', borderColor: COLORS.red }]}
+                  onPress={() =>
+                    Alert.alert('Eliminar evento', `¿Eliminar "${ev.nombre}" permanentemente?`, [
+                      { text: 'Cancelar', style: 'cancel' },
+                      { text: 'Eliminar', style: 'destructive', onPress: async () => {
+                        const { error } = await supabase.from('events').delete().eq('id', ev.id);
+                        if (error) { Alert.alert('Error', error.message); return; }
+                        fetchEvents();
+                      }},
+                    ])
+                  }
+                >
+                  <Text style={[styles.actionBtnText, { color: COLORS.red }]}>🗑 Eliminar</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         ))}
@@ -1869,6 +1892,177 @@ function AdminManageEvent({ route, navigation }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// RECARGAS YAPPY (admin approval queue)
+// ═══════════════════════════════════════════════════════════════════
+function AdminRecargas() {
+  const { user } = useAuthStore();
+  const [recargas,     setRecargas]     = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [processing,   setProcessing]   = useState(null); // id being processed
+  const [rejectModal,  setRejectModal]  = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+
+  useEffect(() => { fetchRecargas(); }, []);
+
+  async function fetchRecargas() {
+    setLoading(true);
+    const { data } = await supabase
+      .from('pending_recargas')
+      .select('*, user:users!user_id(nombre, correo)')
+      .order('created_at', { ascending: true });
+    setRecargas(data ?? []);
+    setLoading(false);
+  }
+
+  async function callApprove(id, action, notas = null) {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess?.session?.access_token;
+    if (!token) { Alert.alert('Error', 'Sesión expirada'); return; }
+
+    const res = await fetch(`${FUNCTIONS_URL}/yappy-admin-approve`, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/json',
+        'apikey':        ANON_KEY,
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify({ id, action, notas }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? `Error HTTP ${res.status}`);
+    return json;
+  }
+
+  async function approve(r) {
+    setProcessing(r.id);
+    try {
+      await callApprove(r.id, 'approve');
+      fetchRecargas();
+      Alert.alert('✅ Aprobada', `Se acreditaron $${Number(r.amount_credito).toFixed(2)} a ${r.user?.nombre}.`);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setProcessing(null);
+    }
+  }
+
+  async function confirmReject() {
+    if (!rejectReason.trim()) { Alert.alert('Requerido', 'Escribe una razón'); return; }
+    const r = rejectModal;
+    setRejectModal(null);
+    setProcessing(r.id);
+    try {
+      await callApprove(r.id, 'reject', rejectReason.trim());
+      setRejectReason('');
+      fetchRecargas();
+      Alert.alert('Rechazada', `Recarga de ${r.user?.nombre} rechazada.`);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setProcessing(null);
+    }
+  }
+
+  const STATUS_COLOR = { pending: COLORS.gold, approved: COLORS.green, rejected: COLORS.red };
+
+  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
+  return (
+    <SafeAreaView style={styles.safe}>
+      <Text style={styles.title}>RECARGAS YAPPY</Text>
+      <ScrollView contentContainerStyle={styles.list}>
+        {recargas.length === 0 && <Text style={styles.empty}>No hay recargas pendientes</Text>}
+        {recargas.map((r) => (
+          <View key={r.id} style={[styles.card, r.status === 'pending' && { borderColor: COLORS.gold + '44' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardName}>{r.user?.nombre ?? '—'}</Text>
+                <Text style={styles.cardSub}>{r.user?.correo}</Text>
+                {r.tier_label && <Text style={[styles.cardSub, { color: COLORS.white + 'AA' }]}>{r.tier_label}</Text>}
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={[styles.walletBalance, { fontSize: 20 }]}>${Number(r.amount_credito).toFixed(2)}</Text>
+                {r.amount_credito !== r.amount_paid && (
+                  <Text style={[styles.cardSub, { color: COLORS.gray }]}>pagó ${Number(r.amount_paid).toFixed(2)}</Text>
+                )}
+                <View style={[styles.statusBadge, { backgroundColor: (STATUS_COLOR[r.status] ?? COLORS.gray) + '33', marginTop: 4 }]}>
+                  <Text style={[styles.statusText, { color: STATUS_COLOR[r.status] ?? COLORS.gray }]}>
+                    {r.status.toUpperCase()}
+                  </Text>
+                </View>
+              </View>
+            </View>
+            <Text style={styles.cardSub}>
+              {new Date(r.created_at).toLocaleString('es-PA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+            </Text>
+            {r.notas && <Text style={[styles.cardSub, { fontStyle: 'italic' }]}>{r.notas}</Text>}
+            {r.status === 'pending' && (
+              <View style={styles.btnRow}>
+                <TouchableOpacity
+                  style={[styles.btn, { backgroundColor: COLORS.green + 'CC', opacity: processing === r.id ? 0.5 : 1 }]}
+                  onPress={() => approve(r)}
+                  disabled={!!processing}
+                >
+                  {processing === r.id
+                    ? <ActivityIndicator color={COLORS.white} size="small" />
+                    : <Text style={styles.btnText}>✓ Aprobar</Text>
+                  }
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.btn, { backgroundColor: COLORS.red + 'CC', opacity: processing === r.id ? 0.5 : 1 }]}
+                  onPress={() => { setRejectReason(''); setRejectModal(r); }}
+                  disabled={!!processing}
+                >
+                  <Text style={styles.btnText}>✗ Rechazar</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        ))}
+        <View style={{ height: 40 }} />
+      </ScrollView>
+
+      <Modal visible={!!rejectModal} transparent animationType="fade">
+        <View style={styles.overlay}>
+          <View style={styles.modalBox}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>✗ Rechazar recarga</Text>
+            </View>
+            <View style={styles.modalBody}>
+              <Text style={styles.modalSubtitle}>Usuario</Text>
+              <Text style={styles.modalValue}>{rejectModal?.user?.nombre}</Text>
+              <Text style={[styles.modalSubtitle, { marginTop: SPACING.sm }]}>Razón *</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Motivo del rechazo..."
+                placeholderTextColor={COLORS.gray}
+                value={rejectReason}
+                onChangeText={setRejectReason}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+                autoFocus
+              />
+              <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
+                <TouchableOpacity style={[styles.modalBtn, { backgroundColor: COLORS.navy, flex: 1 }]} onPress={() => setRejectModal(null)}>
+                  <Text style={styles.modalBtnText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalBtn, { backgroundColor: COLORS.red, flex: 1, opacity: rejectReason.trim() ? 1 : 0.5 }]}
+                  onPress={confirmReject}
+                  disabled={!rejectReason.trim()}
+                >
+                  <Text style={styles.modalBtnText}>✗ Rechazar</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // STACK NAVIGATOR
 // ═══════════════════════════════════════════════════════════════════
 export default function AdminPanel() {
@@ -1876,6 +2070,7 @@ export default function AdminPanel() {
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="AdminDashboard"   component={AdminDashboard} />
       <Stack.Screen name="AdminRequests"    component={AdminRequests} />
+      <Stack.Screen name="AdminRecargas"    component={AdminRecargas} />
       <Stack.Screen name="AdminUsers"       component={AdminUsers} />
       <Stack.Screen name="AdminWallets"     component={AdminWallets} />
       <Stack.Screen name="AdminInventory"   component={AdminInventory} />

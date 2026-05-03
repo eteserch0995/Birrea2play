@@ -6,11 +6,12 @@ import { COLORS, FONTS, SPACING, RADIUS } from '../constants/theme';
 
 /**
  * PaymentModal — bottom-sheet for event inscription payment.
- * Props: visible, onClose, onPayWallet, onPayYappy, amount, walletBalance, loading
+ * Props: visible, onClose, onPayWallet, onPayYappy, onPayEfectivo,
+ *        amount, walletBalance, loading, showEfectivo
  */
 export default function PaymentModal({
-  visible, onClose, onPayWallet, onPayYappy,
-  amount = 0, walletBalance = 0, loading = false,
+  visible, onClose, onPayWallet, onPayYappy, onPayEfectivo,
+  amount = 0, walletBalance = 0, loading = false, showEfectivo = true,
 }) {
   const sufficient = walletBalance >= amount;
 
@@ -53,6 +54,13 @@ export default function PaymentModal({
             <Text style={styles.btnText}>📱 Pagar con Yappy</Text>
           </TouchableOpacity>
 
+          {showEfectivo && onPayEfectivo && (
+            <TouchableOpacity style={[styles.btn, styles.btnEfectivo]} onPress={onPayEfectivo} disabled={loading}>
+              <Text style={styles.btnText}>💵 Pagar en Efectivo</Text>
+              <Text style={styles.btnSub}>Ventana de 4 horas — contacta al gestor</Text>
+            </TouchableOpacity>
+          )}
+
           <TouchableOpacity style={styles.cancelBtn} onPress={onClose}>
             <Text style={styles.cancelText}>Cancelar</Text>
           </TouchableOpacity>
@@ -79,6 +87,7 @@ const styles = StyleSheet.create({
   btn:         { borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center' },
   btnWallet:   { backgroundColor: COLORS.blue },
   btnYappy:    { backgroundColor: COLORS.green + 'CC' },
+  btnEfectivo: { backgroundColor: '#7C5C1E' },
   btnDisabled: { opacity: 0.45 },
   btnText: { fontFamily: FONTS.bodySemiBold, fontSize: 16, color: COLORS.white },
   btnSub:  { fontFamily: FONTS.body, fontSize: 12, color: COLORS.white + 'AA', marginTop: 2 },

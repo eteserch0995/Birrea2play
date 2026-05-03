@@ -16,3 +16,20 @@ supabase/set-secrets.sh
 *.mobileprovision
 *.orig.*
 web-build/
+
+# Production keystore — NEVER commit
+*.keystore
+*.jks
+
+# Android signing credentials — contains keystore passwords
+android/gradle.properties
+
+# Claude Code session files
+.claude/
+Skills/
+.mcp.json
+
+# Generated/backup files
+*.store-bak
+STORE_AUDIT_REPORT.md
+supabase/.temp/

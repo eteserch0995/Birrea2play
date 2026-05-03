@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  Alert, ActivityIndicator, TextInput, Modal,
+  Alert, ActivityIndicator, TextInput, Modal, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as ImagePicker from 'expo-image-picker';
 import { createStackNavigator } from '@react-navigation/stack';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
@@ -32,17 +33,35 @@ const PHASE_LABELS = {
 // ── Dashboard Gestor ───────────────────────────────────────────────────────
 function GestorDashboard({ navigation }) {
   const { user } = useAuthStore();
-  const [events,        setEvents]        = useState([]);
-  const [selectedEvent, setSelectedEvent] = useState(null);
-  const [loading,       setLoading]       = useState(true);
+  const [events,          setEvents]          = useState([]);
+  const [selectedEvent,   setSelectedEvent]   = useState(null);
+  const [loading,         setLoading]         = useState(true);
+  const [cashPending,     setCashPending]      = useState(0);
 
   // Refresh whenever the screen is focused (so newly created events appear)
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', fetchEvents);
+    const unsubscribe = navigation.addListener('focus', () => { fetchEvents(); fetchCashPending(); });
     return unsubscribe;
   }, [navigation]);
 
-  useEffect(() => { fetchEvents(); }, []);
+  useEffect(() => { fetchEvents(); fetchCashPending(); }, []);
+
+  async function fetchCashPending() {
+    if (!user?.id) return;
+    try {
+      const { data: evs } = await supabase
+        .from('events')
+        .select('id')
+        .eq('created_by', user.id);
+      if (!evs?.length) { setCashPending(0); return; }
+      const { count } = await supabase
+        .from('cash_payment_requests')
+        .select('id', { count: 'exact', head: true })
+        .in('event_id', evs.map((e) => e.id))
+        .eq('status', 'pending');
+      setCashPending(count ?? 0);
+    } catch { /* non-critical */ }
+  }
 
   async function fetchEvents() {
     if (!user?.id) { setLoading(false); return; }
@@ -65,12 +84,13 @@ function GestorDashboard({ navigation }) {
   }
 
   const sections = [
-    { label: 'Equipos',    icon: '🎽', route: 'GestorTeams'   },
-    { label: 'Jornadas',   icon: '📆', route: 'GestorMatches'  },
-    { label: 'Resultados', icon: '⚽', route: 'GestorResults'  },
-    { label: 'MVP',        icon: '🏆', route: 'GestorMvp'      },
-    { label: 'Config',     icon: '⚙️', route: 'GestorConfig'   },
-    { label: 'Ventas',     icon: '💵', route: 'GestorVentas'   },
+    { label: 'Equipos',    icon: '🎽', route: 'GestorTeams'        },
+    { label: 'Jornadas',   icon: '📆', route: 'GestorMatches'       },
+    { label: 'Resultados', icon: '⚽', route: 'GestorResults'       },
+    { label: 'MVP',        icon: '🏆', route: 'GestorMvp'           },
+    { label: 'Config',     icon: '⚙️', route: 'GestorConfig'        },
+    { label: 'Ventas',     icon: '💵', route: 'GestorVentas'        },
+    { label: 'Efectivo',   icon: '💵', route: 'GestorCashApprovals' },
   ];
 
   return (
@@ -113,16 +133,26 @@ function GestorDashboard({ navigation }) {
           <>
             <Text style={styles.selectedEvent}>{selectedEvent.nombre}</Text>
             <View style={styles.menuGrid}>
-              {sections.map((s) => (
-                <TouchableOpacity
-                  key={s.route}
-                  style={styles.menuCard}
-                  onPress={() => navigation.navigate(s.route, { eventId: selectedEvent.id })}
-                >
-                  <Text style={styles.menuIcon}>{s.icon}</Text>
-                  <Text style={styles.menuLabel}>{s.label}</Text>
-                </TouchableOpacity>
-              ))}
+              {sections.map((s) => {
+                const badge = s.route === 'GestorCashApprovals' && cashPending > 0 ? cashPending : 0;
+                return (
+                  <TouchableOpacity
+                    key={s.route}
+                    style={styles.menuCard}
+                    onPress={() => navigation.navigate(s.route, { eventId: selectedEvent.id })}
+                  >
+                    <View>
+                      <Text style={styles.menuIcon}>{s.icon}</Text>
+                      {badge > 0 && (
+                        <View style={{ position: 'absolute', top: -4, right: -4, backgroundColor: COLORS.red, borderRadius: 8, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 }}>
+                          <Text style={{ color: COLORS.white, fontSize: 9, fontFamily: FONTS.bodyMedium }}>{badge}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.menuLabel}>{s.label}</Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </>
         )}
@@ -135,7 +165,8 @@ function GestorDashboard({ navigation }) {
 // ── Crear Evento (gestor) ──────────────────────────────────────────────────
 function GestorCreateEvent({ navigation }) {
   const { user } = useAuthStore();
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving]           = useState(false);
+  const [canchaImageUri, setCanchaUri] = useState(null);
   const [form, setForm] = useState({
     nombre: '', formato: 'Liga', deporte: 'Fútbol 7', fecha: '', hora: '',
     lugar: '', precio: '0', cupos_total: '', cupos_ilimitado: false,
@@ -143,11 +174,32 @@ function GestorCreateEvent({ navigation }) {
     num_grupos: '2', equipos_por_grupo: '3',
     tiene_octavos: false, tiene_cuartos: false,
     tiene_semis: true, tiene_tercer_lugar: true, tiene_final: true,
-    ida_y_vuelta: false,
+    ida_y_vuelta: false, maps_url: '',
   });
 
   const upd = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const cuposNum = parseInt(form.cupos_total) || 0;
+
+  const pickCanchaPhoto = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') return;
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true, aspect: [16, 9], quality: 0.75,
+    });
+    if (!result.canceled) setCanchaUri(result.assets[0].uri);
+  };
+
+  const uploadCanchaPhoto = async (uri, eventId) => {
+    const ext  = uri.split('.').pop().toLowerCase().replace(/\?.*$/, '');
+    const path = `events/${eventId}.${ext}`;
+    const resp = await fetch(uri);
+    const blob = await resp.blob();
+    const { error } = await supabase.storage.from('event-photos').upload(path, blob, { upsert: true, contentType: `image/${ext}` });
+    if (error) throw error;
+    const { data } = supabase.storage.from('event-photos').getPublicUrl(path);
+    return data.publicUrl;
+  };
   const teamCalc = form.jugadores_por_equipo && cuposNum
     ? calcTeams(cuposNum, form.jugadores_por_equipo) : null;
 
@@ -187,7 +239,7 @@ function GestorCreateEvent({ navigation }) {
     }
     setSaving(true);
     try {
-      const { error } = await supabase.from('events').insert({
+      const { data: created, error } = await supabase.from('events').insert({
         nombre:              form.nombre.trim(),
         formato:             form.formato,
         deporte:             form.deporte,
@@ -199,6 +251,7 @@ function GestorCreateEvent({ navigation }) {
         cupos_ilimitado:     form.cupos_ilimitado,
         descripcion:         form.descripcion || null,
         status:              'draft',
+        visible:             false,
         created_by:          user?.id,
         jugadores_por_equipo:form.jugadores_por_equipo,
         jornadas:            form.formato === 'Liga' ? (parseInt(form.jornadas) || 1) : 1,
@@ -210,9 +263,19 @@ function GestorCreateEvent({ navigation }) {
         tiene_tercer_lugar:  form.formato === 'Torneo' ? form.tiene_tercer_lugar : false,
         tiene_final:         form.formato === 'Torneo' ? form.tiene_final : false,
         ida_y_vuelta:        form.ida_y_vuelta,
-      });
+        maps_url:            form.maps_url.trim() || null,
+      }).select('id').single();
       if (error) throw error;
-      Alert.alert('¡Evento creado!', `"${form.nombre}" creado en borrador. Publica cuando esté listo.`);
+
+      // Upload court photo if selected
+      if (canchaImageUri && created?.id) {
+        try {
+          const photoUrl = await uploadCanchaPhoto(canchaImageUri, created.id);
+          await supabase.from('events').update({ cancha_foto_url: photoUrl }).eq('id', created.id);
+        } catch (_) {}
+      }
+
+      Alert.alert('¡Evento creado!', `"${form.nombre}" creado en borrador. Ve a Config para publicarlo cuando esté listo.`);
       navigation.goBack();
     } catch (e) {
       Alert.alert('Error', e.message);
@@ -261,6 +324,17 @@ function GestorCreateEvent({ navigation }) {
 
         <Text style={styles.fieldLabel}>Lugar *</Text>
         <TextInput style={styles.input} placeholder="Cancha / Estadio" placeholderTextColor={COLORS.gray} value={form.lugar} onChangeText={(v) => upd('lugar', v)} />
+
+        <Text style={styles.fieldLabel}>Link de Google Maps (opcional)</Text>
+        <TextInput style={styles.input} placeholder="https://maps.google.com/..." placeholderTextColor={COLORS.gray} autoCapitalize="none" value={form.maps_url} onChangeText={(v) => upd('maps_url', v)} />
+
+        <Text style={styles.fieldLabel}>Foto de la cancha (opcional)</Text>
+        <TouchableOpacity style={[styles.input, { alignItems: 'center', justifyContent: 'center', minHeight: 80 }]} onPress={pickCanchaPhoto}>
+          {canchaImageUri
+            ? <Image source={{ uri: canchaImageUri }} style={{ width: '100%', height: 120, borderRadius: RADIUS.sm }} resizeMode="cover" />
+            : <Text style={{ color: COLORS.gray, fontFamily: FONTS.body }}>📷 Agregar foto de cancha</Text>
+          }
+        </TouchableOpacity>
 
         <Text style={styles.fieldLabel}>Precio ($) — deja 0 para gratis</Text>
         <TextInput style={styles.input} placeholder="0.00" placeholderTextColor={COLORS.gray} keyboardType="decimal-pad" value={form.precio} onChangeText={(v) => upd('precio', v)} />
@@ -1157,11 +1231,12 @@ function GestorMvp({ route }) {
 }
 
 // ── Config Evento ──────────────────────────────────────────────────────────
-function GestorConfig({ route }) {
+function GestorConfig({ route, navigation }) {
   const { eventId } = route.params ?? {};
   const [event,      setEvent]      = useState(null);
   const [loading,    setLoading]    = useState(true);
   const [cancelling, setCancelling] = useState(false);
+  const [deleting,   setDeleting]   = useState(false);
 
   useEffect(() => {
     if (!eventId) { setLoading(false); return; }
@@ -1175,21 +1250,23 @@ function GestorConfig({ route }) {
 
   async function toggleStatus(newStatus) {
     if (newStatus === 'finished') {
-      const newsTitle = `🏁 ${event?.nombre ?? 'Evento'} — Finalizado`;
-      const newsBody  = `El evento ${event?.nombre ?? ''} ha concluido. Revisa los resultados y la tabla de posiciones.`;
+      const newsTitle  = `🏁 ${event?.nombre ?? 'Evento'} — Finalizado`;
+      const newsBody   = `El evento ${event?.nombre ?? ''} ha concluido. Revisa los resultados y la tabla de posiciones.`;
       const finishedAt = new Date().toISOString();
-      const { error } = await supabase.from('events').update({ status: newStatus, event_finished_at: finishedAt }).eq('id', eventId);
+      const { error } = await supabase.from('events').update({ status: 'finished', event_finished_at: finishedAt }).eq('id', eventId);
       if (error) { Alert.alert('Error', error.message); return; }
-      setEvent((e) => ({ ...e, status: newStatus, event_finished_at: finishedAt }));
-      await supabase.from('news').insert({
-        titulo:    newsTitle,
-        contenido: newsBody,
-        tipo:      'resultados',
-      }).catch(() => {});
+      setEvent((e) => ({ ...e, status: 'finished', event_finished_at: finishedAt }));
+      await supabase.from('news').insert({ titulo: newsTitle, contenido: newsBody, tipo: 'resultados' }).catch(() => {});
       sendLocalNotification(newsTitle, newsBody);
-      // Notify all players of this event via push
       sendPushNotificationsToEventPlayers(eventId, newsTitle, newsBody);
-      Alert.alert('Evento finalizado', 'Se publicó una noticia automáticamente. El evento se ocultará a los jugadores en 24 horas.');
+      Alert.alert('Evento finalizado', 'Se publicó una noticia automáticamente.');
+      return;
+    }
+    if (newStatus === 'active' && event?.status === 'finished') {
+      // Reactivar: limpiar event_finished_at para que no se auto-oculte
+      const { error } = await supabase.from('events').update({ status: 'active', event_finished_at: null }).eq('id', eventId);
+      if (error) { Alert.alert('Error', error.message); return; }
+      setEvent((e) => ({ ...e, status: 'active', event_finished_at: null }));
       return;
     }
     const { error } = await supabase.from('events').update({ status: newStatus }).eq('id', eventId);
@@ -1287,7 +1364,7 @@ function GestorConfig({ route }) {
       { label: '⏸ Despublicar',        next: 'draft',     color: COLORS.gray },
     ],
     active:   [{ label: '🏁 Finalizar evento',   next: 'finished',  color: COLORS.red  }],
-    finished: [],
+    finished: [{ label: '▶ Reactivar evento',   next: 'active',    color: COLORS.blue }],
     cancelled: [],
   };
 
@@ -1375,6 +1452,44 @@ function GestorConfig({ route }) {
               Este evento fue cancelado. Los reembolsos fueron emitidos.
             </Text>
           )}
+
+          {/* Eliminar evento — disponible para cualquier estado */}
+          <View style={[{ borderTopWidth: 1, borderTopColor: COLORS.navy, marginTop: SPACING.md, paddingTop: SPACING.sm }]}>
+            <TouchableOpacity
+              style={[styles.btn, { backgroundColor: COLORS.red + '99', opacity: deleting ? 0.5 : 1 }]}
+              disabled={deleting}
+              onPress={() => {
+                Alert.alert(
+                  'Eliminar evento',
+                  `¿Eliminar "${event.nombre}" permanentemente?\n\nSe eliminarán inscripciones, equipos, partidos y todos los datos asociados. Esta acción no se puede deshacer.`,
+                  [
+                    { text: 'Cancelar', style: 'cancel' },
+                    { text: 'Eliminar', style: 'destructive', onPress: async () => {
+                      setDeleting(true);
+                      try {
+                        // DB cascade handles related records automatically (migration 20260503000003)
+                        // mvp_results.event_id → SET NULL (historial de jugadores preservado)
+                        const { error } = await supabase.from('events').delete().eq('id', eventId);
+                        if (error) throw error;
+                        Alert.alert('Eliminado', 'El evento fue eliminado.', [
+                          { text: 'OK', onPress: () => navigation.popToTop() },
+                        ]);
+                      } catch (e) {
+                        Alert.alert('Error al eliminar', e.message);
+                      } finally {
+                        setDeleting(false);
+                      }
+                    }},
+                  ]
+                );
+              }}
+            >
+              {deleting
+                ? <ActivityIndicator color={COLORS.white} size="small" />
+                : <Text style={styles.btnText}>🗑 Eliminar evento</Text>
+              }
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </SafeAreaView>
@@ -1438,18 +1553,137 @@ function GestorVentas() {
   );
 }
 
+// ── Pagos en efectivo (aprobación del gestor) ─────────────────────────────
+function GestorCashApprovals({ route, navigation }) {
+  const { user } = useAuthStore();
+  const eventId  = route?.params?.eventId;
+
+  const [requests,  setRequests]  = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [processing,setProcessing]= useState(null);
+
+  useEffect(() => { fetchRequests(); }, []);
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', fetchRequests);
+    return unsub;
+  }, [navigation]);
+
+  async function fetchRequests() {
+    setLoading(true);
+    const query = supabase
+      .from('cash_payment_requests')
+      .select('*, user:users!user_id(nombre, correo), event:events!event_id(nombre, precio)')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true });
+    if (eventId) query.eq('event_id', eventId);
+    const { data } = await query;
+    setRequests(data ?? []);
+    setLoading(false);
+  }
+
+  async function approve(r) {
+    setProcessing(r.id);
+    try {
+      const { error } = await supabase.from('event_registrations').insert({
+        event_id:     r.event_id,
+        user_id:      r.user_id,
+        metodo_pago:  'efectivo',
+        monto_pagado: r.amount,
+        status:       'confirmed',
+      });
+      if (error) throw error;
+
+      await supabase
+        .from('cash_payment_requests')
+        .update({ status: 'approved', gestor_id: user.id })
+        .eq('id', r.id);
+
+      fetchRequests();
+      Alert.alert('✅ Aprobado', `${r.user?.nombre} ha sido inscrito.`);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setProcessing(null);
+    }
+  }
+
+  async function reject(r) {
+    setProcessing(r.id);
+    await supabase
+      .from('cash_payment_requests')
+      .update({ status: 'rejected', gestor_id: user.id })
+      .eq('id', r.id);
+    fetchRequests();
+    setProcessing(null);
+  }
+
+  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
+  return (
+    <SafeAreaView style={styles.safe}>
+      <Text style={styles.title}>PAGOS EFECTIVO</Text>
+      <ScrollView contentContainerStyle={styles.list}>
+        {requests.length === 0 && <Text style={styles.empty}>Sin solicitudes de efectivo pendientes</Text>}
+        {requests.map((r) => {
+          const expired   = new Date(r.expires_at) < new Date();
+          const hoursLeft = Math.max(0, Math.ceil((new Date(r.expires_at) - new Date()) / 3600000));
+          return (
+            <View key={r.id} style={[styles.card, expired && { borderColor: COLORS.red + '44', opacity: 0.7 }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardName}>{r.user?.nombre}</Text>
+                  <Text style={styles.cardSub}>{r.event?.nombre}</Text>
+                  <Text style={styles.cardSub}>{r.user?.correo}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={styles.walletBalance}>${Number(r.amount).toFixed(2)}</Text>
+                  <Text style={[styles.cardSub, { color: expired ? COLORS.red : COLORS.gold }]}>
+                    {expired ? '⏰ Expirado' : `⏱ ${hoursLeft}h restantes`}
+                  </Text>
+                </View>
+              </View>
+              {!expired && (
+                <View style={styles.btnRow}>
+                  <TouchableOpacity
+                    style={[styles.btn, { backgroundColor: COLORS.green + 'CC', opacity: processing === r.id ? 0.5 : 1 }]}
+                    onPress={() => approve(r)}
+                    disabled={!!processing}
+                  >
+                    {processing === r.id
+                      ? <ActivityIndicator color={COLORS.white} size="small" />
+                      : <Text style={styles.btnText}>✓ Confirmar pago</Text>
+                    }
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.btn, { backgroundColor: COLORS.red + 'CC', opacity: processing === r.id ? 0.5 : 1 }]}
+                    onPress={() => reject(r)}
+                    disabled={!!processing}
+                  >
+                    <Text style={styles.btnText}>✗ Rechazar</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+            </View>
+          );
+        })}
+        <View style={{ height: 40 }} />
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
 // ── Stack ──────────────────────────────────────────────────────────────────
 export default function GestorPanel() {
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="GestorDashboard"   component={GestorDashboard}   />
-      <Stack.Screen name="GestorCreateEvent" component={GestorCreateEvent} />
-      <Stack.Screen name="GestorTeams"       component={GestorTeams}       />
-      <Stack.Screen name="GestorMatches"     component={GestorMatches}     />
-      <Stack.Screen name="GestorResults"     component={GestorResults}     />
-      <Stack.Screen name="GestorMvp"         component={GestorMvp}         />
-      <Stack.Screen name="GestorConfig"      component={GestorConfig}      />
-      <Stack.Screen name="GestorVentas"      component={GestorVentas}      />
+      <Stack.Screen name="GestorDashboard"    component={GestorDashboard}    />
+      <Stack.Screen name="GestorCreateEvent"  component={GestorCreateEvent}  />
+      <Stack.Screen name="GestorTeams"        component={GestorTeams}        />
+      <Stack.Screen name="GestorMatches"      component={GestorMatches}      />
+      <Stack.Screen name="GestorResults"      component={GestorResults}      />
+      <Stack.Screen name="GestorMvp"          component={GestorMvp}          />
+      <Stack.Screen name="GestorConfig"       component={GestorConfig}       />
+      <Stack.Screen name="GestorVentas"       component={GestorVentas}       />
+      <Stack.Screen name="GestorCashApprovals"component={GestorCashApprovals}/>
     </Stack.Navigator>
   );
 }

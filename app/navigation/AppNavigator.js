@@ -22,17 +22,19 @@ import OrderConfirmationScreen from '../screens/store/OrderConfirmationScreen';
 import PlayerProfileScreen     from '../screens/player/PlayerProfileScreen';
 import PrivacyPolicyScreen     from '../screens/legal/PrivacyPolicyScreen';
 import TermsScreen             from '../screens/legal/TermsScreen';
+import AssistantScreen         from '../screens/assistant/AssistantScreen';
 
 const Tab   = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
 const TAB_ICONS = {
-  Inicio:   '🏠',
-  Eventos:  '📅',
-  Wallet:   '💰',
-  Tienda:   '🛒',
-  Noticias: '📰',
-  Panel:    '⚙️',
+  Inicio:    '🏠',
+  Eventos:   '📅',
+  Wallet:    '💰',
+  Tienda:    '🛒',
+  Asistente: '🤖',
+  Noticias:  '📰',
+  Panel:     '⚙️',
 };
 
 // ── Nested stacks ─────────────────────────────────────────────────────────────
@@ -75,8 +77,9 @@ function MainTabs() {
       <Tab.Screen name="Inicio"   component={HomeScreen} />
       <Tab.Screen name="Eventos"  component={EventsStack} />
       <Tab.Screen name="Wallet"   component={WalletScreen} />
-      <Tab.Screen name="Tienda"   component={StoreScreen} />
-      <Tab.Screen name="Noticias" component={NewsScreen} />
+      <Tab.Screen name="Tienda"    component={StoreScreen} />
+      <Tab.Screen name="Asistente" component={AssistantScreen} />
+      <Tab.Screen name="Noticias"  component={NewsScreen} />
 
       {isPrivileged && (
         <Tab.Screen

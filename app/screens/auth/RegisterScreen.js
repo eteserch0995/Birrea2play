@@ -69,6 +69,10 @@ export default function RegisterScreen({ navigation }) {
         Alert.alert('Error', 'Ingresa un correo electrónico válido.');
         return;
       }
+      if (!form.telefono.trim()) {
+        Alert.alert('Error', 'El número de teléfono / WhatsApp es obligatorio.');
+        return;
+      }
     }
     if (step === 2) {
       if (form.password.length < 8) { Alert.alert('Error', 'La contraseña debe tener al menos 8 caracteres.'); return; }
@@ -142,7 +146,7 @@ export default function RegisterScreen({ navigation }) {
             </TouchableOpacity>
             <Field label="Nombre completo" value={form.nombre} onChangeText={(v) => update('nombre', v)} />
             <Field label="Correo electrónico" value={form.correo} onChangeText={(v) => update('correo', v)} keyboardType="email-address" autoCapitalize="none" />
-            <Field label="Teléfono" value={form.telefono} onChangeText={(v) => update('telefono', v)} keyboardType="phone-pad" />
+            <Field label="Teléfono / WhatsApp *" value={form.telefono} onChangeText={(v) => update('telefono', v)} keyboardType="phone-pad" />
           </View>
         )}
 

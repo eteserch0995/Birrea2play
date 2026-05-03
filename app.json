@@ -7,6 +7,7 @@
     "scheme": "birrea2play",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
+    "privacyPolicyUrl": "https://TU-DOMINIO/privacidad.html",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
@@ -18,9 +19,11 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.birrea2play.app",
+      "privacyPolicyUrl": "https://TU-DOMINIO/privacidad.html",
       "infoPlist": {
         "NSCameraUsageDescription": "Birrea2Play necesita acceso a tu cámara para tu foto de perfil.",
         "NSPhotoLibraryUsageDescription": "Birrea2Play necesita acceso a tus fotos para tu foto de perfil.",
+        "NSMicrophoneUsageDescription": "Birrea2Play necesita acceso al micrófono para funciones de audio en eventos en vivo.",
         "NSAppTransportSecurity": {
           "NSExceptionDomains": {
             "yappy.com.pa": {
@@ -36,8 +39,11 @@
               "NSRequiresCertificateTransparency": false
             }
           }
-        }
-      }
+        },
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "marketingUrl": "https://TU-DOMINIO",
+      "supportUrl": "https://TU-DOMINIO/soporte"
     },
     "android": {
       "adaptiveIcon": {
@@ -82,7 +88,11 @@
           "color": "#C8102E",
           "sounds": []
         }
-      ]
+      ],
+      "./plugins/withRemoveOverlayPermission",
+      "./plugins/withAndroidSecurity",
+      "./plugins/withAndroidNetworkSecurity",
+      "./plugins/withAndroidReleaseSigning"
     ],
     "owner": "serch0995",
     "runtimeVersion": {

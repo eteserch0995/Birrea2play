@@ -28,13 +28,22 @@ const useEventStore = create((set, get) => ({
       if (error) throw error;
 
       // Auto-ocultar eventos finalizados hace más de 24 horas
-      // (lazy evaluation — sin cron job, solo filtramos en el cliente)
       const cutoff = Date.now() - 24 * 60 * 60 * 1000;
       const visible = (data ?? []).filter((ev) => {
         if (ev.status === 'finished' && ev.event_finished_at) {
           return new Date(ev.event_finished_at).getTime() > cutoff;
         }
         return true;
+      });
+
+      // Sort: open events first (accepting registrations), then active, then others
+      // Within same status: soonest event date first
+      const STATUS_PRIORITY = { open: 0, active: 1, finished: 2, draft: 3, cancelled: 4 };
+      visible.sort((a, b) => {
+        const pa = STATUS_PRIORITY[a.status] ?? 5;
+        const pb = STATUS_PRIORITY[b.status] ?? 5;
+        if (pa !== pb) return pa - pb;
+        return new Date(a.fecha) - new Date(b.fecha);
       });
 
       set({ events: visible, loading: false });

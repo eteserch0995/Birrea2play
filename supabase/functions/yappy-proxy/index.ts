@@ -28,7 +28,7 @@
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-const YAPPY_BASE   = Deno.env.get('YAPPY_BASE_URL')   ?? 'https://api.yappy.com.pa';
+const YAPPY_BASE   = Deno.env.get('YAPPY_BASE_URL')   ?? 'https://apipagosbg.bgeneral.cloud';
 const API_KEY      = Deno.env.get('YAPPY_API_KEY')    ?? '';
 const SECRET_KEY   = Deno.env.get('YAPPY_SECRET_KEY') ?? '';
 const SEED_CODE    = Deno.env.get('YAPPY_SEED_CODE')  ?? '';
