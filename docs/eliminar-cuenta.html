@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Solicitar eliminación de cuenta – Birrea2Play</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #07101F;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #0D1B2E;
+      border: 1px solid #1A2E4A;
+      border-radius: 16px;
+      padding: 40px 32px;
+      max-width: 520px;
+      width: 100%;
+    }
+    .logo {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      color: #C8102E;
+      margin-bottom: 8px;
+    }
+    h1 {
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      color: #fff;
+    }
+    p {
+      font-size: 14px;
+      color: #8A9BB5;
+      line-height: 1.6;
+      margin-bottom: 16px;
+    }
+    .info-box {
+      background: #111E33;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 24px;
+      font-size: 13px;
+      color: #8A9BB5;
+      line-height: 1.7;
+    }
+    .info-box strong { color: #fff; }
+    label {
+      display: block;
+      font-size: 13px;
+      color: #8A9BB5;
+      margin-bottom: 6px;
+      margin-top: 16px;
+    }
+    input, textarea {
+      width: 100%;
+      background: #111E33;
+      border: 1px solid #1A2E4A;
+      border-radius: 8px;
+      padding: 12px 14px;
+      color: #fff;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus, textarea:focus { border-color: #C8102E; }
+    textarea { resize: vertical; min-height: 90px; }
+    .btn {
+      display: block;
+      width: 100%;
+      margin-top: 24px;
+      padding: 14px;
+      background: #C8102E;
+      color: #fff;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: center;
+      text-decoration: none;
+    }
+    .btn:hover { background: #a50d25; }
+    .footer {
+      margin-top: 24px;
+      font-size: 12px;
+      color: #4A5E78;
+      text-align: center;
+    }
+    .success {
+      display: none;
+      background: #0D2E1A;
+      border: 1px solid #1A5C33;
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      color: #4CAF82;
+      font-size: 15px;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">BIRREA2PLAY</div>
+    <h1>Eliminar cuenta y datos</h1>
+    <p>Puedes solicitar la eliminación de tu cuenta y todos los datos asociados enviando tu solicitud a través de este formulario o directamente a nuestro correo.</p>
+
+    <div class="info-box">
+      <strong>¿Qué datos se eliminan?</strong><br>
+      Tu perfil, historial de eventos, transacciones de wallet, fotos de perfil y cualquier otro dato personal asociado a tu cuenta serán eliminados de forma permanente en un plazo de <strong>7 días hábiles</strong>.
+    </div>
+
+    <form id="deleteForm" onsubmit="handleSubmit(event)">
+      <label for="email">Correo electrónico de tu cuenta *</label>
+      <input type="email" id="email" name="email" placeholder="tucorreo@ejemplo.com" required />
+
+      <label for="nombre">Nombre completo</label>
+      <input type="text" id="nombre" name="nombre" placeholder="Como aparece en tu perfil" />
+
+      <label for="motivo">Motivo (opcional)</label>
+      <textarea id="motivo" name="motivo" placeholder="Cuéntanos por qué deseas eliminar tu cuenta..."></textarea>
+
+      <a id="mailtoBtn" href="#" class="btn" onclick="sendEmail(event)">Enviar solicitud</a>
+    </form>
+
+    <div class="success" id="successMsg">
+      ✓ Tu solicitud fue enviada. Recibirás una confirmación en tu correo en los próximos días hábiles.
+    </div>
+
+    <p class="footer">
+      También puedes escribirnos directamente a
+      <a href="mailto:sergio.bosso09@gmail.com" style="color:#C8102E;">sergio.bosso09@gmail.com</a>
+      con el asunto "Eliminar cuenta".
+    </p>
+  </div>
+
+  <script>
+    function sendEmail(e) {
+      e.preventDefault();
+      const email  = document.getElementById('email').value.trim();
+      const nombre = document.getElementById('nombre').value.trim();
+      const motivo = document.getElementById('motivo').value.trim();
+
+      if (!email) {
+        alert('Por favor ingresa tu correo electrónico.');
+        return;
+      }
+
+      const subject = encodeURIComponent('Solicitud de eliminación de cuenta – ' + email);
+      const body = encodeURIComponent(
+        'Correo de la cuenta: ' + email + '\n' +
+        'Nombre: ' + (nombre || 'No especificado') + '\n\n' +
+        'Motivo:\n' + (motivo || 'No especificado') + '\n\n' +
+        '-- Solicitud enviada desde birrea2play.com/eliminar-cuenta'
+      );
+
+      window.location.href = 'mailto:sergio.bosso09@gmail.com?subject=' + subject + '&body=' + body;
+
+      document.getElementById('successMsg').style.display = 'block';
+      document.getElementById('deleteForm').style.opacity = '0.4';
+      document.getElementById('deleteForm').style.pointerEvents = 'none';
+    }
+  </script>
+</body>
+</html>
