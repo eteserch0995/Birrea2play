@@ -2,19 +2,22 @@ import React, { useEffect, useRef, useState, useCallback } from 'react'; // useR
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Modal, TextInput, Alert, ActivityIndicator, Linking,
+  KeyboardAvoidingView, Platform, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
 import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 import { iniciarPagoTarjeta } from '../../../lib/paguelofacil';
-import PlanesModal from '../../../components/PlanesModal';
+import RecargasModal from '../../../components/RecargasModal';
+import { logError } from '../../../lib/logger';
 
 const TIPO_LABEL = {
-  recarga_yappy:   '📱 Recarga Yappy',
-  recarga_tarjeta: '💳 Recarga Tarjeta',
+  recarga_yappy:   '📱 Compra de créditos Yappy',
+  recarga_tarjeta: '💳 Compra de créditos Tarjeta',
   inscripcion:     '⚽ Inscripción',
   compra_tienda:   '🛒 Compra tienda',
   mvp_premio:      '🏆 Premio MVP',
@@ -27,7 +30,8 @@ export default function WalletScreen() {
 
   const [txs,        setTxs]       = useState([]);
   const [loading,    setLoading]   = useState(true);
-  const [planActivo, setPlanActivo] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
 
   // Modal de recarga
   const [recargarModal, setRecargarModal] = useState(false);
@@ -43,35 +47,43 @@ export default function WalletScreen() {
   const [pendingRecargas, setPendingRecargas] = useState([]);
 
 
-  // Modal de planes
-  const [planesModal, setPlanesModal] = useState(false);
+  // Modal de recargas con bono
+  const [recargasModal, setRecargasModal] = useState(false);
 
   const fetchData = useCallback(async () => {
     if (!user?.id) { setLoading(false); return; }
-    const [walletRes, planRes, pendingRes] = await Promise.all([
-      supabase.from('wallets').select('id, balance').eq('user_id', user.id).single(),
-      supabase.rpc('get_user_active_plan', { p_user_id: user.id }),
-      supabase.from('pending_recargas')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(10),
-    ]);
+    setFetchError(null);
+    try {
+      const [walletRes, pendingRes] = await Promise.all([
+        supabase.from('wallets').select('id, balance').eq('user_id', user.id).single(),
+        supabase.from('pending_recargas')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: false })
+          .limit(10),
+      ]);
 
-    if (walletRes.data) {
-      setWalletBalance(walletRes.data.balance);
-      const { data: txData } = await supabase
-        .from('wallet_transactions')
-        .select('*')
-        .eq('wallet_id', walletRes.data.id)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      setTxs(txData ?? []);
+      if (walletRes.error) throw new Error(walletRes.error.message);
+
+      if (walletRes.data) {
+        setWalletBalance(walletRes.data.balance);
+        const { data: txData, error: txErr } = await supabase
+          .from('wallet_transactions')
+          .select('*')
+          .eq('wallet_id', walletRes.data.id)
+          .order('created_at', { ascending: false })
+          .limit(50);
+        if (txErr) throw new Error(txErr.message);
+        setTxs(txData ?? []);
+      }
+
+      setPendingRecargas(pendingRes.data ?? []);
+    } catch (e) {
+      setFetchError(e.message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
-
-    setPendingRecargas(pendingRes.data ?? []);
-    setPlanActivo(planRes.data?.[0] ?? null);
-    setLoading(false);
   }, [user?.id, setWalletBalance]);
 
   useFocusEffect(useCallback(() => {
@@ -81,10 +93,20 @@ export default function WalletScreen() {
   const fetchDataRef = useRef(null);
   useEffect(() => { fetchDataRef.current = fetchData; }, [fetchData]);
 
+  // Cleanup absoluto del polling Yappy si la pantalla se desmonta mientras
+  // hay un cobro en curso. Sin esto el interval seguía corriendo en segundo
+  // plano disparando setState sobre un componente desmontado.
+  useEffect(() => () => {
+    if (yappyCancelRef.current) {
+      try { yappyCancelRef.current(); } catch {}
+      yappyCancelRef.current = null;
+    }
+  }, []);
+
   // Escuchar deep link de PágueloFácil
   useEffect(() => {
     function handleDeepLink(url) {
-      if (!url?.includes('wallet')) return;
+      if (!url?.includes('creditos')) return;
       try {
         const parsed = new URL(url.replace('birrea2play://', 'https://app/'));
         const status = parsed.searchParams.get('status');
@@ -94,7 +116,7 @@ export default function WalletScreen() {
           if (fetchDataRef.current) fetchDataRef.current();
           Alert.alert(
             '✅ Pago exitoso',
-            amount ? `Se acreditaron $${parseFloat(amount).toFixed(2)} a tu wallet.` : 'Tu wallet fue recargado.'
+            amount ? `Se acreditaron $${parseFloat(amount).toFixed(2)} en créditos internos.` : 'Tus créditos internos fueron acreditados.'
           );
         } else if (status === 'failed') {
           const razon = parsed.searchParams.get('razon') ?? 'Pago rechazado';
@@ -160,7 +182,7 @@ export default function WalletScreen() {
         yappyCancelRef.current = null;
         Alert.alert(
           '✅ Pago confirmado',
-          `Se acreditaron $${amt.toFixed(2)} a tu wallet.`,
+          `Se acreditaron $${amt.toFixed(2)} a tus créditos.`,
           [{ text: 'OK', onPress: () => { cerrarModal(); fetchData(); } }],
         );
       })
@@ -182,23 +204,29 @@ export default function WalletScreen() {
   async function recargarTarjeta() {
     const amt = parseFloat(monto);
     if (!amt || amt < 1) { Alert.alert('Error', 'Monto mínimo $1.00'); return; }
-
+    if (procesando) return; // guard doble tap
     setProcesando(true);
     try {
       await iniciarPagoTarjeta({
         userId:      user.id,
         amount:      amt,
-        descripcion: `Recarga wallet Birrea2Play $${amt.toFixed(2)}`,
+        descripcion: `Recarga créditos Birrea2Play $${amt.toFixed(2)}`,
         tipo:        'recarga_tarjeta',
       });
+      // Solo cerrar el modal cuando el browser se abrió exitosamente.
+      // Si falla, el modal queda abierto para que el user pueda reintentar.
       setRecargarModal(false);
       setMonto('');
       Alert.alert(
         'Browser abierto',
-        'Completa el pago en el browser. Tu wallet se actualizará automáticamente al confirmar.'
+        'Completa el pago en el browser. Tus créditos se actualizarán automáticamente al confirmar.'
       );
     } catch (e) {
-      Alert.alert('Error', e.message);
+      logError({ screen: 'WalletScreen', action: 'recargarTarjeta', userId: user?.id, technical: e, extra: { amount: amt } });
+      Alert.alert(
+        'No pudimos abrir el pago',
+        e?.message || 'Intenta nuevamente. Si el problema continúa, verifica tu conexión.',
+      );
     } finally {
       setProcesando(false);
     }
@@ -206,43 +234,43 @@ export default function WalletScreen() {
 
   const handleRecargar = () => metodo === 'tarjeta' ? recargarTarjeta() : null;
 
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchData();
+  }, [fetchData]);
+
   return (
     <SafeAreaView style={styles.safe}>
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <Text style={styles.title}>WALLET</Text>
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />
+        }
+      >
+        <Text style={styles.title}>CRÉDITOS</Text>
 
         {/* Hero card */}
-        <View style={styles.heroCard}>
-          {planActivo && (
-            <View style={styles.planBadge}>
-              <Text style={styles.planBadgeText}>
-                🎖️ {planActivo.nombre} — {planActivo.descuento_pct}% desc.
-              </Text>
-            </View>
-          )}
-          <Text style={styles.heroLabel}>SALDO DISPONIBLE</Text>
+        <LinearGradient
+          colors={[COLORS.red, COLORS.asphalt, COLORS.blue]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.heroCard}
+        >
+          <Text style={styles.heroLabel}>CRÉDITOS INTERNOS</Text>
           <Text style={styles.heroAmount}>${walletBalance.toFixed(2)}</Text>
+          <Text style={styles.heroDisclosure}>
+            No son dinero electrónico, no son transferibles y solo aplican a eventos y servicios de Birrea2Play.
+          </Text>
           <View style={styles.heroBtns}>
             <TouchableOpacity style={styles.recargarBtn} onPress={abrirRecargarModal}>
-              <Text style={styles.recargarText}>+ RECARGAR</Text>
+              <Text style={styles.recargarText}>+ COMPRAR</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.planesBtn} onPress={() => setPlanesModal(true)}>
-              <Text style={styles.planesBtnText}>🎖️ PLANES</Text>
+            <TouchableOpacity style={styles.planesBtn} onPress={() => setRecargasModal(true)}>
+              <Text style={styles.planesBtnText}>🎁 BONOS</Text>
             </TouchableOpacity>
           </View>
-        </View>
-
-        {/* Plan info */}
-        {planActivo && (
-          <View style={styles.planInfo}>
-            <Text style={styles.planInfoText}>
-              Tienes <Text style={styles.planInfoBold}>{planActivo.descuento_pct}% de descuento</Text> en inscripciones a eventos.
-            </Text>
-            <Text style={styles.planInfoSub}>
-              Vence: {new Date(planActivo.fecha_fin).toLocaleDateString('es-PA')}
-            </Text>
-          </View>
-        )}
+        </LinearGradient>
 
         {/* Recargas pendientes */}
         {pendingRecargas.filter(r => r.status === 'pending').length > 0 && (
@@ -269,8 +297,24 @@ export default function WalletScreen() {
         <Text style={styles.sectionTitle}>Historial de movimientos</Text>
         {loading ? (
           <ActivityIndicator color={COLORS.red} style={{ marginTop: SPACING.md }} />
+        ) : fetchError ? (
+          <View style={{ alignItems: 'center', padding: SPACING.xl, gap: SPACING.md }}>
+            <Text style={{ fontSize: 32 }}>⚠️</Text>
+            <Text style={styles.empty}>Error al cargar los datos</Text>
+            <Text style={[styles.empty, { fontSize: 12, paddingVertical: 0 }]}>{fetchError}</Text>
+            <TouchableOpacity
+              style={{ backgroundColor: COLORS.red, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.sm, borderRadius: RADIUS.md }}
+              onPress={() => { setLoading(true); fetchData(); }}
+            >
+              <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.white }}>Reintentar</Text>
+            </TouchableOpacity>
+          </View>
         ) : txs.length === 0 ? (
-          <Text style={styles.empty}>No hay movimientos aún</Text>
+          <View style={{ alignItems: 'center', padding: SPACING.xl, gap: SPACING.sm }}>
+            <Text style={{ fontSize: 40 }}>💳</Text>
+            <Text style={styles.empty}>No hay movimientos aún</Text>
+            <Text style={[styles.empty, { fontSize: 12, paddingVertical: 0 }]}>Tus recargas y gastos aparecerán aquí</Text>
+          </View>
         ) : (
           txs.map((tx) => (
             <View key={tx.id} style={styles.txRow}>
@@ -290,9 +334,12 @@ export default function WalletScreen() {
 
       {/* ── Modal de Recarga ── */}
       <Modal visible={recargarModal} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <View style={styles.modal}>
-            <Text style={styles.modalTitle}>RECARGAR WALLET</Text>
+            <Text style={styles.modalTitle}>COMPRAR CRÉDITOS</Text>
 
             {/* Selector de método */}
             <View style={styles.metodoBtns}>
@@ -319,11 +366,11 @@ export default function WalletScreen() {
             {metodo === 'tarjeta' ? (
               <>
                 <Text style={styles.metodoInfo}>
-                  Se abrirá el browser con el checkout seguro de PágueloFácil. Acepta Visa, Mastercard y Clave.
+                  Se abrirá el browser con el checkout seguro de PágueloFácil. Los créditos solo sirven para eventos y servicios Birrea2Play.
                 </Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="Monto a recargar (ej. 10.00)"
+                  placeholder="Monto de créditos (ej. 10.00)"
                   placeholderTextColor={COLORS.gray}
                   keyboardType="decimal-pad"
                   value={monto}
@@ -349,7 +396,7 @@ export default function WalletScreen() {
             ) : yappyStep === 'idle' ? (
               <>
                 <Text style={styles.metodoInfo}>
-                  Ingresa tu número Yappy y el monto. Recibirás una notificación en tu app Yappy para aprobar.
+                  Ingresa tu número Yappy y el monto. Recibirás una notificación en tu app Yappy para aprobar la compra de créditos internos.
                 </Text>
                 <TextInput
                   style={styles.input}
@@ -362,7 +409,7 @@ export default function WalletScreen() {
                 />
                 <TextInput
                   style={styles.input}
-                  placeholder="Monto a recargar (ej. 10.00)"
+                  placeholder="Monto de créditos (ej. 10.00)"
                   placeholderTextColor={COLORS.gray}
                   keyboardType="decimal-pad"
                   value={monto}
@@ -395,7 +442,8 @@ export default function WalletScreen() {
                     ${isNaN(parseFloat(monto)) ? '0.00' : parseFloat(monto).toFixed(2)}
                   </Text>
                   <Text style={styles.openedSub}>
-                    Abre tu app Yappy y acepta el cobro de Birrea2Play.
+                    Abre tu app Yappy y acepta el cobro de Birrea2Play.{'\n'}
+                    O entra a tu banca en línea y elegí la opción de Yappy.
                   </Text>
                   <Text style={styles.pollingDots}>
                     {yappyProgress.attempts}/{yappyProgress.maxAttempts} intentos
@@ -409,14 +457,14 @@ export default function WalletScreen() {
               </>
             )}
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
-      {/* Modal de Planes */}
-      <PlanesModal
-        visible={planesModal}
-        onClose={() => setPlanesModal(false)}
-        onPlanActivado={() => { setPlanesModal(false); fetchData(); }}
+      {/* Modal de Recargas con Bono */}
+      <RecargasModal
+        visible={recargasModal}
+        onClose={() => setRecargasModal(false)}
+        onSuccess={() => { setRecargasModal(false); fetchData(); }}
       />
     </SafeAreaView>
   );
@@ -424,14 +472,14 @@ export default function WalletScreen() {
 
 const styles = StyleSheet.create({
   safe:  { flex: 1, backgroundColor: COLORS.bg },
-  title: { fontFamily: FONTS.heading, fontSize: 28, color: COLORS.white, letterSpacing: 4, padding: SPACING.md },
+  title: { fontFamily: FONTS.heading, fontSize: 38, color: COLORS.white, letterSpacing: 4, padding: SPACING.md },
 
   heroCard: {
     margin: SPACING.md,
     borderRadius: RADIUS.xl,
-    backgroundColor: COLORS.blue,
     padding: SPACING.xl,
     alignItems: 'center',
+    overflow: 'hidden',
     ...SHADOWS.card,
   },
   planBadge: {
@@ -442,25 +490,33 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sm,
   },
   planBadgeText: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.white, letterSpacing: 1 },
-  heroLabel:  { fontFamily: FONTS.body, fontSize: 11, color: COLORS.white + 'AA', letterSpacing: 2 },
-  heroAmount: { fontFamily: FONTS.heading, fontSize: 56, color: COLORS.white, marginVertical: SPACING.sm },
+  heroLabel:  { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.neon, letterSpacing: 2 },
+  heroAmount: { fontFamily: FONTS.heading, fontSize: 60, color: COLORS.white, marginVertical: SPACING.sm, letterSpacing: 1 },
+  heroDisclosure: {
+    fontFamily: FONTS.body,
+    fontSize: 11,
+    color: COLORS.white + 'AA',
+    textAlign: 'center',
+    marginBottom: SPACING.md,
+    lineHeight: 15,
+  },
   heroBtns:   { flexDirection: 'row', gap: SPACING.sm },
   recargarBtn: {
-    backgroundColor: COLORS.white + '20',
-    borderRadius: RADIUS.full,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.sm,
     paddingHorizontal: SPACING.xl,
     paddingVertical: SPACING.sm,
   },
-  recargarText: { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.white, letterSpacing: 3 },
+  recargarText: { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.asphalt, letterSpacing: 3 },
   planesBtn: {
-    backgroundColor: COLORS.gold ? COLORS.gold + '33' : '#F0A50033',
-    borderRadius: RADIUS.full,
+    backgroundColor: COLORS.neon + '22',
+    borderRadius: RADIUS.sm,
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
     borderWidth: 1,
-    borderColor: COLORS.gold ?? '#F0A500',
+    borderColor: COLORS.neon,
   },
-  planesBtnText: { fontFamily: FONTS.heading, fontSize: 12, color: COLORS.gold ?? '#F0A500', letterSpacing: 2 },
+  planesBtnText: { fontFamily: FONTS.heading, fontSize: 12, color: COLORS.neon, letterSpacing: 2 },
 
   planInfo: {
     marginHorizontal: SPACING.md,
@@ -476,13 +532,13 @@ const styles = StyleSheet.create({
   planInfoSub:  { fontFamily: FONTS.body, color: COLORS.gray, fontSize: 11, marginTop: 2 },
 
   sectionTitle: {
-    fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white,
-    letterSpacing: 1, paddingHorizontal: SPACING.md, marginBottom: SPACING.sm,
+    fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white,
+    letterSpacing: 1.5, paddingHorizontal: SPACING.md, marginBottom: SPACING.sm,
   },
   txRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     backgroundColor: COLORS.card, marginHorizontal: SPACING.md, marginBottom: SPACING.sm,
-    borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.navy,
+    borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.line,
   },
   txTipo:  { fontFamily: FONTS.bodyMedium, fontSize: 14, color: COLORS.white },
   txDesc:  { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, marginTop: 2 },

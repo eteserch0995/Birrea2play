@@ -1,0 +1,2 @@
+[functions.yappy-ipn]
+verify_jwt = false

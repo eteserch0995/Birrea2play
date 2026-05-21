@@ -2,24 +2,30 @@
   "expo": {
     "name": "Birrea2Play",
     "slug": "birrea2play",
-    "version": "1.0.0",
+    "version": "1.2.1",
     "orientation": "portrait",
     "scheme": "birrea2play",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "privacyPolicyUrl": "https://TU-DOMINIO/privacidad.html",
+    "privacyPolicyUrl": "https://www.birrea2play.com/privacidad.html",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#07101F"
     },
     "assetBundlePatterns": [
-      "**/*"
+      "assets/icon.png",
+      "assets/adaptive-icon.png",
+      "assets/favicon.png",
+      "assets/favicon.ico",
+      "assets/splash.png",
+      "assets/pwa-icon-192.png",
+      "assets/pwa-icon-512.png"
     ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.birrea2play.app",
-      "privacyPolicyUrl": "https://TU-DOMINIO/privacidad.html",
+      "privacyPolicyUrl": "https://www.birrea2play.com/privacidad.html",
       "infoPlist": {
         "NSCameraUsageDescription": "Birrea2Play necesita acceso a tu cámara para tu foto de perfil.",
         "NSPhotoLibraryUsageDescription": "Birrea2Play necesita acceso a tus fotos para tu foto de perfil.",
@@ -42,15 +48,16 @@
         },
         "ITSAppUsesNonExemptEncryption": false
       },
-      "marketingUrl": "https://TU-DOMINIO",
-      "supportUrl": "https://TU-DOMINIO/soporte"
+      "marketingUrl": "https://www.birrea2play.com",
+      "supportUrl": "https://www.birrea2play.com/privacidad.html"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#07101F"
+        "backgroundColor": "#07080B"
       },
       "package": "com.birrea2play.app",
+      "versionCode": 22,
       "newArchEnabled": true,
       "permissions": [
         "android.permission.INTERNET",
@@ -95,9 +102,7 @@
       "./plugins/withAndroidReleaseSigning"
     ],
     "owner": "serch0995",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.2.1",
     "updates": {
       "url": "https://u.expo.dev/0bc6b976-48cd-4904-b716-3a7446b5b83d"
     }

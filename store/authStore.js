@@ -4,6 +4,15 @@ import { supabase } from '../lib/supabase';
 // Lazy import to avoid circular dependency
 const getCartStore = () => require('./cartStore').default;
 
+function withTimeout(promise, ms, label = 'auth query') {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`timeout: ${label} (${ms}ms)`)), ms)
+    ),
+  ]);
+}
+
 const useAuthStore = create((set, get) => ({
   user: null,
   walletBalance: 0,
@@ -58,7 +67,30 @@ const useAuthStore = create((set, get) => ({
         isAuthenticated: true,
       });
     } catch (e) {
-      set({ user: null, isAuthenticated: false });
+      // Only log out if there is genuinely no active session.
+      // Logging out on network errors or query failures causes unexpected logouts.
+      const { data: { session } } = await withTimeout(
+        supabase.auth.getSession(),
+        5000,
+        'loadProfile.getSession'
+      ).catch(() => ({ data: { session: null } }));
+      if (!session) {
+        set({ user: null, isAuthenticated: false });
+      }
+    }
+  },
+
+  // Silent refresh — updates profile data without ever logging out.
+  // Use this inside screens (useFocusEffect, pull-to-refresh) instead of loadProfile.
+  refreshProfile: async () => {
+    const { user } = get();
+    if (!user?.auth_id) return;
+    try {
+      const profile = await getUserProfile(user.auth_id);
+      const wallet = Array.isArray(profile.wallets) ? (profile.wallets[0] ?? null) : (profile.wallets ?? null);
+      set({ user: { ...profile, wallets: wallet }, walletBalance: wallet?.balance ?? 0 });
+    } catch (_) {
+      // Network or query error — keep existing user data, never logout
     }
   },
 

@@ -20,9 +20,33 @@
         "EXPO_PUBLIC_YAPPY_ALIAS_FALLBACK": "birrea2play"
       }
     },
+    "preview-ios-sim": {
+      "channel": "preview",
+      "ios": {
+        "simulator": true
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://rumreditrvxkcnlhawut.supabase.co",
+        "EXPO_PUBLIC_YAPPY_ALIAS_FALLBACK": "birrea2play"
+      }
+    },
+    "preview-ios": {
+      "distribution": "internal",
+      "channel": "preview",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://rumreditrvxkcnlhawut.supabase.co",
+        "EXPO_PUBLIC_YAPPY_ALIAS_FALLBACK": "birrea2play"
+      }
+    },
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "ios": {
+        "resourceClass": "m-medium"
       }
     }
   },

@@ -21,6 +21,18 @@ web-build/
 *.keystore
 *.jks
 
+# EAS credentials.json — contiene keystorePassword en claro
+credentials.json
+credentials/
+
+# Scripts de seed con service_role hardcoded — usar env var en su lugar
+seed-event.js
+seed-panama-birreas-2026.js
+seed-*.js
+
+# Basura RN dev
+com.facebook.react.devsupport.BundleDownloader
+
 # Android signing credentials — contains keystore passwords
 android/gradle.properties
 
@@ -33,3 +45,4 @@ Skills/
 *.store-bak
 STORE_AUDIT_REPORT.md
 supabase/.temp/
+.vercel

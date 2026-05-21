@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Eventos — Birrea2Play</title>
+  <meta name="description" content="Consulta todos los eventos, ligas y torneos deportivos disponibles en Birrea2Play Panamá. Inscríbete desde la app." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:    #07101F;
+      --card:  #0F1E33;
+      --blue:  #1E5FCC;
+      --red:   #C8102E;
+      --white: #FFFFFF;
+      --gray:  #9CA3AF;
+      --gold:  #F0A500;
+      --green: #22C55E;
+      --navy:  #1E3A5F;
+    }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: var(--bg); color: var(--white); line-height: 1.5; min-height: 100vh; }
+    a { color: var(--blue); text-decoration: none; }
+
+    /* NAV */
+    nav {
+      background: var(--card);
+      padding: 14px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 2px solid var(--red);
+      position: sticky; top: 0; z-index: 100;
+    }
+    .nav-logo { font-size: 20px; font-weight: 900; letter-spacing: 3px; color: var(--white); }
+    .nav-logo span { color: var(--red); }
+    .nav-back { font-size: 13px; color: var(--gray); }
+    .nav-back:hover { color: var(--white); }
+
+    /* HEADER */
+    .page-header {
+      padding: 48px 24px 32px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .page-header h1 { font-size: clamp(24px, 5vw, 40px); font-weight: 900; letter-spacing: 2px; margin-bottom: 8px; }
+    .page-header h1 span { color: var(--red); }
+    .page-header p { color: var(--gray); font-size: 14px; }
+
+    /* FILTERS */
+    .filters {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px 24px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filter-btn {
+      padding: 7px 18px;
+      border-radius: 100px;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid var(--navy);
+      background: var(--card);
+      color: var(--gray);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .filter-btn:hover { border-color: var(--blue); color: var(--white); }
+    .filter-btn.active { background: var(--red); border-color: var(--red); color: var(--white); }
+    .filter-search {
+      margin-left: auto;
+      padding: 7px 14px;
+      background: var(--card);
+      border: 1px solid var(--navy);
+      border-radius: 8px;
+      color: var(--white);
+      font-size: 13px;
+      outline: none;
+      width: 200px;
+    }
+    .filter-search::placeholder { color: var(--gray); }
+    .filter-search:focus { border-color: var(--blue); }
+
+    /* GRID */
+    .events-grid {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px 64px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 16px;
+    }
+
+    /* CARD */
+    .event-card {
+      background: var(--card);
+      border: 1px solid var(--navy);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.15s;
+    }
+    .event-card:hover { border-color: var(--blue); transform: translateY(-2px); }
+    .event-card-img {
+      width: 100%;
+      height: 140px;
+      object-fit: cover;
+      display: block;
+      background: #0a1828;
+    }
+    .event-card-img-placeholder {
+      width: 100%;
+      height: 140px;
+      background: linear-gradient(135deg, #0a1828, #0F2040);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+    }
+    .event-card-body { padding: 16px; flex: 1; display: flex; flex-direction: column; gap: 8px; }
+    .event-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .event-card-name { font-size: 16px; font-weight: 700; letter-spacing: 0.5px; line-height: 1.3; flex: 1; }
+    .status-badge {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      padding: 3px 10px;
+      border-radius: 100px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .event-card-meta { display: flex; flex-direction: column; gap: 4px; }
+    .meta-row { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--gray); }
+    .meta-row strong { color: var(--white); font-weight: 600; }
+    .event-card-footer {
+      margin-top: auto;
+      padding-top: 12px;
+      border-top: 1px solid var(--navy);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .event-price { font-size: 20px; font-weight: 900; color: var(--gold); }
+    .event-price small { font-size: 10px; color: var(--gray); font-weight: 400; display: block; }
+    .event-spots { text-align: right; font-size: 11px; color: var(--gray); }
+    .event-spots strong { color: var(--white); font-size: 14px; font-weight: 700; }
+
+    /* STATES */
+    .loading-state, .empty-state {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 64px 24px;
+      text-align: center;
+      color: var(--gray);
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid var(--navy);
+      border-top-color: var(--red);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* FOOTER */
+    footer { background: var(--card); border-top: 1px solid var(--navy); padding: 32px 24px; text-align: center; }
+    .footer-logo { font-size: 18px; font-weight: 900; letter-spacing: 3px; margin-bottom: 6px; }
+    .footer-logo span { color: var(--red); }
+    .footer-copy { font-size: 12px; color: #4B5563; }
+
+    /* APP BANNER */
+    .app-banner {
+      max-width: 1100px;
+      margin: 0 auto 32px;
+      padding: 0 24px;
+    }
+    .app-banner-inner {
+      background: linear-gradient(135deg, #0F2040, #1a1040);
+      border: 1px solid var(--navy);
+      border-radius: 16px;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .app-banner-text h3 { font-size: 15px; font-weight: 700; margin-bottom: 4px; }
+    .app-banner-text p { font-size: 12px; color: var(--gray); }
+    .app-banner-btn {
+      background: var(--red);
+      color: var(--white);
+      padding: 10px 22px;
+      border-radius: 100px;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .app-banner-btn:hover { text-decoration: none; opacity: 0.9; }
+
+    @media (max-width: 600px) {
+      .filter-search { width: 100%; margin-left: 0; }
+      .events-grid { grid-template-columns: 1fr; padding: 0 16px 48px; }
+      .page-header { padding: 32px 16px 24px; }
+      .filters { padding: 0 16px 16px; }
+      .app-banner { padding: 0 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="nav-logo" style="text-decoration:none">BIRREA<span>2</span>PLAY</a>
+  <a href="/" class="nav-back">← Inicio</a>
+</nav>
+
+<div class="page-header">
+  <h1>EVENTOS <span>DEPORTIVOS</span></h1>
+  <p>Ligas, torneos y eventos abiertos en Panamá. Descarga la app para inscribirte.</p>
+</div>
+
+<div class="filters">
+  <button class="filter-btn active" data-filter="open,active">Disponibles</button>
+  <button class="filter-btn" data-filter="active">En curso</button>
+  <button class="filter-btn" data-filter="open">Abiertos</button>
+  <button class="filter-btn" data-filter="finished">Finalizados</button>
+  <button class="filter-btn" data-filter="all">Todos</button>
+  <input class="filter-search" type="search" placeholder="🔍 Buscar evento..." id="searchInput" />
+</div>
+
+<div id="eventsContainer">
+  <div class="loading-state">
+    <div class="spinner"></div>
+    <p>Cargando eventos...</p>
+  </div>
+</div>
+
+<div class="app-banner">
+  <div class="app-banner-inner">
+    <div class="app-banner-text">
+      <h3>¿Quieres inscribirte?</h3>
+      <p>Descarga la app Birrea2Play y participa en eventos con pago por Yappy o créditos internos.</p>
+    </div>
+    <a href="/" class="app-banner-btn">Descargar App</a>
+  </div>
+</div>
+
+<footer>
+  <div class="footer-logo">BIRREA<span>2</span>PLAY</div>
+  <div class="footer-copy">&copy; 2025 Birrea2Play. Todos los derechos reservados.</div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPABASE_URL = 'https://rumreditrvxkcnlhawut.supabase.co';
+const SUPABASE_ANON = 'sb_publishable_U56Yg1Y7h0zDcrpwH8AlTQ_H7ir7oBK';
+const client = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const SPORT_EMOJI = { 'Fútbol': '⚽', 'Fútbol 7': '⚽', 'Fútbol 11': '⚽', 'Baloncesto': '🏀', 'Voleibol': '🏐', 'Tenis': '🎾', 'Natación': '🏊', 'Béisbol': '⚾', 'Softbol': '🥎' };
+const STATUS_MAP = {
+  open:      { label: 'ABIERTO',    bg: '#1E5FCC22', color: '#4A8FFF', border: '#1E5FCC' },
+  active:    { label: 'EN CURSO',   bg: '#22C55E22', color: '#22C55E', border: '#22C55E' },
+  finished:  { label: 'FINALIZADO', bg: '#9CA3AF22', color: '#9CA3AF', border: '#9CA3AF' },
+  cancelled: { label: 'CANCELADO',  bg: '#C8102E22', color: '#C8102E', border: '#C8102E' },
+  draft:     { label: 'BORRADOR',   bg: '#F0A50022', color: '#F0A500', border: '#F0A500' },
+};
+
+let allEvents = [];
+let currentFilter = 'open,active';
+let searchQuery = '';
+
+function formatDate(fecha, hora) {
+  if (!fecha) return '—';
+  const [y, m, d] = fecha.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const dateStr = date.toLocaleDateString('es-PA', { weekday: 'short', day: 'numeric', month: 'short' });
+  return hora ? `${dateStr} · ${hora.slice(0, 5)}` : dateStr;
+}
+
+function renderCard(ev) {
+  const status = STATUS_MAP[ev.status] || STATUS_MAP.open;
+  const emoji = SPORT_EMOJI[ev.deporte] || '🏅';
+  const precio = parseFloat(ev.precio || 0);
+  const img = ev.cancha_foto_url
+    ? `<img class="event-card-img" src="${ev.cancha_foto_url}" alt="${ev.nombre}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" /><div class="event-card-img-placeholder" style="display:none">${emoji}</div>`
+    : `<div class="event-card-img-placeholder">${emoji}</div>`;
+
+  return `
+    <div class="event-card" onclick="window.location.href='evento.html?id=${ev.id}'">
+      ${img}
+      <div class="event-card-body">
+        <div class="event-card-top">
+          <div class="event-card-name">${ev.nombre}</div>
+          <span class="status-badge" style="background:${status.bg};color:${status.color};border:1px solid ${status.border}">${status.label}</span>
+        </div>
+        <div class="event-card-meta">
+          <div class="meta-row">📅 <strong>${formatDate(ev.fecha, ev.hora)}</strong></div>
+          ${ev.lugar ? `<div class="meta-row">📍 ${ev.lugar}</div>` : ''}
+          <div class="meta-row">🏅 ${ev.deporte || 'Deporte'} · ${ev.formato}</div>
+          ${ev.genero && ev.genero !== 'Mixto' ? `<div class="meta-row">👤 ${ev.genero}</div>` : ''}
+        </div>
+        <div class="event-card-footer">
+          <div class="event-price">
+            ${precio > 0 ? `$${precio.toFixed(2)}` : 'Gratis'}
+            <small>por jugador</small>
+          </div>
+          ${!ev.cupos_ilimitado && ev.cupos_total ? `<div class="event-spots"><strong>${ev.cupos_total}</strong> cupos</div>` : '<div class="event-spots">Cupos ilimitados</div>'}
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderEmpty(msg) {
+  return `<div class="empty-state"><p style="font-size:32px;margin-bottom:12px">🏟️</p><p>${msg}</p></div>`;
+}
+
+function applyFilters() {
+  let filtered = allEvents;
+
+  if (currentFilter !== 'all') {
+    const statuses = currentFilter.split(',');
+    filtered = filtered.filter(ev => statuses.includes(ev.status));
+  }
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    filtered = filtered.filter(ev =>
+      ev.nombre?.toLowerCase().includes(q) ||
+      ev.deporte?.toLowerCase().includes(q) ||
+      ev.lugar?.toLowerCase().includes(q)
+    );
+  }
+
+  const container = document.getElementById('eventsContainer');
+  if (filtered.length === 0) {
+    container.innerHTML = renderEmpty('No hay eventos para este filtro.');
+    return;
+  }
+
+  container.innerHTML = `<div class="events-grid">${filtered.map(renderCard).join('')}</div>`;
+}
+
+async function loadEvents() {
+  const { data, error } = await client
+    .from('events')
+    .select('id,nombre,deporte,formato,fecha,hora,lugar,genero,precio,cupos_total,cupos_ilimitado,status,cancha_foto_url')
+    .eq('visible', true)
+    .in('status', ['open', 'active', 'finished'])
+    .order('fecha', { ascending: true });
+
+  if (error) {
+    document.getElementById('eventsContainer').innerHTML =
+      `<div class="empty-state"><p style="color:#C8102E">Error al cargar eventos. Intenta de nuevo.</p></div>`;
+    return;
+  }
+
+  allEvents = data || [];
+  applyFilters();
+}
+
+// Filter buttons
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentFilter = btn.dataset.filter;
+    applyFilters();
+  });
+});
+
+// Search
+document.getElementById('searchInput').addEventListener('input', e => {
+  searchQuery = e.target.value.trim();
+  applyFilters();
+});
+
+loadEvents();
+</script>
+</body>
+</html>

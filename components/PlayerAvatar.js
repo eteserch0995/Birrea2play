@@ -32,10 +32,10 @@ export default function PlayerAvatar({ user, size = 44, borderColor = COLORS.nav
 
 const styles = StyleSheet.create({
   placeholder: {
-    backgroundColor: COLORS.blue,
+    backgroundColor: COLORS.red,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
   },
-  initial: { fontFamily: FONTS.heading, color: COLORS.white },
+  initial: { fontFamily: FONTS.heading, color: COLORS.white, letterSpacing: 1 },
 });

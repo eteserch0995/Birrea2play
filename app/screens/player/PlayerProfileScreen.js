@@ -8,7 +8,8 @@ import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 
 export default function PlayerProfileScreen({ route, navigation }) {
-  const { userId } = route.params;
+  // Defensa contra deep links malformados o navegación sin params.
+  const userId = route?.params?.userId ?? route?.params?.id ?? null;
   const [player,   setPlayer]   = useState(null);
   const [stats,    setStats]    = useState({ eventos: 0, mvps: 0, deportes: [] });
   const [loading,  setLoading]  = useState(true);
@@ -24,7 +25,7 @@ export default function PlayerProfileScreen({ route, navigation }) {
         { data: regs },
         { data: mvps },
       ] = await Promise.all([
-        supabase.from('users').select('*').eq('id', userId).single(),
+        supabase.from('users').select('*').eq('id', userId).maybeSingle(),
         supabase.from('event_registrations')
           .select('event_id, events(deporte)')
           .eq('user_id', userId)

@@ -26,7 +26,7 @@ Birrea2Play se reserva el derecho de modificar estos Términos en cualquier mome
 • Registrarse e inscribirse a eventos deportivos (fútbol, baloncesto, vóleibol, entre otros)
 • Gestionar equipos, partidos y resultados
 • Votar por el Jugador Más Valioso (MVP) de cada evento
-• Realizar pagos de inscripciones y compras mediante wallet interno y Yappy PA
+• Comprar créditos internos no transferibles para pagar inscripciones, reservas y servicios deportivos dentro de Birrea2Play
 • Comprar artículos en la tienda de la plataforma
 • Recibir noticias y actualizaciones sobre eventos deportivos
 
@@ -43,33 +43,35 @@ El servicio está disponible para usuarios en la República de Panamá.`}
 Usted es responsable de todas las actividades que ocurran bajo su cuenta. Birrea2Play se reserva el derecho de suspender o eliminar cuentas que violen estos Términos.`}
         </Section>
 
-        <Section title="4. Wallet y Pagos">
-          {`4.1 Wallet Virtual
-La App incluye un monedero virtual ("wallet") con saldo expresado en dólares americanos (USD). Este saldo:
-• Solo puede usarse dentro de la plataforma Birrea2Play
-• No es reembolsable en efectivo (salvo por errores comprobables de la plataforma)
-• No genera intereses
-• No tiene vencimiento mientras la cuenta esté activa
+        <Section title="4. Créditos Internos y Pagos">
+          {`4.1 Sistema de Créditos
+La App incluye un sistema de créditos internos ("créditos") expresados en dólares americanos (USD) solo como unidad de referencia para servicios de Birrea2Play. Estos créditos:
+• Solo pueden usarse dentro de la plataforma Birrea2Play para eventos deportivos, inscripciones, reservas y servicios relacionados
+• No constituyen dinero electrónico, cuenta bancaria, producto financiero regulado, préstamo, inversión ni servicio de transferencia de dinero
+• No pueden transferirse entre usuarios ni retirarse en efectivo
+• No son reembolsables en efectivo (salvo por errores comprobables de la plataforma)
+• No generan intereses
+• No tienen vencimiento mientras la cuenta esté activa
 
-4.2 Recargas mediante Yappy PA
-Las recargas de wallet se procesan mediante Yappy (Banco General de Panamá). Al realizar una recarga, usted:
+4.2 Compra de créditos mediante Yappy PA
+La compra de créditos se procesa mediante Yappy (Banco General de Panamá) o proveedores de pago autorizados. Al comprar créditos, usted:
 • Autoriza el débito de su cuenta Yappy por el monto indicado
 • Acepta los términos y condiciones de Yappy PA / Banco General
-• Comprende que Birrea2Play acreditará el saldo únicamente tras confirmar el pago
+• Comprende que Birrea2Play acreditará los créditos únicamente tras confirmar el pago
 
 4.3 Premio MVP
-Al ganar la votación de MVP de un evento, se acredita $1.00 a su wallet automáticamente. Este premio está sujeto a disponibilidad y puede modificarse con previo aviso.
+Al ganar la votación de MVP de un evento, se acreditan $1.00 a sus créditos automáticamente. Este premio está sujeto a disponibilidad y puede modificarse con previo aviso.
 
 4.4 Inscripciones
-El valor de las inscripciones se descuenta del wallet en el momento de confirmación. Las inscripciones son definitivas salvo que el organizador cancele el evento, en cuyo caso se realizará un reembolso automático al wallet.`}
+El valor de las inscripciones se descuenta de sus créditos en el momento de confirmación. Las inscripciones son definitivas salvo que el organizador cancele el evento, en cuyo caso se realizará un ajuste de créditos dentro de la plataforma.`}
         </Section>
 
         <Section title="5. Tienda In-App">
           {`Las compras realizadas en la tienda de Birrea2Play están sujetas a:
 • Disponibilidad de stock al momento de la compra
-• El monto se descuenta del wallet al confirmar el pedido
+• El monto se descuenta de sus créditos internos al confirmar el pedido
 • La entrega de productos físicos es responsabilidad del organizador del evento o administrador
-• No se aceptan devoluciones de productos digitales
+• Las condiciones de devolución se aplican a productos físicos no usados y servicios no consumidos
 • Los productos físicos pueden devolverse dentro de 7 días si están en condición original`}
         </Section>
 
@@ -98,13 +100,13 @@ Al inscribirse a un evento, usted:
 • Crear múltiples cuentas para evadir sanciones
 • Usar la App para distribución de spam o contenido malicioso
 
-El incumplimiento puede resultar en suspensión o eliminación permanente de la cuenta, sin reembolso del saldo de wallet.`}
+El incumplimiento puede resultar en suspensión o eliminación permanente de la cuenta, sin reembolso en efectivo de créditos internos no utilizados.`}
         </Section>
 
         <Section title="8. Votación MVP">
           {`El sistema de votación MVP está diseñado para reconocer al mejor jugador de cada evento. Las reglas son:
 • Cada usuario registrado en el evento puede emitir UN (1) voto por evento
-• No puede votar por sí mismo
+• Puede votar por cualquier jugador del evento, incluido usted mismo
 • La votación cierra según lo determine el organizador del evento
 • En caso de empate, el ganador se selecciona aleatoriamente entre los empatados
 • Las decisiones del sistema son finales y no están sujetas a apelación
@@ -158,7 +160,7 @@ Las partes intentarán resolver cualquier controversia de buena fe antes de recu
           {`Para preguntas sobre estos Términos y Condiciones:
 
 Birrea2Play
-Correo: legal@birrea2play.com
+Correo: sergio.bosso09@gmail.com
 República de Panamá`}
         </Section>
 

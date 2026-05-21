@@ -1,10 +1,19 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
+  StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, ScrollView,
 } from 'react-native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
+
+const isWeb = Platform.OS === 'web';
+// En web: URL pública con la página de reset. En native: deep link a la app.
+function getResetRedirect() {
+  if (isWeb && typeof window !== 'undefined') {
+    return `${window.location.origin}/reset-password`;
+  }
+  return 'birrea2play://reset-password';
+}
 
 export default function ForgotPasswordScreen({ navigation }) {
   const [email, setEmail]     = useState('');
@@ -16,7 +25,7 @@ export default function ForgotPasswordScreen({ navigation }) {
     setLoading(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
-        redirectTo: 'birrea2play://reset-password',
+        redirectTo: getResetRedirect(),
       });
       if (error) throw error;
       setSent(true);
@@ -30,9 +39,13 @@ export default function ForgotPasswordScreen({ navigation }) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.inner}>
+      <ScrollView
+        contentContainerStyle={styles.inner}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
         <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
           <Text style={styles.backText}>← Volver</Text>
         </TouchableOpacity>
@@ -72,15 +85,15 @@ export default function ForgotPasswordScreen({ navigation }) {
             </TouchableOpacity>
           </View>
         )}
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
   container:    { flex: 1, backgroundColor: COLORS.bg },
-  inner:        { flex: 1, justifyContent: 'center', paddingHorizontal: SPACING.xl },
-  backBtn:      { position: 'absolute', top: SPACING.xl, left: SPACING.xl },
+  inner:        { flexGrow: 1, justifyContent: 'center', paddingHorizontal: SPACING.xl, paddingVertical: SPACING.xxl },
+  backBtn:      { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', marginBottom: SPACING.md },
   backText:     { fontFamily: FONTS.body, color: COLORS.gold, fontSize: 15 },
   brand:        { fontFamily: FONTS.heading, fontSize: 28, color: COLORS.white, letterSpacing: 4, textAlign: 'center', marginBottom: SPACING.xl },
   subtitle:     { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray, textAlign: 'center', marginBottom: SPACING.xl, lineHeight: 20 },

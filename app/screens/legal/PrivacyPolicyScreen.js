@@ -34,7 +34,7 @@ b) Información recopilada automáticamente:
 • Identificador de dispositivo
 • Sistema operativo y versión de la App
 • Fecha y hora de acceso
-• Registros de transacciones dentro de la App (inscripciones, compras, recargas de wallet)
+• Registros de transacciones dentro de la App (inscripciones, compras y adquisición de créditos internos)
 
 c) Información de terceros:
 • Datos de autenticación de Supabase Auth
@@ -45,7 +45,7 @@ c) Información de terceros:
           {`Usamos la información recopilada para:
 • Crear y gestionar su cuenta de usuario
 • Procesar inscripciones a eventos deportivos
-• Procesar pagos y recargas de wallet mediante Yappy
+• Procesar pagos para eventos, servicios deportivos y adquisición de créditos internos mediante Yappy o proveedores autorizados
 • Enviar notificaciones push sobre eventos, resultados y MVPs
 • Generar estadísticas deportivas de su perfil
 • Mejorar la experiencia de usuario y funcionalidades de la App
@@ -73,10 +73,12 @@ Esta App cumple con la Ley 81 de 2019 de Protección de Datos Personales de la R
 Todos los proveedores están sujetos a acuerdos de procesamiento de datos y están obligados a proteger su información.`}
         </Section>
 
-        <Section title="6. Pagos y Datos Financieros">
-          {`Los pagos dentro de la App se procesan mediante Yappy PA (Banco General de Panamá). Birrea2Play NO almacena números de tarjetas de crédito, datos bancarios ni información financiera sensible.
+        <Section title="6. Pagos y Créditos Internos">
+          {`Los pagos dentro de la App se procesan mediante Yappy PA (Banco General de Panamá) y/o proveedores de pago autorizados. Birrea2Play NO almacena números de tarjetas de crédito, datos bancarios, credenciales financieras ni información financiera sensible.
 
-Las transacciones Yappy se procesan directamente entre su cuenta Yappy y nuestra cuenta de merchant. Solo almacenamos el ID de referencia de la transacción y el monto para efectos de historial.`}
+Los créditos de Birrea2Play son créditos internos no transferibles para eventos, reservas, inscripciones y servicios deportivos dentro de la App. No son dinero electrónico, cuenta bancaria, préstamo, inversión, producto financiero regulado ni mecanismo de transferencia de dinero.
+
+Las transacciones Yappy se procesan directamente entre su cuenta Yappy y nuestra cuenta de merchant. Solo almacenamos el ID de referencia de la transacción, el monto y el estado para efectos de historial, soporte y cumplimiento legal.`}
         </Section>
 
         <Section title="7. Seguridad de los Datos">
@@ -106,7 +108,7 @@ A pesar de estas medidas, ningún sistema es 100% seguro. En caso de violación 
 • Oposición: oponerse a ciertos tipos de tratamiento
 • Revocación del consentimiento: retirar su consentimiento en cualquier momento
 
-Para ejercer estos derechos, contáctenos en: privacidad@birrea2play.com`}
+Para ejercer estos derechos, contáctenos en: sergio.bosso09@gmail.com`}
         </Section>
 
         <Section title="10. Notificaciones Push">
@@ -114,7 +116,7 @@ Para ejercer estos derechos, contáctenos en: privacidad@birrea2play.com`}
 • Nuevos eventos disponibles
 • Resultados de partidos
 • Declaración de MVP
-• Movimientos en su wallet
+• Movimientos de créditos internos
 
 Puede desactivar las notificaciones desde Ajustes de su dispositivo en cualquier momento. Esto no afectará el uso general de la App.`}
         </Section>
@@ -131,7 +133,7 @@ Puede desactivar las notificaciones desde Ajustes de su dispositivo en cualquier
           {`Si tiene preguntas, inquietudes o desea ejercer sus derechos, contáctenos:
 
 Birrea2Play
-Correo: privacidad@birrea2play.com
+Correo: sergio.bosso09@gmail.com
 República de Panamá
 
 Para quejas ante la autoridad competente puede contactar al Instituto Nacional de Transparencia, Acceso a la Información y Protección de Datos Personales (ANTAI) de Panamá.`}

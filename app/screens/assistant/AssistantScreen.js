@@ -9,7 +9,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 
-const SALIX_AVATAR = require('../../../../assets/salix.png');
+const SALIX_AVATAR = require('../../../assets/Salix.png');
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const FUNCTIONS_URL = process.env.EXPO_PUBLIC_SUPABASE_URL + '/functions/v1';
@@ -30,8 +30,8 @@ const TOUR_STEPS = [
   },
   {
     icon:  '💰',
-    title: 'Tu Wallet',
-    body:  'Recarga tu saldo con Yappy o tarjeta y úsalo para inscribirte a eventos. También puedes pagar directamente con Yappy sin recargar primero.',
+    title: 'Tus Créditos',
+    body:  'Compra créditos internos con Yappy o tarjeta y úsalos para inscribirte a eventos. También puedes pagar directamente con Yappy sin comprar créditos primero.',
   },
   {
     icon:  '🛒',
@@ -46,14 +46,14 @@ const TOUR_STEPS = [
   {
     icon:  '🦅',
     title: '¡Salix está listo para ayudarte!',
-    body:  'Soy Salix, tu asistente virtual de Panamá Birreas. Puedes preguntarme cómo inscribirte, recargar, usar la tienda o lo que necesites.',
+    body:  'Soy Salix, tu asistente virtual de Panamá Birreas. Puedes preguntarme cómo inscribirte, comprar créditos, usar la tienda o lo que necesites.',
   },
 ];
 
 // ── Suggested questions ─────────────────────────────────────────────────────
 const SUGGESTED = [
   '¿Cómo me inscribo a un evento?',
-  '¿Cómo recargo mi wallet con Yappy?',
+  '¿Cómo compro créditos con Yappy?',
   '¿Cómo cancelo una inscripción?',
   '¿Qué es un Gestor?',
   '¿Cómo pago con tarjeta?',
@@ -235,7 +235,7 @@ export default function AssistantScreen() {
   // ── Render: chat ────────────────────────────────────────────────────────────
   return (
     <SafeAreaView style={styles.safe}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
 
         {/* Header */}
         <View style={styles.chatHeader}>
@@ -399,7 +399,7 @@ const styles = StyleSheet.create({
   tourRepeat:     { fontFamily: FONTS.body, color: COLORS.gold, fontSize: 13 },
 
   chatScroll:  { flex: 1 },
-  chatContent: { padding: SPACING.md, gap: SPACING.md, paddingBottom: SPACING.xl },
+  chatContent: { padding: SPACING.md, gap: SPACING.md, paddingBottom: SPACING.xxl },
 
   bubble: {
     maxWidth: '85%',

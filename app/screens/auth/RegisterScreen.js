@@ -6,6 +6,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { signUp, signOut, createUserProfile, uploadAvatar } from '../../../lib/auth';
+import { logError, logWarn } from '../../../lib/logger';
 
 const DEPORTES = [
   'Fútbol', 'Fútbol 7', 'Fútbol Sala',
@@ -39,7 +40,7 @@ export default function RegisterScreen({ navigation }) {
   const [form, setForm] = useState({
     nombre: '', correo: '', telefono: '',
     password: '', confirmPassword: '',
-    residencia: '', cedula: '', contacto_emergencia: '',
+    residencia: '', contacto_emergencia: '',
     deportes: [], otroDeporte: '', nivel: 'Recreativo', posicion: '',
     terminos: false,
   });
@@ -50,7 +51,7 @@ export default function RegisterScreen({ navigation }) {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') return;
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
@@ -58,79 +59,154 @@ export default function RegisterScreen({ navigation }) {
     if (!result.canceled) setPhotoUri(result.assets[0].uri);
   };
 
+  const normalizePhone = (raw) => (raw ?? '').replace(/[\s\-().]/g, '');
+
   const goNext = () => {
     if (step === 1) {
       if (!form.nombre.trim()) {
-        Alert.alert('Error', 'El nombre es obligatorio.');
+        Alert.alert('Falta el nombre', 'Por favor ingresa tu nombre completo.');
         return;
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!form.correo.trim() || !emailRegex.test(form.correo.trim())) {
-        Alert.alert('Error', 'Ingresa un correo electrónico válido.');
+      if (!form.correo.trim()) {
+        Alert.alert('Falta el correo', 'Por favor ingresa tu correo electrónico.');
         return;
       }
-      if (!form.telefono.trim()) {
-        Alert.alert('Error', 'El número de teléfono / WhatsApp es obligatorio.');
+      if (!emailRegex.test(form.correo.trim())) {
+        Alert.alert('Correo inválido', 'Revisa el formato: nombre@dominio.com');
+        return;
+      }
+      const tel = normalizePhone(form.telefono);
+      if (!tel) {
+        Alert.alert('Falta el teléfono', 'El número de teléfono / WhatsApp es obligatorio.');
+        return;
+      }
+      if (!/^\+?\d{7,15}$/.test(tel)) {
+        Alert.alert('Teléfono inválido', 'Usa solo números (7 a 15 dígitos). Puedes incluir el código de país: +507...');
         return;
       }
     }
     if (step === 2) {
-      if (form.password.length < 8) { Alert.alert('Error', 'La contraseña debe tener al menos 8 caracteres.'); return; }
-      if (!/\d/.test(form.password)) { Alert.alert('Error', 'La contraseña debe incluir al menos un número.'); return; }
-      if (form.password !== form.confirmPassword) { Alert.alert('Error', 'Las contraseñas no coinciden.'); return; }
+      if (!form.password || form.password.length < 8) {
+        Alert.alert('Contraseña muy corta', 'La contraseña debe tener al menos 8 caracteres.');
+        return;
+      }
+      if (!/\d/.test(form.password)) {
+        Alert.alert('Contraseña inválida', 'La contraseña debe incluir al menos un número.');
+        return;
+      }
+      if (form.password !== form.confirmPassword) {
+        Alert.alert('No coinciden', 'La contraseña y su confirmación no son iguales.');
+        return;
+      }
     }
     setStep((s) => s + 1);
   };
 
   const submit = async () => {
-    if (!form.terminos) { Alert.alert('Error', 'Debes aceptar los términos.'); return; }
+    if (!form.terminos) { Alert.alert('Falta aceptar', 'Debes aceptar los términos y condiciones para continuar.'); return; }
     if (loading) return; // guard against double-tap
     setLoading(true);
     let authUser = null;
+    let profileCreated = false;
     try {
-      const { user: au } = await signUp(form.correo.trim().toLowerCase(), form.password);
-      authUser = au;
+      const signUpResult = await signUp(form.correo.trim().toLowerCase(), form.password);
+      authUser = signUpResult?.user ?? null;
+      const session = signUpResult?.session ?? null;
+      if (!authUser) {
+        throw new Error('No se pudo crear la cuenta. Intenta nuevamente.');
+      }
       let foto_url = null;
       if (photoUri) {
         try {
           foto_url = await uploadAvatar(authUser.id, photoUri);
         } catch (uploadErr) {
           // La foto es opcional — continúa sin ella
-          console.warn('Upload foto fallido:', uploadErr.message);
+          logWarn({ screen: 'RegisterScreen', action: 'uploadAvatar', userId: authUser?.id, technical: uploadErr });
         }
       }
       await createUserProfile(authUser.id, {
         nombre: form.nombre.trim(),
         correo: form.correo.trim().toLowerCase(),
-        telefono: form.telefono,
-        residencia: form.residencia,
-        cedula: form.cedula,
-        contacto_emergencia: form.contacto_emergencia,
+        telefono: normalizePhone(form.telefono),
+        residencia: form.residencia?.trim() || null,
+        contacto_emergencia: form.contacto_emergencia?.trim() || null,
         deporte: form.deportes.includes('Otro')
           ? [...form.deportes.filter(d => d !== 'Otro'), form.otroDeporte].filter(Boolean).join(', ')
           : form.deportes.join(', ') || 'Sin especificar',
         nivel: form.nivel,
-        posicion: form.posicion,
+        posicion: form.posicion || null,
         foto_url,
       });
-      Alert.alert('¡Listo!', 'Cuenta creada. Por favor inicia sesión.', [
-        { text: 'OK', onPress: () => navigation.replace('Login') },
-      ]);
+      profileCreated = true;
+
+      // Si Supabase tiene confirm-email activado, signUp NO devuelve session.
+      // En ese caso el usuario NO puede loguearse hasta confirmar correo.
+      if (!session) {
+        Alert.alert(
+          'Revisa tu correo',
+          'Te enviamos un email para confirmar tu cuenta. Ábrelo y haz clic en el enlace, luego inicia sesión.',
+          [{ text: 'OK', onPress: () => navigation.replace('Login') }],
+        );
+      } else {
+        Alert.alert(
+          '¡Cuenta creada!',
+          'Tu cuenta quedó lista. Por favor inicia sesión.',
+          [{ text: 'OK', onPress: () => navigation.replace('Login') }],
+        );
+      }
     } catch (e) {
-      // If signUp succeeded but profile creation failed, the auth user exists.
-      // Sign them out to avoid limbo state — they can re-register.
-      if (authUser) {
+      // Logueo técnico para depuración (no se muestra al usuario).
+      logError({
+        screen: 'RegisterScreen',
+        action: 'submit',
+        userId: authUser?.id,
+        technical: e,
+        extra: { phase: profileCreated ? 'post-profile' : authUser ? 'profile-insert' : 'sign-up' },
+      });
+
+      // Si signUp pasó pero el insert de perfil falló, dejamos la cuenta auth
+      // en limbo. Sign-out para que el usuario pueda reintentar limpio.
+      if (authUser && !profileCreated) {
         signOut().catch(() => {});
       }
-      Alert.alert('Error al registrarse', e.message);
+
+      const msg = (e?.message ?? '').toString();
+      const lower = msg.toLowerCase();
+
+      if (lower.includes('rate limit') || lower.includes('too many')) {
+        Alert.alert(
+          'Demasiados intentos',
+          'Se enviaron demasiados correos en poco tiempo. Espera unos minutos antes de intentarlo de nuevo.',
+        );
+      } else if (lower.includes('already registered') || lower.includes('already been registered') || lower.includes('user already')) {
+        Alert.alert('Correo ya registrado', 'Este correo ya tiene una cuenta. Por favor inicia sesión.');
+      } else if (lower.includes('email not confirmed')) {
+        Alert.alert(
+          'Correo sin confirmar',
+          'Ya tienes una cuenta pero no has confirmado tu correo. Revisa tu bandeja de entrada y haz clic en el enlace de confirmación.',
+        );
+      } else if (lower.includes('password')) {
+        Alert.alert('Contraseña inválida', 'La contraseña no cumple los requisitos. Usa al menos 8 caracteres e incluye un número.');
+      } else if (lower.includes('invalid') && lower.includes('email')) {
+        Alert.alert('Correo inválido', 'El correo electrónico no tiene un formato válido.');
+      } else if (lower.includes('network') || lower.includes('fetch')) {
+        Alert.alert('Sin conexión', 'No pudimos conectar con el servidor. Revisa tu internet e intenta de nuevo.');
+      } else {
+        // Mensaje seguro al usuario; el detalle técnico ya quedó en console.error.
+        Alert.alert(
+          'No pudimos crear tu cuenta',
+          'Ocurrió un error inesperado. Intenta nuevamente en unos minutos. Si el problema continúa, contáctanos.',
+        );
+      }
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         {/* Step indicator */}
         <View style={styles.stepRow}>
           {[1, 2, 3, 4, 5].map((n) => (
@@ -141,19 +217,52 @@ export default function RegisterScreen({ navigation }) {
 
         {step === 1 && (
           <View style={styles.form}>
-            <TouchableOpacity style={styles.photoPicker} onPress={pickPhoto}>
-              <Text style={styles.photoText}>{photoUri ? '✓ Foto seleccionada' : '📷 Subir foto de perfil'}</Text>
+            <TouchableOpacity style={styles.photoPicker} onPress={pickPhoto} activeOpacity={0.75}>
+              <Text style={styles.photoText}>{photoUri ? '✓ Foto seleccionada' : '📷 Subir foto de perfil (opcional)'}</Text>
             </TouchableOpacity>
-            <Field label="Nombre completo" value={form.nombre} onChangeText={(v) => update('nombre', v)} />
-            <Field label="Correo electrónico" value={form.correo} onChangeText={(v) => update('correo', v)} keyboardType="email-address" autoCapitalize="none" />
-            <Field label="Teléfono / WhatsApp *" value={form.telefono} onChangeText={(v) => update('telefono', v)} keyboardType="phone-pad" />
+            <Field
+              label="Nombre completo *"
+              value={form.nombre}
+              onChangeText={(v) => update('nombre', v)}
+              returnKeyType="next"
+              autoCapitalize="words"
+            />
+            <Field
+              label="Correo electrónico *"
+              value={form.correo}
+              onChangeText={(v) => update('correo', v)}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="next"
+            />
+            <Field
+              label="Teléfono / WhatsApp *"
+              value={form.telefono}
+              onChangeText={(v) => update('telefono', v)}
+              keyboardType="phone-pad"
+              returnKeyType="done"
+            />
           </View>
         )}
 
         {step === 2 && (
           <View style={styles.form}>
-            <Field label="Contraseña" value={form.password} onChangeText={(v) => update('password', v)} secureTextEntry />
-            <Field label="Confirmar contraseña" value={form.confirmPassword} onChangeText={(v) => update('confirmPassword', v)} secureTextEntry />
+            <Field
+              label="Contraseña"
+              value={form.password}
+              onChangeText={(v) => update('password', v)}
+              secureTextEntry
+              returnKeyType="next"
+            />
+            <Field
+              label="Confirmar contraseña"
+              value={form.confirmPassword}
+              onChangeText={(v) => update('confirmPassword', v)}
+              secureTextEntry
+              returnKeyType="done"
+              onSubmitEditing={goNext}
+            />
             <Text style={styles.hint}>Mínimo 8 caracteres y al menos 1 número.</Text>
           </View>
         )}
@@ -161,7 +270,6 @@ export default function RegisterScreen({ navigation }) {
         {step === 3 && (
           <View style={styles.form}>
             <Field label="Residencia" value={form.residencia} onChangeText={(v) => update('residencia', v)} />
-            <Field label="Cédula" value={form.cedula} onChangeText={(v) => update('cedula', v)} />
             <Field label="Contacto de emergencia" value={form.contacto_emergencia} onChangeText={(v) => update('contacto_emergencia', v)} keyboardType="phone-pad" />
           </View>
         )}
@@ -329,12 +437,15 @@ const styles = StyleSheet.create({
   photoPicker: {
     backgroundColor: COLORS.card,
     borderRadius: RADIUS.md,
-    padding: SPACING.md,
+    paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.md,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: COLORS.navy,
     borderStyle: 'dashed',
     marginBottom: SPACING.sm,
+    minHeight: 56,
+    justifyContent: 'center',
   },
   photoText: { fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 15 },
   btnRow: { flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.xl },

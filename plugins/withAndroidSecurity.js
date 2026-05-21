@@ -12,8 +12,8 @@ module.exports = function withAndroidSecurity(config) {
     if (app) {
       // Evita extracción de datos vía ADB backup (requerido para producción)
       app.$['android:allowBackup'] = 'false';
-      // No seteamos usesCleartextTraffic aquí — lo maneja network_security_config.xml
-      // que permite localhost para Metro (dev) y bloquea todo lo demás (prod)
+      // Bloquea HTTP cleartext de forma explícita
+      app.$['android:usesCleartextTraffic'] = 'false';
     }
 
     // WRITE_EXTERNAL_STORAGE: obsoleto en API 29+, restringir a versiones antiguas

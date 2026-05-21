@@ -1,0 +1,10 @@
+# EAS Build ignore — reduces upload size
+node_modules/
+.git/
+android/.gradle/
+android/app/build/
+android/build/
+ios/Pods/
+ios/build/
+.expo/
+*.log

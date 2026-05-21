@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Evento — Birrea2Play</title>
+  <meta id="og-title"    property="og:title"       content="Evento — Birrea2Play" />
+  <meta id="og-desc"     property="og:description"  content="Liga y torneos deportivos en Panamá." />
+  <meta id="og-img"      property="og:image"        content="https://www.birrea2play.com/img/foto-01.jpg" />
+  <meta property="og:site_name" content="Birrea2Play" />
+  <meta property="og:type"      content="website" />
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#07101F;--card:#0F1E33;--card2:#0a1828;
+      --blue:#1E5FCC;--red:#C8102E;--white:#FFF;
+      --gray:#9CA3AF;--gold:#F0A500;--green:#22C55E;--navy:#1E3A5F;
+    }
+    body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--white);min-height:100vh}
+    a{color:var(--blue);text-decoration:none}
+
+    /* ── NAV ── */
+    nav{background:var(--card);padding:12px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--red);position:sticky;top:0;z-index:200}
+    .nav-logo{font-size:18px;font-weight:900;letter-spacing:3px;color:var(--white)}
+    .nav-logo span{color:var(--red)}
+    .nav-right{display:flex;gap:12px;align-items:center}
+    .nav-back{font-size:12px;color:var(--gray)}
+    .nav-back:hover{color:var(--white)}
+    .share-btn{background:var(--card2);border:1px solid var(--navy);border-radius:8px;padding:6px 12px;font-size:12px;color:var(--gray);cursor:pointer;display:flex;align-items:center;gap:5px}
+    .share-btn:hover{border-color:var(--blue);color:var(--white)}
+
+    /* ── HERO ── */
+    .hero-img{width:100%;height:200px;object-fit:cover;display:block}
+    .hero-placeholder{width:100%;height:200px;background:linear-gradient(135deg,#0a1828,#0F2040);display:flex;align-items:center;justify-content:center;font-size:64px}
+    .hero-body{padding:20px 20px 0;max-width:900px;margin:0 auto}
+    .hero-badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+    .badge{font-size:10px;font-weight:700;letter-spacing:1px;padding:4px 10px;border-radius:100px;border:1px solid}
+    .hero-title{font-size:clamp(20px,5vw,30px);font-weight:900;letter-spacing:1px;margin-bottom:10px;line-height:1.2}
+    .hero-meta{display:flex;flex-direction:column;gap:5px;margin-bottom:16px}
+    .hero-meta-row{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--gray)}
+    .hero-meta-row strong{color:var(--white)}
+    .live-dot{width:8px;height:8px;background:var(--green);border-radius:50%;animation:pulse 1.4s ease-in-out infinite;flex-shrink:0}
+    @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(1.3)}}
+
+    /* ── TABS ── */
+    .tabs-wrap{position:sticky;top:52px;z-index:100;background:var(--bg);border-bottom:1px solid var(--navy)}
+    .tabs{display:flex;max-width:900px;margin:0 auto;padding:0 20px}
+    .tab{padding:12px 16px;font-size:13px;font-weight:600;color:var(--gray);cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+    .tab.active{color:var(--white);border-bottom-color:var(--red)}
+    .tab:hover{color:var(--white)}
+
+    /* ── CONTENT ── */
+    .tab-content{display:none;max-width:900px;margin:0 auto;padding:20px 20px 80px}
+    .tab-content.active{display:block}
+
+    /* ── STANDINGS ── */
+    .section-title{font-size:16px;font-weight:900;letter-spacing:1px;margin-bottom:12px;color:var(--white)}
+    .standings-table{width:100%;border-collapse:collapse;font-size:13px}
+    .standings-table th{padding:8px 10px;text-align:center;color:var(--gray);font-size:10px;letter-spacing:1px;font-weight:600;border-bottom:1px solid var(--navy)}
+    .standings-table th:first-child{text-align:left;padding-left:12px}
+    .standings-table td{padding:10px 10px;text-align:center;border-bottom:1px solid #0a1828}
+    .standings-table td:first-child{text-align:left;padding-left:4px}
+    .standings-table tr:last-child td{border-bottom:none}
+    .standings-table tbody tr:hover td{background:#0a1828}
+    .standings-row-pos{font-size:11px;color:var(--gray);width:24px;text-align:center;display:inline-block}
+    .standings-team{display:flex;align-items:center;gap:10px}
+    .team-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+    .pts-cell{font-weight:900;font-size:15px;color:var(--gold)}
+    .standings-wrap{background:var(--card);border:1px solid var(--navy);border-radius:14px;overflow:hidden;margin-bottom:20px}
+    .promo-zone{background:#22C55E18;border-left:3px solid var(--green)}
+    .standings-legend{padding:12px 16px;display:flex;gap:16px;font-size:11px;color:var(--gray);border-top:1px solid var(--navy)}
+    .legend-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+
+    /* ── FIXTURE ── */
+    .phase-title{font-size:11px;font-weight:700;letter-spacing:2px;color:var(--gray);margin:20px 0 10px;display:flex;align-items:center;gap:8px}
+    .phase-title::after{content:'';flex:1;height:1px;background:var(--navy)}
+    .match-card{background:var(--card);border:1px solid var(--navy);border-radius:12px;padding:14px 16px;margin-bottom:8px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px}
+    .match-card.finished{border-color:#1E5FCC44}
+    .match-team{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600}
+    .match-team.away{justify-content:flex-end;flex-direction:row-reverse}
+    .match-team-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0}
+    .match-team-name{font-size:13px;font-weight:600;line-height:1.2}
+    .match-score{text-align:center;min-width:64px}
+    .score-box{display:flex;align-items:center;justify-content:center;gap:6px}
+    .score-num{font-size:24px;font-weight:900;min-width:24px;text-align:center;line-height:1}
+    .score-sep{font-size:16px;color:var(--gray);font-weight:300}
+    .score-pending{font-size:11px;color:var(--gray);letter-spacing:1px;text-align:center}
+    .match-jornada{font-size:10px;color:var(--gray);text-align:center;margin-top:4px}
+    .match-winner .score-num{color:var(--gold)}
+    .match-loser .score-num{color:var(--gray)}
+
+    /* playoff TBD */
+    .match-tbd{font-size:12px;color:var(--gray);font-style:italic;line-height:1.3}
+    .match-tbd.away{text-align:right}
+
+    /* ── TEAMS ── */
+    .teams-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+    .team-card{background:var(--card);border:1px solid var(--navy);border-radius:14px;overflow:hidden}
+    .team-card-header{padding:14px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--navy)}
+    .team-color-bar{width:4px;height:36px;border-radius:2px;flex-shrink:0}
+    .team-card-name{font-size:16px;font-weight:900;letter-spacing:1px}
+    .team-card-sub{font-size:11px;color:var(--gray);margin-top:2px}
+    .roster-table{width:100%;border-collapse:collapse}
+    .roster-table tr{border-bottom:1px solid #0a1828}
+    .roster-table tr:last-child{border-bottom:none}
+    .roster-table td{padding:9px 14px;font-size:13px}
+    .roster-num{color:var(--gray);font-weight:700;width:28px;font-size:12px}
+    .roster-name{color:var(--white);font-weight:600}
+    .roster-pos{color:var(--gray);font-size:11px;text-align:right;font-weight:500}
+    .pos-badge{font-size:9px;font-weight:700;letter-spacing:1px;padding:2px 7px;border-radius:100px;border:1px solid}
+    .pos-POR{color:#F0A500;border-color:#F0A50044;background:#F0A50012}
+    .pos-DEF{color:#1E88E5;border-color:#1E88E544;background:#1E88E512}
+    .pos-MED{color:#22C55E;border-color:#22C55E44;background:#22C55E12}
+    .pos-DEL{color:#C8102E;border-color:#C8102E44;background:#C8102E12}
+
+    /* ── DOWNLOAD CTA ── */
+    .cta-box{background:var(--card);border:1px solid var(--navy);border-radius:16px;padding:24px;text-align:center;margin-top:24px}
+    .cta-box h3{font-size:17px;font-weight:900;letter-spacing:1px;margin-bottom:6px}
+    .cta-box p{font-size:12px;color:var(--gray);margin-bottom:16px}
+    .cta-btn{display:inline-block;background:var(--red);color:var(--white);padding:12px 28px;border-radius:100px;font-size:13px;font-weight:700;letter-spacing:1px}
+    .cta-btn:hover{opacity:.9;text-decoration:none}
+
+    /* ── LOADING / ERROR ── */
+    .loading-state,.error-state{padding:80px 20px;text-align:center;color:var(--gray)}
+    .spinner{width:40px;height:40px;border:3px solid var(--navy);border-top-color:var(--red);border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 14px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    /* ── LIVE BADGE ── */
+    .live-badge{display:inline-flex;align-items:center;gap:5px;background:#22C55E20;border:1px solid #22C55E44;color:var(--green);font-size:10px;font-weight:700;letter-spacing:1px;padding:3px 10px;border-radius:100px}
+
+    /* ── FOOTER ── */
+    footer{background:var(--card);border-top:1px solid var(--navy);padding:24px;text-align:center}
+    .footer-logo{font-size:17px;font-weight:900;letter-spacing:3px;margin-bottom:4px}
+    .footer-logo span{color:var(--red)}
+    .footer-copy{font-size:11px;color:#4B5563}
+
+    @media(max-width:600px){
+      .tabs{overflow-x:auto;-webkit-overflow-scrolling:touch}
+      .tab{flex-shrink:0}
+      .match-card{grid-template-columns:1fr 56px 1fr}
+      .score-num{font-size:20px}
+      .teams-grid{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <a href="/" class="nav-logo" style="text-decoration:none">BIRREA<span>2</span>PLAY</a>
+  <div class="nav-right">
+    <a href="eventos.html" class="nav-back">← Eventos</a>
+    <button class="share-btn" id="shareBtn">📤 Compartir</button>
+  </div>
+</nav>
+
+<div id="root">
+  <div class="loading-state"><div class="spinner"></div><p>Cargando evento...</p></div>
+</div>
+
+<footer>
+  <div class="footer-logo">BIRREA<span>2</span>PLAY</div>
+  <div class="footer-copy">&copy; 2025 Birrea2Play. Todos los derechos reservados.</div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+const SUPA_URL  = 'https://rumreditrvxkcnlhawut.supabase.co';
+const SUPA_ANON = 'sb_publishable_U56Yg1Y7h0zDcrpwH8AlTQ_H7ir7oBK';
+const client    = supabase.createClient(SUPA_URL, SUPA_ANON);
+
+const STATUS_MAP = {
+  open:      { label:'ABIERTO',    color:'#4A8FFF', border:'#1E5FCC' },
+  active:    { label:'EN CURSO',   color:'#22C55E', border:'#22C55E' },
+  finished:  { label:'FINALIZADO', color:'#9CA3AF', border:'#9CA3AF' },
+  cancelled: { label:'CANCELADO',  color:'#C8102E', border:'#C8102E' },
+};
+const SPORT_EMOJI = {'Fútbol':'⚽','Fútbol 7':'⚽','Baloncesto':'🏀','Voleibol':'🏐','Tenis':'🎾'};
+const FASE_LABEL  = { grupos:'JORNADA', semis:'SEMIFINAL', cuartos:'CUARTOS', octavos:'OCTAVOS', tercer_lugar:'3ER LUGAR', final:'FINAL' };
+
+let STATE = { event:null, teams:[], players:{}, matches:[], activeTab:'fixture' };
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+function fmtDate(f,h){
+  if(!f) return '—';
+  const [y,m,d]=f.split('-').map(Number);
+  const s=new Date(y,m-1,d).toLocaleDateString('es-PA',{weekday:'long',day:'numeric',month:'long'});
+  return h?`${s} · ${h.slice(0,5)}`:s;
+}
+
+function teamById(id){ return STATE.teams.find(t=>t.id===id); }
+
+function matchDisplayName(match,side){
+  const id = side==='home'?match.team_home_id:match.team_away_id;
+  if(id){ const t=teamById(id); if(t) return t.nombre; }
+  return side==='home'?(match.equipo_local||'?'):(match.equipo_visitante||'?');
+}
+function matchColor(match,side){
+  const id=side==='home'?match.team_home_id:match.team_away_id;
+  if(id){ const t=teamById(id); if(t) return t.color; }
+  return '#4B5563';
+}
+function hasTBD(match){ return !match.team_home_id && !match.team_away_id; }
+
+// ── Standings ──────────────────────────────────────────────────────────────
+
+function calcStandings(){
+  const s={};
+  STATE.teams.forEach(t=>{ s[t.id]={team:t,pj:0,g:0,e:0,p:0,gf:0,gc:0,pts:0}; });
+  STATE.matches
+    .filter(m=>m.fase==='grupos'&&m.status==='finished'&&m.team_home_id&&m.team_away_id)
+    .forEach(m=>{
+      const gh=m.goles_home??0, ga=m.goles_away??0;
+      const home=s[m.team_home_id], away=s[m.team_away_id];
+      if(!home||!away) return;
+      home.pj++; away.pj++;
+      home.gf+=gh; home.gc+=ga;
+      away.gf+=ga; away.gc+=gh;
+      if(gh>ga){home.g++;home.pts+=3;away.p++;}
+      else if(gh<ga){away.g++;away.pts+=3;home.p++;}
+      else{home.e++;home.pts++;away.e++;away.pts++;}
+    });
+  return Object.values(s).sort((a,b)=>{
+    if(b.pts!==a.pts) return b.pts-a.pts;
+    const da=a.gf-a.gc, db=b.gf-b.gc;
+    if(db!==da) return db-da;
+    return b.gf-a.gf;
+  });
+}
+
+// ── Renders ────────────────────────────────────────────────────────────────
+
+function renderStandings(){
+  const rows=calcStandings();
+  const totalGrupos=STATE.matches.filter(m=>m.fase==='grupos').length;
+  const playedGrupos=STATE.matches.filter(m=>m.fase==='grupos'&&m.status==='finished').length;
+
+  return `
+    <p style="font-size:12px;color:var(--gray);margin-bottom:14px">${playedGrupos} de ${totalGrupos} jornadas jugadas</p>
+    <div class="standings-wrap">
+      <table class="standings-table">
+        <thead>
+          <tr>
+            <th colspan="2" style="text-align:left;padding-left:12px">EQUIPO</th>
+            <th>PJ</th><th>G</th><th>E</th><th>P</th>
+            <th>GF</th><th>GC</th><th>DIF</th>
+            <th style="color:var(--gold)">PTS</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((r,i)=>`
+            <tr class="${i<2?'promo-zone':''}">
+              <td style="width:28px;padding-right:4px">
+                <span class="standings-row-pos">${i+1}</span>
+              </td>
+              <td>
+                <div class="standings-team">
+                  <div class="team-dot" style="background:${r.team.color}"></div>
+                  <span style="font-size:13px;font-weight:600">${r.team.nombre}</span>
+                </div>
+              </td>
+              <td>${r.pj}</td>
+              <td>${r.g}</td>
+              <td>${r.e}</td>
+              <td>${r.p}</td>
+              <td>${r.gf}</td>
+              <td>${r.gc}</td>
+              <td style="color:${r.gf-r.gc>=0?'var(--green)':'var(--red)'}">${r.gf-r.gc>0?'+':''}${r.gf-r.gc}</td>
+              <td class="pts-cell">${r.pts}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+      <div class="standings-legend">
+        <span><span class="legend-dot" style="background:var(--green)"></span>Clasifica a semifinales</span>
+      </div>
+    </div>`;
+}
+
+function renderMatchCard(m){
+  const fin=m.status==='finished';
+  const tbd=hasTBD(m);
+  const gh=m.goles_home??'', ga=m.goles_away??'';
+  const homeWin=fin&&m.goles_home>m.goles_away;
+  const awayWin=fin&&m.goles_away>m.goles_home;
+  const hName=matchDisplayName(m,'home');
+  const aName=matchDisplayName(m,'away');
+  const hColor=matchColor(m,'home');
+  const aColor=matchColor(m,'away');
+
+  const homeTeam=tbd
+    ?`<div class="match-tbd">${hName}</div>`
+    :`<div class="match-team ${homeWin?'match-winner':fin?'match-loser':''}">
+        <div class="match-team-dot" style="background:${hColor}"></div>
+        <span class="match-team-name">${hName}</span>
+      </div>`;
+  const awayTeam=tbd
+    ?`<div class="match-tbd away">${aName}</div>`
+    :`<div class="match-team away ${awayWin?'match-winner':fin?'match-loser':''}">
+        <div class="match-team-dot" style="background:${aColor}"></div>
+        <span class="match-team-name">${aName}</span>
+      </div>`;
+
+  const scoreHtml=fin
+    ?`<div class="score-box">
+        <span class="score-num" style="color:${homeWin?'var(--gold)':awayWin?'var(--gray)':'var(--white)'}">${gh}</span>
+        <span class="score-sep">–</span>
+        <span class="score-num" style="color:${awayWin?'var(--gold)':homeWin?'var(--gray)':'var(--white)'}">${ga}</span>
+      </div>`
+    :`<div class="score-pending">VS</div>`;
+
+  const label=m.fase==='grupos'?`J${m.jornada}`:(FASE_LABEL[m.fase]||m.fase);
+
+  return `
+    <div class="match-card ${fin?'finished':''}">
+      ${homeTeam}
+      <div class="match-score">
+        ${scoreHtml}
+        <div class="match-jornada">${label}</div>
+      </div>
+      ${awayTeam}
+    </div>`;
+}
+
+function renderFixture(){
+  const grupoMatches=STATE.matches.filter(m=>m.fase==='grupos').sort((a,b)=>a.jornada-b.jornada);
+  const playoffMatches=STATE.matches.filter(m=>m.fase!=='grupos').sort((a,b)=>a.jornada-b.jornada);
+
+  const semis=playoffMatches.filter(m=>m.fase==='semis');
+  const tercer=playoffMatches.filter(m=>m.fase==='tercer_lugar'||(m.fase==='final'&&(m.equipo_local||'').includes('🥉')));
+  const final=playoffMatches.filter(m=>m.fase==='final'&&!(m.equipo_local||'').includes('🥉'));
+
+  let html='';
+  if(grupoMatches.length){
+    html+=`<div class="phase-title">⚽ LIGA — TODOS CONTRA TODOS</div>`;
+    html+=grupoMatches.map(renderMatchCard).join('');
+  }
+  if(semis.length){
+    html+=`<div class="phase-title">🥊 SEMIFINALES</div>`;
+    html+=semis.map(renderMatchCard).join('');
+  }
+  if(tercer.length){
+    html+=`<div class="phase-title">🥉 TERCER LUGAR</div>`;
+    html+=tercer.map(renderMatchCard).join('');
+  }
+  if(final.length){
+    html+=`<div class="phase-title">🏆 GRAN FINAL</div>`;
+    html+=final.map(renderMatchCard).join('');
+  }
+  return html||'<p style="color:var(--gray);font-size:13px">Sin partidos registrados.</p>';
+}
+
+function renderTeams(){
+  return STATE.teams.map(team=>{
+    const players=STATE.players[team.id]||[];
+    const rows=players.map(p=>{
+      const raw=p.telefono||'';
+      const parts=raw.split('·').map(s=>s.trim());
+      const dorsal=parts[0]||'';
+      const pos=parts[1]||'';
+      return `
+        <tr>
+          <td class="roster-num">${dorsal}</td>
+          <td class="roster-name">${p.nombre}</td>
+          <td class="roster-pos">${pos?`<span class="pos-badge pos-${pos}">${pos}</span>`:''}</td>
+        </tr>`;
+    }).join('');
+    return `
+      <div class="team-card">
+        <div class="team-card-header">
+          <div class="team-color-bar" style="background:${team.color}"></div>
+          <div>
+            <div class="team-card-name">${team.nombre}</div>
+            <div class="team-card-sub">${players.length} jugadores</div>
+          </div>
+        </div>
+        <table class="roster-table">${rows}</table>
+      </div>`;
+  }).join('');
+}
+
+function renderHero(){
+  const ev=STATE.event;
+  const status=STATUS_MAP[ev.status]||STATUS_MAP.open;
+  const emoji=SPORT_EMOJI[ev.deporte]||'🏅';
+  const isActive=ev.status==='active';
+
+  document.title=`${ev.nombre} — Birrea2Play`;
+  document.getElementById('og-title').content=`${ev.nombre} — Birrea2Play`;
+  document.getElementById('og-desc').content=`${ev.deporte}·${ev.formato} | ${ev.lugar||'Panamá'} | ${fmtDate(ev.fecha,ev.hora)}`;
+  if(ev.cancha_foto_url) document.getElementById('og-img').content=ev.cancha_foto_url;
+
+  const heroHtml=ev.cancha_foto_url
+    ?`<img class="hero-img" src="${ev.cancha_foto_url}" alt="${ev.nombre}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="hero-placeholder" style="display:none">${emoji}</div>`
+    :`<div class="hero-placeholder">${emoji}</div>`;
+
+  return `
+    ${heroHtml}
+    <div class="hero-body">
+      <div class="hero-badges">
+        <span class="badge" style="color:${status.color};border-color:${status.border};background:${status.border}22">${status.label}</span>
+        ${isActive?'<span class="live-badge"><span class="live-dot"></span>EN VIVO</span>':''}
+        <span class="badge" style="color:var(--gray);border-color:var(--navy)">${emoji} ${ev.deporte||'Deporte'} · ${ev.formato}</span>
+        ${ev.genero&&ev.genero!=='Mixto'?`<span class="badge" style="color:var(--gray);border-color:var(--navy)">👤 ${ev.genero}</span>`:''}
+      </div>
+      <h1 class="hero-title">${ev.nombre}</h1>
+      <div class="hero-meta">
+        <div class="hero-meta-row">📅 <strong>${fmtDate(ev.fecha,ev.hora)}</strong></div>
+        <div class="hero-meta-row">📍 <strong>${ev.lugar||'—'}${ev.direccion?` · ${ev.direccion}`:''}</strong></div>
+        ${ev.precio>0?`<div class="hero-meta-row">💵 <strong>$${parseFloat(ev.precio).toFixed(2)}</strong> por jugador</div>`:''}
+        <div class="hero-meta-row">👥 <strong>${STATE.teams.length} equipos · ${STATE.event.cupos_total||0} jugadores</strong></div>
+      </div>
+    </div>`;
+}
+
+function renderPage(){
+  const el=document.getElementById('root');
+  el.innerHTML=`
+    ${renderHero()}
+    <div class="tabs-wrap">
+      <div class="tabs">
+        <div class="tab ${STATE.activeTab==='fixture'?'active':''}"   data-tab="fixture">⚽ Fixture</div>
+        <div class="tab ${STATE.activeTab==='posiciones'?'active':''}" data-tab="posiciones">📊 Posiciones</div>
+        <div class="tab ${STATE.activeTab==='equipos'?'active':''}"    data-tab="equipos">🎽 Equipos</div>
+      </div>
+    </div>
+    <div id="tab-fixture"    class="tab-content ${STATE.activeTab==='fixture'?'active':''}">
+      ${renderFixture()}
+      ${renderCTA()}
+    </div>
+    <div id="tab-posiciones" class="tab-content ${STATE.activeTab==='posiciones'?'active':''}">
+      <p class="section-title">Tabla de posiciones</p>
+      ${renderStandings()}
+      ${renderCTA()}
+    </div>
+    <div id="tab-equipos"    class="tab-content ${STATE.activeTab==='equipos'?'active':''}">
+      <div class="teams-grid">${renderTeams()}</div>
+      ${renderCTA()}
+    </div>`;
+
+  // Tab clicks
+  el.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{
+    STATE.activeTab=t.dataset.tab;
+    document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(x=>x.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById(`tab-${t.dataset.tab}`).classList.add('active');
+  }));
+}
+
+function renderCTA(){
+  const ev=STATE.event;
+  if(!ev) return '';
+  if(ev.status==='open') return `
+    <div class="cta-box">
+      <h3>¿Querés inscribirte?</h3>
+      <p>Descargá la app Birrea2Play para unirte, pagar con Yappy o créditos internos.</p>
+      <a href="/" class="cta-btn">Descargar Birrea2Play</a>
+    </div>`;
+  return `
+    <div class="cta-box">
+      <h3>Seguí todos los torneos</h3>
+      <p>Descargá la app para inscribirte en el próximo evento.</p>
+      <a href="/" class="cta-btn">Descargar Birrea2Play</a>
+    </div>`;
+}
+
+// ── Refresh parcial del fixture (sin re-render completo) ──────────────────
+
+function refreshMatchesOnly(){
+  const fix=document.getElementById('tab-fixture');
+  const pos=document.getElementById('tab-posiciones');
+  if(fix) fix.innerHTML=renderFixture()+renderCTA();
+  if(pos) pos.innerHTML=`<p class="section-title">Tabla de posiciones</p>${renderStandings()}${renderCTA()}`;
+}
+
+// ── Load data ──────────────────────────────────────────────────────────────
+
+async function loadAll(eventId){
+  const [
+    {data:ev,  error:evErr},
+    {data:teams},
+    {data:tps},
+    {data:guests},
+    {data:matches},
+  ] = await Promise.all([
+    client.from('events').select('*').eq('id',eventId).single(),
+    client.from('teams').select('*').eq('event_id',eventId).order('nombre'),
+    client.from('team_players').select('team_id,guest_id,user_id').in('team_id',
+      // preload after teams — placeholder handled below
+      ['00000000-0000-0000-0000-000000000000']
+    ),
+    client.from('event_guests').select('id,nombre,telefono').eq('event_id',eventId),
+    client.from('matches').select('*').eq('event_id',eventId).order('jornada').order('fase'),
+  ]);
+
+  if(evErr||!ev){
+    document.getElementById('root').innerHTML=`
+      <div class="error-state">
+        <p style="font-size:36px;margin-bottom:12px">❌</p>
+        <p>No se encontró el evento o no es público.</p>
+        <a href="eventos.html" style="display:inline-block;margin-top:14px;padding:10px 24px;background:var(--red);color:#fff;border-radius:100px;font-weight:700">Ver todos los eventos</a>
+      </div>`;
+    return;
+  }
+
+  // Load team_players for real team IDs
+  const teamIds=(teams||[]).map(t=>t.id);
+  let realTPs=[];
+  if(teamIds.length){
+    const {data}=await client.from('team_players').select('team_id,guest_id,user_id').in('team_id',teamIds);
+    realTPs=data||[];
+  }
+
+  // Build players map: team_id → [guest]
+  const guestMap={};
+  (guests||[]).forEach(g=>{ guestMap[g.id]=g; });
+  const playersMap={};
+  realTPs.forEach(tp=>{
+    if(!playersMap[tp.team_id]) playersMap[tp.team_id]=[];
+    if(tp.guest_id&&guestMap[tp.guest_id]) playersMap[tp.team_id].push(guestMap[tp.guest_id]);
+  });
+
+  STATE.event   = ev;
+  STATE.teams   = teams||[];
+  STATE.players = playersMap;
+  STATE.matches = matches||[];
+
+  renderPage();
+  subscribeRealtime(eventId);
+}
+
+// ── Realtime ───────────────────────────────────────────────────────────────
+
+function subscribeRealtime(eventId){
+  client.channel(`event-${eventId}`)
+    .on('postgres_changes',{
+      event:'*', schema:'public', table:'matches',
+      filter:`event_id=eq.${eventId}`,
+    }, async ()=>{
+      const {data}=await client.from('matches').select('*').eq('event_id',eventId).order('jornada').order('fase');
+      if(data){ STATE.matches=data; refreshMatchesOnly(); }
+    })
+    .subscribe();
+}
+
+// ── Share ──────────────────────────────────────────────────────────────────
+
+document.getElementById('shareBtn').addEventListener('click',()=>{
+  const url=window.location.href;
+  const title=STATE.event?`${STATE.event.nombre} — Birrea2Play`:'Birrea2Play';
+  if(navigator.share){ navigator.share({title,url}).catch(()=>{}); }
+  else{
+    navigator.clipboard.writeText(url).then(()=>alert('Enlace copiado')).catch(()=>prompt('Copia este enlace:',url));
+  }
+});
+
+// ── Init ───────────────────────────────────────────────────────────────────
+
+const eventId=new URLSearchParams(window.location.search).get('id');
+if(!eventId){
+  document.getElementById('root').innerHTML=`
+    <div class="error-state">
+      <p style="font-size:36px;margin-bottom:12px">🏟️</p>
+      <p>No se especificó ningún evento.</p>
+      <a href="eventos.html" style="display:inline-block;margin-top:14px;padding:10px 24px;background:var(--red);color:#fff;border-radius:100px;font-weight:700">Ver todos los eventos</a>
+    </div>`;
+} else {
+  loadAll(eventId);
+}
+</script>
+</body>
+</html>

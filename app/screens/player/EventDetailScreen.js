@@ -5,10 +5,16 @@ import {
   Modal, TextInput, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
-import { getRefundStatus, getEventStatusInfo } from '../../../lib/eventHelpers';
+import { getRefundStatus, getEventStatusInfo, getTournamentWinner } from '../../../lib/eventHelpers';
+import WinnerBanner from '../../../components/WinnerBanner';
+import EventDetailSkeleton from '../../../components/EventDetailSkeleton';
+import { shareEvent } from '../../../lib/shareEvent';
+import { logWarn, logInfo, logError } from '../../../lib/logger';
+import { remoteLog } from '../../../lib/remoteLogger';
 import { cancelRegistration } from '../../../lib/cancelRegistration';
 import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 import PaymentModal from '../../../components/PaymentModal';
@@ -16,17 +22,28 @@ import CancelRegistrationModal from '../../../components/CancelRegistrationModal
 import GuestModal from '../../../components/GuestModal';
 import PlayerAvatar from '../../../components/PlayerAvatar';
 import TimerBadge from '../../../components/TimerBadge';
+import { filterActiveEventGuests, getActiveRegistrationUserIds, isActiveEventGuest } from '../../../lib/eventGuests';
 
 export default function EventDetailScreen({ route, navigation }) {
-  const { eventId } = route.params;
+  // Defensa: en deep links el param puede llegar bajo `id` (path legacy) o
+  // `eventId` (path actual). Aceptar ambos para no romper links viejos.
+  const params = route?.params ?? {};
+  const eventId = params.eventId ?? params.id ?? null;
   const { user, walletBalance, setWalletBalance } = useAuthStore();
 
   const [event,        setEvent]        = useState(null);
   const [registrations,setRegistrations]= useState([]);
+  const [participantRegs, setParticipantRegs] = useState([]);
   const [guests,       setGuests]       = useState([]);
+  const [teams,        setTeams]        = useState([]);
+  const [matches,      setMatches]      = useState([]);
   const [myReg,        setMyReg]        = useState(null);
   const [loading,      setLoading]      = useState(true);
   const [refreshing,   setRefreshing]   = useState(false);
+  // null | string. Si no es null y !event, mostramos mensaje específico (no encontrado /
+  // timeout / red) en lugar del genérico "no se pudo cargar".
+  const [fetchError,   setFetchError]   = useState(null);
+  const loadingTimeoutRef               = useRef(null);
 
   const [payModal,    setPayModal]    = useState(false);
   const [cancelModal, setCancelModal] = useState(false);
@@ -41,30 +58,203 @@ export default function EventDetailScreen({ route, navigation }) {
   const [yappyPhone,    setYappyPhone]          = useState('');
   const [yappyProgress, setYappyProgress]       = useState({ attempts: 0, maxAttempts: 60 });
 
+  const checkCapacity = async () => {
+    if (event?.cupos_ilimitado) return true;
+    const [{ data: regs }, { data: guestRows }] = await Promise.all([
+      supabase.from('event_registrations').select('user_id, status').eq('event_id', event.id).in('status', ['confirmed', 'pending']),
+      supabase.from('event_guests').select('id, invited_by, status').eq('event_id', event.id).in('status', ['confirmed', 'pending_payment']),
+    ]);
+    const activeGuestCount = filterActiveEventGuests(guestRows ?? [], regs ?? []).length;
+    if ((regs?.length ?? 0) + activeGuestCount >= event.cupos_total) {
+      Alert.alert('Evento lleno', `Este evento ya alcanzó el límite de ${event.cupos_total} jugadores.`);
+      return false;
+    }
+    return true;
+  };
+
+  // fetchEvent NO depende de user?.id en la closure: leemos user desde el store
+  // por demanda. Sin esto, cuando el auth state hidrata en web (Supabase emite
+  // SIGNED_IN segundos después del mount), el useCallback se re-crea, el
+  // useEffect re-dispara, y podemos cancelar/duplicar la carga en pleno vuelo.
   const fetchEvent = useCallback(async () => {
+    if (!eventId) {
+      // Sin ID: nada que cargar. Renderiza el fallback "no disponible".
+      setFetchError('Sin ID de evento — verifica el link.');
+      setLoading(false);
+      return;
+    }
+    setFetchError(null);
+    const tFetchStart = Date.now();
+    const currentUser = useAuthStore.getState().user;
+    remoteLog({
+      screen: 'EventDetail', action: 'fetch_start', level: 'info', eventId,
+      data: { userId: currentUser?.id ?? null,
+              url: typeof window !== 'undefined' ? window.location.href : null },
+    });
+
+    // Cleanup oportunista: marca como 'cancelled' los guests pending_payment
+    // que excedieron su tiempo de gracia (15min Yappy, 24h efectivo).
+    // Fire-and-forget — supabase.rpc devuelve un PostgrestBuilder thenable
+    // (NO Promise), así que NO tiene .catch directamente. Envolver con
+    // Promise.resolve() para que sí lo tenga. Bug que rompía el spinner infinito
+    // porque el TypeError sincronía rechazaba la async function antes del try.
+    Promise.resolve(supabase.rpc('expire_pending_guests')).catch(() => {});
+
+    // TIMEOUT global de 12s: si alguna de las queries cuelga (token expirado,
+    // network drop, lock interno), no dejamos el spinner infinito — caemos al
+    // fallback con mensaje específico para que el user pueda reintentar.
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('timeout: fetchEvent tardó más de 12s')), 12000)
+    );
+
     try {
-      const [{ data: ev, error: evErr }, { data: regs }, { data: gs }] = await Promise.all([
+      const allQueries = Promise.all([
         supabase.from('events').select('*').eq('id', eventId).single(),
+        // Fetch confirmed AND pending registrations so cash-pending users see their status
         supabase.from('event_registrations')
           .select('*, users(id, nombre, foto_url)')
           .eq('event_id', eventId)
-          .eq('status', 'confirmed'),
-        supabase.from('event_guests').select('*').eq('event_id', eventId),
+          .in('status', ['confirmed', 'pending']),
+        // Only show confirmed/pending_payment guests (not cancelled)
+        supabase.from('event_guests')
+          .select('*')
+          .eq('event_id', eventId)
+          .in('status', ['confirmed', 'pending_payment']),
+        // Equipos armados por el gestor + jugadores (usuarios E invitados)
+        supabase.from('teams')
+          .select(`
+            id, nombre, color, grupo, vidas_iniciales, vidas_actuales,
+            team_players(
+              id, user_id, guest_id,
+              users:user_id(id, nombre, foto_url),
+              event_guests:guest_id(id, nombre, status, invited_by)
+            )
+          `)
+          .eq('event_id', eventId)
+          .order('grupo', { ascending: true })
+          .order('nombre', { ascending: true }),
       ]);
+      const [{ data: ev, error: evErr }, { data: regs }, { data: gs }, { data: ts }] =
+        await Promise.race([allQueries, timeoutPromise]);
+      // Matches del evento (para ganador final / penales)
+      const matchesPromise = supabase
+        .from('matches')
+        .select('id, fase, status, team_home_id, team_away_id, goles_home, goles_away, goles_pen_home, goles_pen_away, fue_a_penales')
+        .eq('event_id', eventId);
+      const matchesTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timeout: matches')), 8000)
+      );
+      const { data: ms } = await Promise.race([matchesPromise, matchesTimeout]).catch((e) => {
+        logWarn({ screen: 'EventDetail', action: 'fetchMatches', eventId, technical: e });
+        return { data: [] };
+      });
       if (evErr) throw evErr;
+      if (!ev) {
+        // Query OK pero row no existe: link inválido / evento borrado.
+        setFetchError('Evento no encontrado.');
+        remoteLog({
+          screen: 'EventDetail', action: 'fetch_end', level: 'warn', eventId,
+          data: { hasEvent: false, reason: 'not_found',
+                  tFetchEvent: Date.now() - tFetchStart },
+        });
+        return;
+      }
+      const activeGuests = filterActiveEventGuests(gs ?? [], regs ?? []);
+      remoteLog({
+        screen: 'EventDetail', action: 'fetch_end', level: 'info', eventId,
+        data: {
+          hasEvent: true,
+          regsCount:   regs?.length ?? 0,
+          guestsCount: gs?.length   ?? 0,
+          teamsCount:  ts?.length   ?? 0,
+          matchesCount: ms?.length  ?? 0,
+          tFetchEvent: Date.now() - tFetchStart,
+        },
+      });
       setEvent(ev);
-      setRegistrations(regs ?? []);
-      setGuests(gs ?? []);
-      setMyReg(regs?.find((r) => r.user_id === user?.id) ?? null);
+      setParticipantRegs(regs ?? []);
+      // For the player list, only show confirmed registrations
+      setRegistrations(regs?.filter((r) => r.status === 'confirmed') ?? []);
+      setGuests(activeGuests);
+      setTeams(ts ?? []);
+      setMatches(ms ?? []);
+      // myReg: find the current user's registration (any non-cancelled status)
+      setMyReg(regs?.find((r) => r.user_id === currentUser?.id) ?? null);
     } catch (e) {
-      // Leave event as null so the "no se pudo cargar" fallback renders
-      console.warn('fetchEvent error:', e.message);
+      // Mensaje específico por tipo de fallo. Leave event as null so fallback renders.
+      const isTimeout = /timeout/i.test(e?.message ?? '');
+      const isNetwork = /network|fetch/i.test(e?.message ?? '');
+      setFetchError(
+        isTimeout ? 'La carga tardó demasiado. Revisa tu conexión y reintenta.' :
+        isNetwork ? 'Sin conexión. Revisa tu red y reintenta.' :
+                    'No se pudo cargar el evento. Reintenta en un momento.'
+      );
+      logError({ screen: 'EventDetail', action: 'fetchEvent', eventId,
+                 userId: useAuthStore.getState().user?.id, technical: e,
+                 userMessage: 'fetchEvent failed' });
+      remoteLog({
+        screen: 'EventDetail', action: 'fetch_end', level: 'error', eventId,
+        data: { hasEvent: false, isTimeout, isNetwork,
+                tFetchEvent: Date.now() - tFetchStart },
+        error: e instanceof Error ? e : null,
+      });
     } finally {
       setLoading(false);
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
     }
-  }, [eventId, user?.id]);
+  }, [eventId]);
 
-  useEffect(() => { fetchEvent(); }, [fetchEvent]);
+  useEffect(() => {
+    logInfo({ screen: 'EventDetail', action: 'mount', eventId });
+    remoteLog({ screen: 'EventDetail', action: 'mount', eventId });
+    fetchEvent();
+    // Cinturón + tirantes: si fetchEvent (con sus timeouts internos de 12s/8s) por
+    // algún motivo no llega a setLoading(false), forzamos salir del skeleton a los 15s.
+    loadingTimeoutRef.current = setTimeout(() => {
+      setLoading((prev) => {
+        if (prev) {
+          setFetchError('La carga tardó demasiado. Reintenta.');
+          logError({ screen: 'EventDetail', action: 'skeleton_timeout', eventId,
+                     technical: 'loading > 15s' });
+          remoteLog({ screen: 'EventDetail', action: 'skeleton_timeout',
+                      level: 'error', eventId });
+        }
+        return false;
+      });
+    }, 15000);
+    return () => {
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
+      }
+      remoteLog({ screen: 'EventDetail', action: 'unmount', eventId });
+    };
+  }, [fetchEvent]);
+
+  // Cleanup absoluto del polling Yappy al desmontar la pantalla.
+  // Sin esto el interval seguía 5 min llamando setState sobre un componente
+  // desmontado si el user navegaba durante el pago.
+  useEffect(() => () => {
+    if (yappyCancelRef.current) {
+      try { yappyCancelRef.current(); } catch {}
+      yappyCancelRef.current = null;
+    }
+  }, []);
+
+  // Auto-refresh cada 90s mientras la pantalla está focused (antes 30s → demasiado tráfico).
+  // PAUSAMOS el refresh mientras hay un modal de pago / cancelación / invitado o
+  // un flow Yappy activo para no sobrescribir datos mientras el user opera.
+  const refreshPaused = payModal || cancelModal || guestModal || yappyStep !== 'idle' || paying || cancelling || yappyLoading;
+  useFocusEffect(
+    useCallback(() => {
+      if (refreshPaused) return undefined;
+      const interval = setInterval(fetchEvent, 90000);
+      return () => clearInterval(interval);
+    }, [fetchEvent, refreshPaused])
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -72,7 +262,7 @@ export default function EventDetailScreen({ route, navigation }) {
     setRefreshing(false);
   }, [fetchEvent]);
 
-  // ── Wallet payment ────────────────────────────────────────────────────────
+  // ── Internal credits payment ───────────────────────────────────────────────
   const payWithWallet = async () => {
     const precio = event?.precio ?? 0;
     if (precio <= 0) {
@@ -80,13 +270,14 @@ export default function EventDetailScreen({ route, navigation }) {
       return;
     }
     if (walletBalance < precio) {
-      Alert.alert('Saldo insuficiente', 'Recarga tu wallet antes de inscribirte.');
+      Alert.alert('Créditos insuficientes', 'Compra créditos internos antes de inscribirte.');
       return;
     }
     // Guard: avoid double-tap submitting twice
     if (paying) return;
     setPaying(true);
     try {
+      if (!(await checkCapacity())) { setPayModal(false); setPaying(false); await fetchEvent(); return; }
       // Check for existing registration first to prevent double-inscription
       const { data: existingReg } = await supabase
         .from('event_registrations')
@@ -120,7 +311,7 @@ export default function EventDetailScreen({ route, navigation }) {
           .single();
         if (wErr) throw wErr;
         if (wallet.balance < precio) {
-          throw new Error('Saldo insuficiente — por favor recarga tu wallet.');
+          throw new Error('Créditos insuficientes — por favor compra créditos internos.');
         }
         const newBalance = wallet.balance - precio;
         const { error: updErr } = await supabase
@@ -136,13 +327,13 @@ export default function EventDetailScreen({ route, navigation }) {
           monto:       -precio,
           descripcion: `Inscripción: ${event.nombre}`,
         });
-        await supabase.from('event_registrations').insert({
+        await supabase.from('event_registrations').upsert({
           event_id:     event.id,
           user_id:      user.id,
           metodo_pago:  'wallet',
           monto_pagado: precio,
           status:       'confirmed',
-        });
+        }, { onConflict: 'event_id,user_id' });
         setWalletBalance(newBalance);
       } else if (error) {
         throw error;
@@ -184,6 +375,7 @@ export default function EventDetailScreen({ route, navigation }) {
     const precio = event?.precio ?? 0;
     if (phone.length < 7) { Alert.alert('Error', 'Ingresa un número Yappy válido (mínimo 7 dígitos).'); return; }
     if (precio <= 0)       { Alert.alert('Error', 'Este evento no tiene un precio válido.'); return; }
+    if (!(await checkCapacity())) { setYappyStep('idle'); await fetchEvent(); return; }
 
     setYappyLoading(true);
     let orderId;
@@ -228,6 +420,27 @@ export default function EventDetailScreen({ route, navigation }) {
     if (paying) return;
     setPaying(true);
     try {
+      if (!(await checkCapacity())) { setPayModal(false); setPaying(false); await fetchEvent(); return; }
+      // Guard: check if user already has a registration (any non-cancelled status)
+      const { data: existingReg } = await supabase
+        .from('event_registrations')
+        .select('id, status')
+        .eq('event_id', event.id)
+        .eq('user_id', user.id)
+        .in('status', ['confirmed', 'pending'])
+        .maybeSingle();
+      if (existingReg) {
+        setPayModal(false);
+        Alert.alert(
+          existingReg.status === 'confirmed' ? 'Ya estás inscrito' : 'Ya tienes un pago pendiente',
+          existingReg.status === 'confirmed'
+            ? 'Ya tienes una inscripción confirmada en este evento.'
+            : 'Ya tienes un pago en efectivo pendiente. Contacta al gestor para confirmarlo.',
+        );
+        await fetchEvent();
+        return;
+      }
+
       // Fetch gestor contact info (nombre + telefono)
       const { data: gestor } = await supabase
         .from('users')
@@ -235,13 +448,24 @@ export default function EventDetailScreen({ route, navigation }) {
         .eq('id', event.created_by)
         .maybeSingle();
 
-      const { error: insertErr } = await supabase.from('cash_payment_requests').insert({
+      // Create a pending registration so the user sees their spot is reserved
+      const { error: regErr } = await supabase.from('event_registrations').upsert({
+        event_id:     event.id,
+        user_id:      user.id,
+        metodo_pago:  'efectivo',
+        monto_pagado: event.precio ?? 0,
+        status:       'pending',
+      }, { onConflict: 'event_id,user_id' });
+      if (regErr) throw new Error(regErr.message);
+
+      // Also create the cash_payment_request for admin tracking
+      const { error: cashErr } = await supabase.from('cash_payment_requests').insert({
         user_id:   user.id,
         event_id:  event.id,
         amount:    event.precio ?? 0,
       });
-
-      if (insertErr) throw new Error(insertErr.message);
+      // cash_payment_request failure is non-fatal — registration row already created
+      if (cashErr) console.warn('cash_payment_requests insert failed:', cashErr.message);
 
       setPayModal(false);
       const contacto = gestor?.telefono || gestor?.correo || '';
@@ -249,8 +473,9 @@ export default function EventDetailScreen({ route, navigation }) {
         ? `\n\nContacta al gestor para pagar:\n👤 ${gestor.nombre}${contacto ? `\n📱 ${contacto}` : ''}`
         : '';
       Alert.alert(
-        '⏳ Pago en efectivo solicitado',
-        `Tienes 4 horas para contactar al gestor y completar el pago de $${(event.precio ?? 0).toFixed(2)}.${gestorInfo}\n\nSi el pago no se confirma en 4 horas, el cupo será liberado.`,
+        'Pago en efectivo solicitado',
+        `Tienes 4 horas para contactar al gestor y completar el pago de $${(event.precio ?? 0).toFixed(2)}.${gestorInfo}\n\nTu cupo quedó reservado. Si el pago no se confirma en 4 horas, el cupo será liberado.`,
+        [{ text: 'OK', onPress: fetchEvent }],
       );
     } catch (e) {
       Alert.alert('Error', e.message);
@@ -259,8 +484,29 @@ export default function EventDetailScreen({ route, navigation }) {
     }
   };
 
+  // ── Gender restriction ────────────────────────────────────────────────────
+  const checkGenderAllowed = () => {
+    const evGenero = event?.genero;
+    if (!evGenero || evGenero === 'Mixto') return true;
+    const userGenero = user?.genero;
+    if (!userGenero) return true; // profile incomplete — allow, gestor/admin enforce
+    return userGenero === evGenero;
+  };
+
+  const openPayModal = () => {
+    if (!checkGenderAllowed()) {
+      const evGenero = event?.genero;
+      Alert.alert(
+        'Evento restringido',
+        `Este es un evento ${evGenero}. Tu perfil indica que eres ${user?.genero}, por lo que no puedes inscribirte en este evento.`,
+      );
+      return;
+    }
+    setPayModal(true);
+  };
+
   // ── Cancel registration ───────────────────────────────────────────────────
-  const handleCancel = async () => {
+  const handleCancel = async (cancelGuests = false) => {
     if (!myReg?.id) {
       Alert.alert('Error', 'No se encontró tu inscripción. Recarga la pantalla.');
       return;
@@ -275,41 +521,97 @@ export default function EventDetailScreen({ route, navigation }) {
         eventHora:      event.hora,
         monto:          myReg?.monto_pagado ?? 0,
         registrationId: myReg.id,
+        metodoPago:     myReg?.metodo_pago ?? '',
+        cancelGuests,
       });
       setCancelModal(false);
+
+      // If refunded, refresh wallet balance from DB (more reliable than local math)
       if (result.refunded) {
-        setWalletBalance(walletBalance + result.amount);
-        Alert.alert('Cancelado', `Inscripción cancelada. Se reembolsaron $${result.amount.toFixed(2)} a tu wallet.`);
-      } else {
-        Alert.alert('Cancelado', 'Inscripción cancelada. No aplica reembolso (menos de 48 h).');
+        const { data: wallet } = await supabase
+          .from('wallets')
+          .select('balance')
+          .eq('user_id', user.id)
+          .single();
+        if (wallet) setWalletBalance(wallet.balance);
       }
-      fetchEvent();
+
+      const guestNote = result.guestsCancelled > 0
+        ? ` También se cancelaron ${result.guestsCancelled} invitado(s).`
+        : result.guestsCancelFailed
+          ? ' No se pudieron cancelar tus invitados automáticamente; el sistema los ocultará del evento y el gestor podrá limpiarlos.'
+        : '';
+
+      if (result.refunded) {
+        Alert.alert(
+          'Inscripción cancelada',
+          `Se ajustaron $${result.amount.toFixed(2)} a tus créditos internos.${guestNote}`,
+          [{ text: 'OK', onPress: fetchEvent }],
+        );
+      } else if (result.penaltyApplied) {
+        // Refresh profile so efectivo_bloqueado reflects immediately
+        const { data: updatedUser } = await supabase.from('users').select('efectivo_bloqueado').eq('id', user.id).single();
+        if (updatedUser) useAuthStore.setState((s) => ({ user: { ...s.user, ...updatedUser } }));
+        Alert.alert(
+          'Inscripción cancelada — Penalización aplicada',
+          `Tu inscripción fue cancelada dentro de las 48 horas previas al evento.${guestNote}\n\n⚠️ Como penalización, el pago en efectivo quedará bloqueado para futuros eventos. Puedes usar créditos internos o Yappy.`,
+          [{ text: 'Entendido', onPress: fetchEvent }],
+        );
+      } else {
+        const noRefundReason = myReg?.metodo_pago === 'wallet'
+          ? ' No aplica reembolso (evento en menos de 48 h).'
+          : ' Los pagos en efectivo o Yappy son gestionados por el administrador.';
+        Alert.alert(
+          'Inscripción cancelada',
+          `Tu inscripción fue cancelada.${noRefundReason}${guestNote}`,
+          [{ text: 'OK', onPress: fetchEvent }],
+        );
+      }
     } catch (e) {
-      Alert.alert('Error', e.message);
+      Alert.alert('Error al cancelar', e.message);
     } finally {
       setCancelling(false);
     }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
+  if (loading) return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
+      <EventDetailSkeleton />
+    </SafeAreaView>
+  );
   if (!event)  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, fontSize: 15 }}>No se pudo cargar el evento.</Text>
-      <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginTop: 16 }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, fontSize: 15, textAlign: 'center', marginBottom: 20 }}>
+        {fetchError ?? 'No se pudo cargar el evento.\nRevisa tu conexión e intenta de nuevo.'}
+      </Text>
+      <TouchableOpacity
+        onPress={() => { setFetchError(null); setLoading(true); fetchEvent(); }}
+        style={{ backgroundColor: COLORS.red, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8, marginBottom: 12 }}
+      >
+        <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.white, letterSpacing: 1 }}>Reintentar</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginTop: 4 }}>
         <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.blue2 }}>← Volver</Text>
       </TouchableOpacity>
     </SafeAreaView>
   );
 
-  const inscritos  = registrations.length;
+  const inscritos  = registrations.length + guests.length;
   const cuposFull  = !event.cupos_ilimitado && inscritos >= event.cupos_total;
   const { label: statusLabel, color: statusColor } = getEventStatusInfo(event.status);
   const refundInfo = myReg ? getRefundStatus(event.fecha, event.hora) : null;
 
-  // Deadline for registration — 1 hour before event
-  const regDeadline = new Date(`${event.fecha}T${event.hora ?? '00:00:00'}`);
-  regDeadline.setHours(regDeadline.getHours() - 1);
+  // Deadline for registration — 1 hour before event (only when hora is set)
+  let regDeadline = null;
+  let regDeadlinePassed = false;
+  if (event.hora) {
+    const [y, m, d] = event.fecha.split('-').map(Number);
+    const [hh, mm] = event.hora.split(':').map(Number);
+    regDeadline = new Date(y, m - 1, d, hh - 1, mm);
+    regDeadlinePassed = new Date() >= regDeadline;
+  }
+  const canRegister = event.status === 'open' && !myReg && !cuposFull && !regDeadlinePassed;
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -323,6 +625,13 @@ export default function EventDetailScreen({ route, navigation }) {
             <Text style={styles.backText}>←</Text>
           </TouchableOpacity>
           <Text style={styles.headerTitle} numberOfLines={1}>{event.nombre}</Text>
+          <TouchableOpacity
+            onPress={() => shareEvent(event, { inscritos })}
+            style={{ paddingHorizontal: SPACING.sm, paddingVertical: 4 }}
+            accessibilityLabel="Compartir evento"
+          >
+            <Text style={{ fontSize: 22 }}>📤</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Status + Timer */}
@@ -330,7 +639,7 @@ export default function EventDetailScreen({ route, navigation }) {
           <View style={[styles.statusBadge, { backgroundColor: statusColor + '20', borderColor: statusColor }]}>
             <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           </View>
-          {event.status === 'open' && !myReg && (
+          {event.status === 'open' && !myReg && regDeadline && (
             <TimerBadge deadline={regDeadline} label="Inscripción cierra en" />
           )}
         </View>
@@ -346,11 +655,13 @@ export default function EventDetailScreen({ route, navigation }) {
         {/* Info card */}
         <View style={styles.card}>
           {event.deporte && <InfoRow icon="🏅" label={`${event.deporte} · ${event.formato}`} />}
-          <InfoRow icon="📅" label={`${new Date(event.fecha).toLocaleDateString('es-PA', { weekday: 'long', day: 'numeric', month: 'long' })} · ${event.hora?.slice(0, 5) ?? ''}`} />
+          <InfoRow icon="📅" label={`${(() => { const [y,m,d] = event.fecha.split('-').map(Number); return new Date(y, m-1, d).toLocaleDateString('es-PA', { weekday: 'long', day: 'numeric', month: 'long' }); })()} · ${event.hora?.slice(0, 5) ?? ''}`} />
           <InfoRow icon="📍" label={event.lugar} />
+          {event.direccion ? <InfoRow icon="🏠" label={event.direccion} /> : null}
           <InfoRow icon="👤" label={event.genero} />
           {!event.cupos_ilimitado && <InfoRow icon="👥" label={`${inscritos}/${event.cupos_total} jugadores`} />}
-          {event.descripcion && <Text style={styles.desc}>{event.descripcion}</Text>}
+          {(event.precio ?? 0) > 0 && <InfoRow icon="💵" label={`$${(event.precio).toFixed(2)} por jugador`} />}
+          {event.descripcion ? <Text style={styles.desc}>{event.descripcion}</Text> : null}
           {event.maps_url && (
             <TouchableOpacity
               style={styles.mapsBtn}
@@ -361,8 +672,80 @@ export default function EventDetailScreen({ route, navigation }) {
           )}
         </View>
 
+        {/* Ganador del torneo (cuando hay final concluida) */}
+        {(() => {
+          const winner = getTournamentWinner(matches, teams);
+          return winner ? <WinnerBanner winner={winner} /> : null;
+        })()}
+
+        {/* Teams (cuando el gestor ya armó equipos) */}
+        {teams.length > 0 && (
+          <>
+            <Text style={styles.sectionTitle}>👕 Equipos · ¿qué color llevar?</Text>
+            <View style={styles.teamsWrap}>
+              {teams.map((t) => {
+                const color = t.color || COLORS.blue;
+                const activeUserIds = getActiveRegistrationUserIds(participantRegs);
+                // Normalizar: jugador registrado (tp.users) o invitado (tp.event_guests)
+                const players = (t.team_players ?? []).map((tp) => {
+                  if (tp.users && activeUserIds.has(tp.users.id)) return { ...tp.users, isGuest: false };
+                  if (tp.event_guests && isActiveEventGuest(tp.event_guests, participantRegs)) return { id: `guest:${tp.event_guests.id}`, nombre: tp.event_guests.nombre, foto_url: null, isGuest: true };
+                  return null;
+                }).filter(Boolean);
+                const is2Vidas = event?.formato === '2 Vidas';
+                const vidasTxt = is2Vidas
+                  ? ((t.vidas_actuales ?? 0) > 0 ? '❤'.repeat(t.vidas_actuales) : '☠')
+                  : null;
+                return (
+                  <View key={t.id} style={[styles.teamCard, { borderLeftColor: color, opacity: is2Vidas && (t.vidas_actuales ?? 0) === 0 ? 0.5 : 1 }]}>
+                    <View style={styles.teamHeader}>
+                      <View style={[styles.teamSwatch, { backgroundColor: color }]} />
+                      <Text style={styles.teamName}>{t.nombre}</Text>
+                      {vidasTxt ? (
+                        <Text style={[styles.teamGroup, { color: (t.vidas_actuales ?? 0) > 0 ? COLORS.red : COLORS.gray }]}>{vidasTxt}</Text>
+                      ) : (t.grupo ? <Text style={styles.teamGroup}>Grupo {t.grupo}</Text> : null)}
+                    </View>
+                    {players.length === 0 ? (
+                      <Text style={styles.teamEmpty}>Sin jugadores asignados</Text>
+                    ) : (
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.teamPlayersRow}>
+                        {players.map((p) => {
+                          const isMe = !p.isGuest && p.id === user?.id;
+                          const onPress = p.isGuest ? undefined : () => navigation.navigate('PlayerProfile', { userId: p.id });
+                          return (
+                            <TouchableOpacity
+                              key={p.id}
+                              style={styles.teamPlayerChip}
+                              onPress={onPress}
+                              activeOpacity={p.isGuest ? 1 : 0.75}
+                              disabled={p.isGuest}
+                            >
+                              {p.isGuest ? (
+                                <View style={[styles.teamPlayerChip, { width: 42, height: 42, borderRadius: 21, backgroundColor: color, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: color }]}>
+                                  <Text style={{ fontFamily: FONTS.heading, fontSize: 16, color: COLORS.white }}>
+                                    {(p.nombre ?? '?').charAt(0).toUpperCase()}
+                                  </Text>
+                                </View>
+                              ) : (
+                                <PlayerAvatar user={p} size={42} borderColor={color} />
+                              )}
+                              <Text style={[styles.teamPlayerName, isMe && { color: COLORS.gold, fontFamily: FONTS.bodyBold }]}>
+                                {isMe ? 'Tú' : p.nombre?.split(' ')[0]}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          </>
+        )}
+
         {/* Players */}
-        <Text style={styles.sectionTitle}>Jugadores inscritos ({inscritos + guests.length})</Text>
+        <Text style={styles.sectionTitle}>Jugadores inscritos ({inscritos})</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.playersRow}>
           {registrations.map((r) => (
             <TouchableOpacity
@@ -394,29 +777,62 @@ export default function EventDetailScreen({ route, navigation }) {
         )}
 
         {/* Payment / inscription */}
-        {event.status === 'open' && !myReg && !cuposFull && (
+        {/* Si no hay usuario logueado: CTA Login con returnTo al evento */}
+        {!user?.id && event.status === 'open' && (
           <View style={styles.paySection}>
             <Text style={styles.payTitle}>INSCRIPCIÓN — ${(event.precio ?? 0).toFixed(2)}</Text>
-            <TouchableOpacity style={styles.btnPay} onPress={() => setPayModal(true)}>
+            <TouchableOpacity
+              style={styles.btnPay}
+              onPress={() => navigation.navigate('Login', { returnTo: 'EventDetail', returnParams: { eventId: event.id } })}
+            >
+              <Text style={styles.btnPayText}>🔒 Iniciar sesión para inscribirme →</Text>
+            </TouchableOpacity>
+            <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, textAlign: 'center', marginTop: 8 }}>
+              ¿No tenés cuenta? Crea una al iniciar sesión.
+            </Text>
+          </View>
+        )}
+
+        {user?.id && canRegister && (
+          <View style={styles.paySection}>
+            <Text style={styles.payTitle}>INSCRIPCIÓN — ${(event.precio ?? 0).toFixed(2)}</Text>
+            <TouchableOpacity
+              style={styles.btnPay}
+              onPress={openPayModal}
+              disabled={paying || cancelling || yappyLoading}
+            >
               <Text style={styles.btnPayText}>Inscribirse →</Text>
             </TouchableOpacity>
           </View>
         )}
 
         {myReg && (
-          <View style={styles.registeredBox}>
-            <Text style={styles.registeredText}>✓ Estás inscrito en este evento</Text>
+          <View style={[
+            styles.registeredBox,
+            myReg.status === 'pending' && { borderColor: COLORS.gold, backgroundColor: COLORS.gold + '15' },
+          ]}>
+            {myReg.status === 'pending' ? (
+              <Text style={[styles.registeredText, { color: COLORS.gold }]}>
+                ⏳ Pago en efectivo pendiente — contacta al gestor para confirmar
+              </Text>
+            ) : (
+              <Text style={styles.registeredText}>✓ Estás inscrito en este evento</Text>
+            )}
+            {myReg.status === 'confirmed' && (
+              <TouchableOpacity style={styles.btnGuest} onPress={() => setGuestModal(true)}>
+                <Text style={styles.btnGuestText}>👥 Llevar Invitado</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity style={styles.btnCancelReg} onPress={() => setCancelModal(true)}>
               <Text style={styles.btnCancelRegText}>Cancelar inscripción</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.btnGuest} onPress={() => setGuestModal(true)}>
-              <Text style={styles.btnGuestText}>+ Agregar invitado</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        {cuposFull && !myReg && (
-          <Text style={styles.fullText}>Evento lleno — no hay cupos disponibles</Text>
+        {!myReg && !canRegister && event.status === 'open' && (
+          <Text style={styles.fullText}>
+            {cuposFull ? 'Evento lleno — no hay cupos disponibles' : 'Inscripciones cerradas'}
+          </Text>
         )}
 
         <View style={{ height: SPACING.xxl }} />
@@ -433,6 +849,7 @@ export default function EventDetailScreen({ route, navigation }) {
         walletBalance={walletBalance}
         loading={paying || yappyLoading}
         showEfectivo={true}
+        efectivoBloqueado={!!user?.efectivo_bloqueado}
       />
 
       <CancelRegistrationModal
@@ -440,21 +857,29 @@ export default function EventDetailScreen({ route, navigation }) {
         onClose={() => setCancelModal(false)}
         onConfirm={handleCancel}
         loading={cancelling}
-        canRefund={refundInfo?.canRefund}
+        canRefund={refundInfo?.canRefund && myReg?.metodo_pago === 'wallet'}
         amount={myReg?.monto_pagado ?? 0}
         refundDeadline={refundInfo?.refundDeadline}
+        metodoPago={myReg?.metodo_pago}
+        guestCount={guests.filter((g) => g.invited_by === user?.id && g.status !== 'cancelled').length}
       />
 
       <GuestModal
         visible={guestModal}
         onClose={() => setGuestModal(false)}
         eventId={event.id}
+        eventNombre={event.nombre}
+        eventPrecio={event.precio ?? 0}
+        userId={user.id}
+        walletBalance={walletBalance}
         onSuccess={fetchEvent}
+        eventCuposTotal={event.cupos_total}
+        eventCuposIlimitado={event.cupos_ilimitado}
       />
 
       {/* Yappy Botón — phone input + polling (same UI as WalletScreen) */}
       <Modal visible={yappyStep !== 'idle'} transparent animationType="slide" onRequestClose={cancelYappy}>
-        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={yappyStyles.modalOverlay}>
             <View style={yappyStyles.modal}>
               <Text style={yappyStyles.modalTitle}>PAGAR CON YAPPY</Text>
@@ -506,7 +931,8 @@ export default function EventDetailScreen({ route, navigation }) {
                     <Text style={yappyStyles.openedTitle}>Esperando aprobación...</Text>
                     <Text style={yappyStyles.openedAmount}>${(event?.precio ?? 0).toFixed(2)}</Text>
                     <Text style={yappyStyles.openedSub}>
-                      Abre tu app Yappy y acepta el cobro de Birrea2Play.
+                      Abre tu app Yappy y acepta el cobro de Birrea2Play.{'\n'}
+                      O entra a tu banca en línea y elegí la opción de Yappy.
                     </Text>
                     <Text style={yappyStyles.pollingDots}>
                       {yappyProgress.attempts}/{yappyProgress.maxAttempts} intentos
@@ -556,6 +982,17 @@ const styles = StyleSheet.create({
   mapsBtn:      { marginTop: SPACING.sm, backgroundColor: COLORS.blue + '25', borderRadius: RADIUS.sm, padding: SPACING.sm, alignItems: 'center', borderWidth: 1, borderColor: COLORS.blue },
   mapsBtnText:  { fontFamily: FONTS.bodyMedium, fontSize: 13, color: COLORS.blue2 ?? COLORS.blue },
   sectionTitle: { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 1, paddingHorizontal: SPACING.md, marginBottom: SPACING.sm },
+  // Teams (cuando el gestor ya armó equipos)
+  teamsWrap:        { paddingHorizontal: SPACING.md, marginBottom: SPACING.md, gap: SPACING.sm },
+  teamCard:         { backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.md, borderLeftWidth: 6, borderWidth: 1, borderColor: COLORS.navy, marginBottom: SPACING.sm },
+  teamHeader:       { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm },
+  teamSwatch:       { width: 22, height: 22, borderRadius: 4, borderWidth: 1, borderColor: COLORS.navy },
+  teamName:         { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 1, flex: 1 },
+  teamGroup:        { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gold, letterSpacing: 1, textTransform: 'uppercase' },
+  teamPlayersRow:   { marginTop: SPACING.xs },
+  teamPlayerChip:   { alignItems: 'center', gap: 4, marginRight: SPACING.md, minWidth: 56 },
+  teamPlayerName:   { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, textAlign: 'center' },
+  teamEmpty:        { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, fontStyle: 'italic' },
   playersRow:   { paddingHorizontal: SPACING.md, marginBottom: SPACING.md },
   playerChip:   { alignItems: 'center', gap: 4, marginRight: SPACING.md },
   playerName:   { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2 },

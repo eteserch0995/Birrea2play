@@ -149,7 +149,7 @@
   <h1>¡PAGO RECIBIDO!</h1>
   <div class="amount-display" id="amountDisplay">—</div>
   <p class="subtitle">
-    Tu wallet será acreditado en unos momentos. Puedes regresar al app.
+    Tus créditos internos serán acreditados en unos momentos. Puedes regresar al app.
   </p>
 
   <div class="card" id="infoCard" style="display:none">
@@ -194,7 +194,7 @@
     }
 
     // Deep link de regreso al app
-    const deepLink = `birrea2play://wallet?status=success${amount ? '&amount=' + amount : ''}`;
+    const deepLink = `birrea2play://creditos?status=success${amount ? '&amount=' + amount : ''}`;
     document.getElementById('backBtn').href = deepLink;
 
     // Cuenta regresiva y auto-redirect

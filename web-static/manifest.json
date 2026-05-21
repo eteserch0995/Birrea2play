@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Birrea2Play",
+  "short_name": "Birrea2Play",
+  "description": "Plataforma de eventos deportivos en Panamá",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07101F",
+  "theme_color": "#C8102E",
+  "lang": "es-PA",
+  "icons": [
+    { "src": "/favicon.ico", "sizes": "any", "type": "image/x-icon" },
+    { "src": "/pwa-icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/pwa-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }
+  ]
+}

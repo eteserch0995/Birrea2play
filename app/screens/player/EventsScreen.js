@@ -18,17 +18,25 @@ export default function EventsScreen({ navigation }) {
 
   const fetch = useCallback(() => {
     const q = filter === 'Abiertos' ? 'open' : filter;
-    return fetchEvents(q);
+    fetchEvents(q);
   }, [filter, fetchEvents]);
 
   // Reload on every focus (tab switch or back-navigate) and on filter change
-  useFocusEffect(fetch);
+  useFocusEffect(
+    useCallback(() => {
+      fetch();
+      return undefined;
+    }, [fetch])
+  );
 
   const { refreshing, onRefresh } = useAppRefresh(fetch);
 
   return (
     <SafeAreaView style={styles.safe}>
-      <Text style={styles.title}>EVENTOS</Text>
+      <View style={styles.hero}>
+        <Text style={styles.kicker}>CALENDARIO DE CANCHA</Text>
+        <Text style={styles.title}>EVENTOS</Text>
+      </View>
 
       {/* Filter chips */}
       <View style={styles.filterRow}>
@@ -79,12 +87,14 @@ export default function EventsScreen({ navigation }) {
 
 const styles = StyleSheet.create({
   safe:            { flex: 1, backgroundColor: COLORS.bg },
-  title:           { fontFamily: FONTS.heading, fontSize: 28, color: COLORS.white, letterSpacing: 4, padding: SPACING.md },
-  filterRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, paddingHorizontal: SPACING.md, marginBottom: SPACING.sm },
-  chip:            { paddingHorizontal: SPACING.md, paddingVertical: 6, borderRadius: RADIUS.full, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.navy },
-  chipActive:      { backgroundColor: COLORS.red, borderColor: COLORS.red },
-  chipText:        { fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 13 },
-  chipTextActive:  { color: COLORS.white, fontFamily: FONTS.bodyMedium },
+  hero:            { paddingHorizontal: SPACING.md, paddingTop: SPACING.md, paddingBottom: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.line },
+  kicker:          { fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.neon, letterSpacing: 1.6 },
+  title:           { fontFamily: FONTS.heading, fontSize: 38, color: COLORS.white, letterSpacing: 4, marginTop: 2 },
+  filterRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, paddingHorizontal: SPACING.md, marginVertical: SPACING.md },
+  chip:            { paddingHorizontal: SPACING.md, paddingVertical: 8, borderRadius: RADIUS.sm, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.line },
+  chipActive:      { backgroundColor: COLORS.red, borderColor: COLORS.red2 },
+  chipText:        { fontFamily: FONTS.bodyBold, color: COLORS.gray2, fontSize: 12, letterSpacing: 1, textTransform: 'uppercase' },
+  chipTextActive:  { color: COLORS.white, fontFamily: FONTS.bodyBold },
   list:            { padding: SPACING.md, gap: SPACING.sm },
   empty:           { fontFamily: FONTS.body, color: COLORS.gray, textAlign: 'center', padding: SPACING.xl },
 });

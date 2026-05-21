@@ -6,15 +6,24 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
-import { formatScore, formatCountdown } from '../../../lib/eventHelpers';
+import {
+  formatScore, formatCountdown,
+  computeStandingsFromMatches, getQualifiedTeams, isGroupStageComplete,
+  getTournamentWinner, getMatchWinner,
+} from '../../../lib/eventHelpers';
 import useAuthStore from '../../../store/authStore';
+import { logWarn } from '../../../lib/logger';
 import PlayerAvatar from '../../../components/PlayerAvatar';
+import TeamBadge from '../../../components/TeamBadge';
+import WinnerBanner from '../../../components/WinnerBanner';
 
 // Formatos que tienen tabla de posiciones
 const FORMATS_WITH_TABLE = ['Liga', 'Torneo'];
 
 export default function ActiveEventScreen({ route, navigation }) {
-  const { eventId } = route.params;
+  // Defensa: aceptar `eventId` (canónico) o `id` (path legacy en deep links).
+  const params = route?.params ?? {};
+  const eventId = params.eventId ?? params.id ?? null;
   const { user } = useAuthStore();
 
   const [event,      setEvent]      = useState(null);
@@ -34,8 +43,16 @@ export default function ActiveEventScreen({ route, navigation }) {
   const [voting,        setVoting]        = useState(false);
 
   const load = useCallback(async () => {
+    if (!eventId) {
+      setLoading(false);
+      return;
+    }
+    // Timeout defensivo: si alguna query cuelga, fallback en 12s.
+    const timeoutPromise = (label) => new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('timeout: ' + label)), 12000)
+    );
     try {
-      const [{ data: ev, error: evErr }, { data: t }, { data: m }, { data: regs }] = await Promise.all([
+      const mainQueries = Promise.all([
         supabase.from('events').select('*').eq('id', eventId).single(),
         supabase.from('teams').select('*').eq('event_id', eventId),
         supabase.from('matches')
@@ -47,6 +64,8 @@ export default function ActiveEventScreen({ route, navigation }) {
           .eq('event_id', eventId)
           .eq('status', 'confirmed'),
       ]);
+      const [{ data: ev, error: evErr }, { data: t }, { data: m }, { data: regs }] =
+        await Promise.race([mainQueries, timeoutPromise('ActiveEvent main')]);
       if (evErr) throw evErr;
 
       setEvent(ev);
@@ -76,7 +95,7 @@ export default function ActiveEventScreen({ route, navigation }) {
       setMvpHasVoted(!!myVoteData);
       setMvpVoteCount((allVotesData ?? []).length);
     } catch (e) {
-      console.warn('ActiveEventScreen load error:', e.message);
+      logWarn({ screen: 'ActiveEventScreen', action: 'load', eventId, userId: user?.id, technical: e });
       // event stays null — fallback UI renders
     } finally {
       setLoading(false);
@@ -126,11 +145,24 @@ export default function ActiveEventScreen({ route, navigation }) {
     return Object.values(table).sort((a, b) => b.pts - a.pts || (b.gf - b.gc) - (a.gf - a.gc));
   }, [teams, matches]);
 
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
-  if (!event)  return (
+  if (loading) return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, fontSize: 15 }}>No se pudo cargar el evento.</Text>
-      <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginTop: 16 }}>
+      <ActivityIndicator color={COLORS.red} size="large" />
+      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, fontSize: 13, marginTop: 12 }}>Cargando evento activo...</Text>
+    </SafeAreaView>
+  );
+  if (!event)  return (
+    <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, fontSize: 15, textAlign: 'center', marginBottom: 20 }}>
+        No se pudo cargar el evento.{'\n'}Revisa tu conexión e intenta de nuevo.
+      </Text>
+      <TouchableOpacity
+        onPress={() => { setLoading(true); load(); }}
+        style={{ backgroundColor: COLORS.red, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 8, marginBottom: 12 }}
+      >
+        <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.white, letterSpacing: 1 }}>Reintentar</Text>
+      </TouchableOpacity>
+      <TouchableOpacity onPress={() => navigation.goBack()} style={{ marginTop: 4 }}>
         <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.blue2 }}>← Volver</Text>
       </TouchableOpacity>
     </SafeAreaView>
@@ -188,10 +220,60 @@ export default function ActiveEventScreen({ route, navigation }) {
       >
 
         {/* ══════════════ PARTIDOS ══════════════ */}
-        {tab === 'Partidos' && (
-          Object.keys(byJornada).length === 0
-            ? <Text style={styles.empty}>No hay partidos generados aún</Text>
-            : Object.entries(byJornada).map(([jornada, rMatches]) => (
+        {tab === 'Partidos' && (() => {
+          const winner = getTournamentWinner(matches, teams);
+          const advanced = event.formato === 'Torneo' && isGroupStageComplete(matches)
+            ? getQualifiedTeams(computeStandingsFromMatches(matches, teams), 2)
+            : null;
+          const is2Vidas = event.formato === '2 Vidas';
+          const liveTeams = is2Vidas
+            ? [...teams].sort((a,b) => (b.vidas_actuales ?? 0) - (a.vidas_actuales ?? 0))
+            : null;
+          return (
+            <>
+              {/* Ganador del torneo */}
+              {winner && <WinnerBanner winner={winner} />}
+
+              {/* Equipos avanzantes (Torneo) */}
+              {advanced && !winner && (
+                <View style={styles.advancedBox}>
+                  <Text style={styles.advancedTitle}>⚡ AVANZARON A KNOCKOUT</Text>
+                  {Object.entries(advanced).map(([grupo, list]) => (
+                    <View key={grupo} style={styles.advancedGroup}>
+                      <Text style={styles.advancedGroupLabel}>Grupo {grupo}</Text>
+                      {list.map((s, i) => {
+                        const team = teams.find((t) => t.id === s.team_id);
+                        return (
+                          <View key={s.team_id} style={styles.advancedRow}>
+                            <Text style={styles.advancedPos}>{i + 1}º</Text>
+                            <TeamBadge team={team} size={28} />
+                            <Text style={styles.advancedPts}>{s.pts}pts · DG {s.dg > 0 ? '+' : ''}{s.dg}</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Vidas en 2 Vidas */}
+              {is2Vidas && liveTeams && !winner && (
+                <View style={styles.advancedBox}>
+                  <Text style={styles.advancedTitle}>❤ VIDAS RESTANTES</Text>
+                  {liveTeams.map((t) => (
+                    <View key={t.id} style={styles.advancedRow}>
+                      <TeamBadge team={t} size={28} />
+                      <Text style={[styles.advancedPts, { color: (t.vidas_actuales ?? 0) > 0 ? COLORS.red : COLORS.gray, marginLeft: 'auto' }]}>
+                        {'❤'.repeat(t.vidas_actuales ?? 0) || '☠ Eliminado'}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {Object.keys(byJornada).length === 0
+                ? <Text style={styles.empty}>No hay partidos generados aún</Text>
+                : Object.entries(byJornada).map(([jornada, rMatches]) => (
                 <View key={jornada}>
                   <View style={styles.jornadaHeader}>
                     <Text style={styles.jornadaTitle}>
@@ -213,10 +295,18 @@ export default function ActiveEventScreen({ route, navigation }) {
                           <Text style={styles.teamName} numberOfLines={1}>{m.home?.nombre ?? m.equipo_local}</Text>
                         </View>
                         <View style={styles.scoreWrap}>
-                          {m.status === 'finished'
-                            ? <Text style={styles.score}>{m.goles_home ?? 0} - {m.goles_away ?? 0}</Text>
-                            : <Text style={styles.scorePending}>VS</Text>
-                          }
+                          {m.status === 'finished' ? (
+                            <>
+                              <Text style={styles.score}>{m.goles_home ?? 0} - {m.goles_away ?? 0}</Text>
+                              {m.fue_a_penales && (
+                                <Text style={{ fontFamily: FONTS.body, fontSize: 10, color: COLORS.gold, marginTop: 2 }}>
+                                  pen {m.goles_pen_home}-{m.goles_pen_away}
+                                </Text>
+                              )}
+                            </>
+                          ) : (
+                            <Text style={styles.scorePending}>VS</Text>
+                          )}
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
                           <Text style={[styles.teamName, { textAlign: 'right' }]} numberOfLines={1}>{m.away?.nombre ?? m.equipo_visitante}</Text>
@@ -229,8 +319,10 @@ export default function ActiveEventScreen({ route, navigation }) {
                     </View>
                   ))}
                 </View>
-              ))
-        )}
+              ))}
+            </>
+          );
+        })()}
 
         {/* ══════════════ TABLA ══════════════ */}
         {tab === 'Tabla' && hasTable && (
@@ -321,7 +413,7 @@ export default function ActiveEventScreen({ route, navigation }) {
               <Text style={styles.empty}>No hay jugadores registrados</Text>
             ) : (
               <FlatList
-                data={players.filter(p => p.user_id !== user?.id)}
+                data={players}
                 keyExtractor={(p) => String(p.user_id)}
                 style={{ maxHeight: 320 }}
                 renderItem={({ item }) => (
@@ -456,6 +548,14 @@ const styles = StyleSheet.create({
   playerName:     { fontFamily: FONTS.bodySemiBold, fontSize: 14, color: COLORS.white },
   playerSub:      { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray },
   empty:          { fontFamily: FONTS.body, color: COLORS.gray, textAlign: 'center', padding: SPACING.xl },
+  // Advanced teams / vidas box (Torneo / 2 Vidas)
+  advancedBox:    { backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.md, borderWidth: 1, borderColor: COLORS.gold + '50' },
+  advancedTitle:  { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.gold, letterSpacing: 2, marginBottom: SPACING.sm },
+  advancedGroup:  { marginBottom: SPACING.sm },
+  advancedGroupLabel: { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gray2, letterSpacing: 1, marginBottom: 4 },
+  advancedRow:    { flexDirection: 'row', alignItems: 'center', paddingVertical: 4, gap: 8 },
+  advancedPos:    { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.gold, width: 22 },
+  advancedPts:    { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginLeft: 'auto' },
   // Vote modal
   overlay:        { flex: 1, backgroundColor: '#000000BB', justifyContent: 'flex-end' },
   modalBox:       { backgroundColor: COLORS.card, borderTopLeftRadius: RADIUS.lg ?? 16, borderTopRightRadius: RADIUS.lg ?? 16, padding: SPACING.lg, gap: SPACING.sm, borderWidth: 1, borderColor: COLORS.navy, maxHeight: '75%' },

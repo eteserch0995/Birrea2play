@@ -8,7 +8,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const SUPABASE_URL    = Deno.env.get('SUPABASE_URL') ?? '';
 const SUPABASE_SVCKEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
-const APP_SCHEME      = Deno.env.get('APP_DEEP_LINK') ?? 'birrea2play://wallet';
+const APP_SCHEME      = Deno.env.get('APP_DEEP_LINK') ?? 'birrea2play://creditos';
 
 const CORS = {
   'Access-Control-Allow-Origin':  '*',

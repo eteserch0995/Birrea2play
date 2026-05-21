@@ -30,6 +30,21 @@ function writeJSON(fp, d) { fs.writeFileSync(fp, JSON.stringify(d, null, 2)+'\n'
 function readText(fp) { try { return fs.readFileSync(fp,'utf8'); } catch { return null; } }
 function writeText(fp, d) { fs.mkdirSync(path.dirname(fp),{recursive:true}); fs.writeFileSync(fp,d,'utf8'); }
 function bak(fp) { if (fs.existsSync(fp)) fs.copyFileSync(fp, fp+'.store-bak'); }
+function exists(fp) { return fs.existsSync(fp); }
+function statInfo(relPath) {
+  const fp = r(relPath);
+  if (!exists(fp)) return null;
+  const st = fs.statSync(fp);
+  return { relPath, absPath: fp, size: st.size, mtime: st.mtime };
+}
+function mb(bytes) { return `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
+function walkFiles(dir) {
+  if (!exists(dir)) return [];
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const fp = path.join(dir, entry.name);
+    return entry.isDirectory() ? walkFiles(fp) : [fp];
+  });
+}
 
 // ── Cargar archivos de configuración ─────────────────────────────────────────
 const appJson      = readJSON(r('app.json'));
@@ -39,11 +54,17 @@ const manifest     = readText(r('android/app/src/main/AndroidManifest.xml'));
 const buildGradle  = readText(r('android/app/build.gradle'));
 const gradleProps  = readText(r('android/gradle.properties'));
 const dotEnv       = readText(r('.env')) || '';
+const apkMetadata  = readJSON(r('android/app/build/outputs/apk/release/output-metadata.json'));
 
 const expo      = appJson?.expo || {};
 const iosConf   = expo.ios || {};
 const andConf   = expo.android || {};
 const infoPlist = iosConf.infoPlist || {};
+const releaseAab = statInfo('android/app/build/outputs/bundle/release/app-release.aab');
+const releaseApk = statInfo('android/app/build/outputs/apk/release/app-release.apk');
+const uploadableDistFiles = walkFiles(r('dist')).filter(fp => /\.(aab|apk)$/i.test(fp));
+const apkVersionCode = apkMetadata?.elements?.[0]?.versionCode;
+const apkVersionName = apkMetadata?.elements?.[0]?.versionName;
 
 // ── Registry de problemas ─────────────────────────────────────────────────────
 const findings = [];
@@ -262,6 +283,81 @@ if (pkgJson?.dependencies?.['crypto-js']) {
     'Reemplazar usos de CryptoJS.MD5/SHA por Crypto.digestStringAsync().',
     null);
 }
+
+// 21. Artefacto correcto para Play Console ───────────────────────────────────
+if (!releaseAab) {
+  find('BLOCKER','PLAY','RELEASE_AAB_MISSING',
+    'No se encontró app-release.aab para subir a Play Console',
+    'Google Play espera un Android App Bundle (.aab) para releases modernos. '+
+    'Genera el archivo con `eas build --platform android --profile production` '+
+    'o localmente con `cd android && ./gradlew bundleRelease`.',
+    null);
+}
+
+if (exists(r('dist')) && uploadableDistFiles.length === 0) {
+  find('HIGH','PLAY','DIST_IS_NOT_RELEASE',
+    'La carpeta dist/ no contiene el archivo que se sube a Play Console',
+    'dist/ contiene assets y bundles JS de Expo Updates, no un release instalable. '+
+    'No subas dist.zip, metadata.json, assetmap.json ni archivos .hbc a Play Console. '+
+    'El archivo correcto de este workspace es android/app/build/outputs/bundle/release/app-release.aab.',
+    null);
+}
+
+if (releaseApk && apkVersionCode && andConf.versionCode && apkVersionCode < andConf.versionCode) {
+  find('HIGH','PLAY','STALE_RELEASE_APK',
+    `APK release viejo detectado: versionCode ${apkVersionCode}, app.json usa ${andConf.versionCode}`,
+    'El APK release existente fue generado con una versión anterior. Si subes ese APK, Play puede rechazarlo '+
+    'por versionCode ya usado o por no coincidir con la versión esperada. Para producción usa el AAB más reciente.',
+    null);
+}
+
+if (releaseApk && releaseAab && releaseApk.mtime > releaseAab.mtime) {
+  find('MEDIUM','PLAY','APK_NEWER_THAN_AAB',
+    'El APK release es más reciente que el AAB',
+    'Esto puede indicar que el último build fue APK y no App Bundle. Play Console debe recibir el .aab de producción.',
+    null);
+}
+
+// 22. Credenciales de firma Android en archivo local ─────────────────────────
+if (gradleProps?.includes('MYAPP_UPLOAD_STORE_PASSWORD') ||
+    gradleProps?.includes('MYAPP_UPLOAD_KEY_PASSWORD')) {
+  find('HIGH','PLAY','ANDROID_SIGNING_SECRETS_LOCAL',
+    'Credenciales de firma Android presentes en android/gradle.properties',
+    'Es válido para un build local, pero este archivo jamás debe subirse al repositorio ni compartirse. '+
+    '.gitignore ya debe cubrir android/gradle.properties; para EAS Cloud usa `eas credentials` o EAS Secrets.',
+    null);
+}
+
+// 23. Apps con pagos / créditos internos ─────────────────────────────────────
+const hasPaymentFlows =
+  exists(r('lib/yappy.js')) ||
+  exists(r('lib/paguelofacil.js')) ||
+  exists(r('components/RecargasModal.js')) ||
+  exists(r('app/screens/wallet/WalletScreen.js'));
+
+if (hasPaymentFlows) {
+  find('HIGH','PLAY','FINANCIAL_FEATURES_DECLARATION',
+    'La app tiene pagos y créditos internos: completar Financial features declaration',
+    'Play Console exige completar la declaración de funciones financieras para apps con pagos, puntos, '+
+    'recompensas o créditos relacionados con compras. Declara pagos/puntos/créditos internos según aplique, '+
+    'evita declarar billetera digital si la app no permite retiro, transferencia entre usuarios ni custodia de dinero, '+
+    'y evita marcar préstamos si la app no presta dinero.',
+    null);
+
+  find('HIGH','PLAY','PAYMENTS_POLICY_REVIEW',
+    'Revisar si las recargas/créditos requieren Google Play Billing',
+    'Si los créditos se usan para funciones o contenido digital dentro de la app, Google puede exigir Play Billing. '+
+    'Si el pago corresponde a servicios/eventos físicos fuera de la app, documenta claramente esa naturaleza en el listing, '+
+    'términos, política de reembolsos y formulario Data Safety.',
+    null);
+}
+
+// 24. Cuenta personal nueva: prueba cerrada obligatoria ──────────────────────
+find('HIGH','PLAY','PERSONAL_ACCOUNT_CLOSED_TEST',
+  'Si la cuenta Play Console es personal nueva, prepara 12 testers por 14 días',
+  'Las cuentas personales creadas desde el 13 de noviembre de 2023 deben correr una prueba cerrada con mínimo '+
+  '12 testers opt-in durante 14 días continuos antes de solicitar acceso a producción. Internal testing no sustituye este requisito.',
+  null);
 
 // ══════════════════════════════════════════════════════════════════════════════
 // AUTO-FIXES
@@ -676,6 +772,18 @@ let md = `# Store Publishing Audit — Birrea2Play
 
 ---
 
+## Artefacto de Release para Google Play
+
+| Archivo | Estado | Tamaño | Modificado |
+|---------|--------|--------|------------|
+| \`android/app/build/outputs/bundle/release/app-release.aab\` | ${releaseAab ? '✅ Usar este para Play Console' : '❌ No encontrado'} | ${releaseAab ? mb(releaseAab.size) : '-'} | ${releaseAab ? releaseAab.mtime.toLocaleString('es-PA',{timeZone:'America/Panama'}) : '-'} |
+| \`android/app/build/outputs/apk/release/app-release.apk\` | ${releaseApk ? `⚠️ APK local${apkVersionCode ? ` v${apkVersionName} (${apkVersionCode})` : ''}` : 'No encontrado'} | ${releaseApk ? mb(releaseApk.size) : '-'} | ${releaseApk ? releaseApk.mtime.toLocaleString('es-PA',{timeZone:'America/Panama'}) : '-'} |
+| \`dist/\` | ${uploadableDistFiles.length ? '⚠️ Contiene APK/AAB' : 'No es archivo de Play Console'} | - | - |
+
+**Archivo recomendado para subir:** \`${releaseAab ? releaseAab.relPath : 'generar app-release.aab'}\`
+
+---
+
 `;
 
 for (const sev of ['BLOCKER','HIGH','MEDIUM']) {
@@ -753,14 +861,39 @@ Play Console → App content → Data safety:
 - ☐ Todos los datos cifrados en tránsito: ✓
 - ☐ El usuario puede solicitar eliminación: ✓
 
-### ⭐ 7. Calificación de Contenido *(ambas tiendas)*
+### 💳 7. Financial Features Declaration *(Play Store — obligatorio si hay pagos/créditos)*
+Play Console → Policy and programs → App content → Financial features:
+- ☐ Declarar pagos y puntos/créditos internos si el formulario lo solicita
+- ☐ No declarar billetera digital si Birrea2Play no permite retirar, transferir ni custodiar dinero
+- ☐ No declarar préstamos si Birrea2Play no presta dinero ni facilita crédito
+- ☐ Si la cuenta Play Console es personal nueva, evaluar migrar a cuenta de organización si el modelo ya es comercial/financiero
+- ☐ Alinear términos, política de privacidad, reembolsos y Data Safety con Yappy/PagueloFacil/Supabase
+
+### 🧪 8. Prueba cerrada para cuenta personal nueva *(Play Store)*
+Si la cuenta de desarrollador personal fue creada desde el 13 de noviembre de 2023:
+- ☐ Crear Closed testing track
+- ☐ Agregar mínimo 12 testers con Google Account
+- ☐ Mantenerlos opt-in durante 14 días continuos
+- ☐ Pedir feedback real y corregir crashes/UX antes de solicitar Production access
+
+### ⭐ 9. Calificación de Contenido *(ambas tiendas)*
 - ☐ **Play Store**: Play Console → App content → App ratings → completar IARC
 - ☐ **App Store**: App Store Connect → App Information → Age Rating
 
-### 📸 8. Screenshots para las Tiendas
+### 📸 10. Screenshots para las Tiendas
 Carpetas creadas en \`assets/screenshots/\`. Ver \`assets/screenshots/README.md\`.
 
-### 🔄 9. Aplicar cambios (ejecutar después de todos los pasos)*
+### 📦 11. Subir el archivo correcto a Google Play
+Subir este archivo en Play Console → Testing → Closed testing → Create new release:
+\`\`\`text
+android/app/build/outputs/bundle/release/app-release.aab
+\`\`\`
+
+No subir:
+- \`dist/\`, \`dist.zip\`, \`assetmap.json\`, \`metadata.json\`, archivos \`.hbc\`
+- \`android/app/build/outputs/apk/release/app-release.apk\` si Play pide App Bundle o si el versionCode ya fue usado
+
+### 🔄 12. Aplicar cambios (ejecutar después de todos los pasos)*
 \`\`\`bash
 # Aplica todos los plugins modificados
 npx expo prebuild --clean
@@ -772,7 +905,7 @@ npx expo run:android
 eas build --platform android --profile production
 \`\`\`
 
-### 💳 10. Cuentas de Desarrollador
+### 🧾 13. Cuentas de Desarrollador
 - ☐ **Google Play Console**: $25 USD pago único — [play.google.com/console](https://play.google.com/console)
 - ☐ **Apple Developer Program**: $99 USD/año — [developer.apple.com/programs](https://developer.apple.com/programs)
 

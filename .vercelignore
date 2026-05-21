@@ -1,0 +1,38 @@
+# Vercel ignore: solo subir lo necesario para el build web
+android/
+ios/
+dist/
+web-build/
+.expo/
+.expo-shared/
+
+# Plataformas nativas y configs no-web
+# plugins/  → mantener: Expo los referencia en app.json aunque sean Android-only
+eas.json
+credentials.json
+google-services.json
+
+# Stores / firma
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Builds locales y dumps
+*.orig.*
+*.bak.*
+@*.jks
+@*.keystore
+
+# Backups y notas
+*.store-bak
+STORE_AUDIT_REPORT.md
+seed-*.js
+
+# Static site legacy
+web/
+
+# Backups grandes
+com.facebook.react.devsupport.BundleDownloader/

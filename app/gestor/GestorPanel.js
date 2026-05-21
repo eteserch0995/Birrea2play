@@ -1,20 +1,40 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Alert, ActivityIndicator, TextInput, Modal, Image,
+  KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { createStackNavigator } from '@react-navigation/stack';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
+import Constants from 'expo-constants';
+
+const APP_VERSION = Constants.expoConfig?.version ?? Constants.manifest?.version ?? '1.1.3';
+const BUILD_NUMBER = Constants.nativeBuildVersion ?? '14';
 import { supabase } from '../../lib/supabase';
 import { sendLocalNotification, sendPushNotificationsToEventPlayers } from '../../lib/notifications';
 import useAuthStore from '../../store/authStore';
+import { DateField, TimeField } from '../../components/DateTimeField';
+import { uploadImage } from '../../lib/uploadImage';
+import { shareEvent } from '../../lib/shareEvent';
+import { filterActiveEventGuests } from '../../lib/eventGuests';
 import {
   generateLigaFixture,
   generateGroupStageFixture,
   generateKnockoutBracket,
   generateRoundRobin,
+  generate2VidasFixture,
+  applyVidaLossFor2Vidas,
+  ensure2VidasFinalIfReady,
+  populateNextKnockoutPhase,
+  computeStandingsFromMatches,
+  detectGroupTiesNeedingDecision,
+  getQualifiedTeams,
+  populateKnockoutFromGroups,
+  isGroupStageComplete,
+  getTournamentWinner,
   TEAM_COLORS,
   calcTeams,
 } from '../../lib/eventHelpers';
@@ -54,12 +74,14 @@ function GestorDashboard({ navigation }) {
         .select('id')
         .eq('created_by', user.id);
       if (!evs?.length) { setCashPending(0); return; }
-      const { count } = await supabase
-        .from('cash_payment_requests')
-        .select('id', { count: 'exact', head: true })
-        .in('event_id', evs.map((e) => e.id))
-        .eq('status', 'pending');
-      setCashPending(count ?? 0);
+      const eventIds = evs.map((e) => e.id);
+      const [{ count: regs }, { count: guests }] = await Promise.all([
+        supabase.from('cash_payment_requests').select('id', { count: 'exact', head: true })
+          .in('event_id', eventIds).eq('status', 'pending'),
+        supabase.from('event_guests').select('id', { count: 'exact', head: true })
+          .in('event_id', eventIds).eq('status', 'pending_payment').eq('metodo_pago', 'efectivo'),
+      ]);
+      setCashPending((regs ?? 0) + (guests ?? 0));
     } catch { /* non-critical */ }
   }
 
@@ -107,6 +129,25 @@ function GestorDashboard({ navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* Acceso rápido a pagos en efectivo pendientes */}
+        <TouchableOpacity
+          style={{ marginHorizontal: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.card, borderRadius: RADIUS.md, borderWidth: 1, borderColor: cashPending > 0 ? COLORS.gold : COLORS.navy, flexDirection: 'row', alignItems: 'center', padding: SPACING.md, gap: SPACING.sm }}
+          onPress={() => navigation.navigate('GestorCashApprovals', {})}
+        >
+          <Text style={{ fontSize: 20 }}>💵</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.white, fontSize: 14 }}>Pagos en Efectivo</Text>
+            <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>
+              {cashPending > 0 ? `${cashPending} solicitud(es) pendiente(s)` : 'Sin solicitudes pendientes'}
+            </Text>
+          </View>
+          {cashPending > 0 && (
+            <View style={{ backgroundColor: COLORS.red, borderRadius: 10, minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 }}>
+              <Text style={{ color: COLORS.white, fontSize: 11, fontFamily: FONTS.bodyMedium }}>{cashPending}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
         {loading ? (
           <ActivityIndicator color={COLORS.red} style={{ margin: SPACING.xl }} />
         ) : events.length === 0 ? (
@@ -131,7 +172,17 @@ function GestorDashboard({ navigation }) {
 
         {selectedEvent && (
           <>
-            <Text style={styles.selectedEvent}>{selectedEvent.nombre}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: SPACING.md }}>
+              <Text style={[styles.selectedEvent, { paddingHorizontal: 0, flex: 1 }]}>{selectedEvent.nombre}</Text>
+              <TouchableOpacity
+                onPress={() => shareEvent(selectedEvent)}
+                style={{ paddingHorizontal: SPACING.sm, paddingVertical: 4, backgroundColor: COLORS.card, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: COLORS.navy, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+                accessibilityLabel="Compartir evento"
+              >
+                <Text style={{ fontSize: 14 }}>📤</Text>
+                <Text style={{ fontFamily: FONTS.bodySemiBold, color: COLORS.white, fontSize: 11, letterSpacing: 0.5 }}>COMPARTIR</Text>
+              </TouchableOpacity>
+            </View>
             <View style={styles.menuGrid}>
               {sections.map((s) => {
                 const badge = s.route === 'GestorCashApprovals' && cashPending > 0 ? cashPending : 0;
@@ -156,7 +207,10 @@ function GestorDashboard({ navigation }) {
             </View>
           </>
         )}
-        <View style={{ height: SPACING.xxl }} />
+        <View style={{ height: SPACING.sm }} />
+        <Text style={{ fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, textAlign: 'center', paddingBottom: SPACING.md }}>
+          v{APP_VERSION} (build {BUILD_NUMBER})
+        </Text>
       </ScrollView>
     </SafeAreaView>
   );
@@ -169,12 +223,13 @@ function GestorCreateEvent({ navigation }) {
   const [canchaImageUri, setCanchaUri] = useState(null);
   const [form, setForm] = useState({
     nombre: '', formato: 'Liga', deporte: 'Fútbol 7', fecha: '', hora: '',
-    lugar: '', precio: '0', cupos_total: '', cupos_ilimitado: false,
+    lugar: '', direccion: '', precio: '0', cupos_total: '', cupos_ilimitado: false,
     descripcion: '', jugadores_por_equipo: null, jornadas: '1',
     num_grupos: '2', equipos_por_grupo: '3',
     tiene_octavos: false, tiene_cuartos: false,
     tiene_semis: true, tiene_tercer_lugar: true, tiene_final: true,
-    ida_y_vuelta: false, maps_url: '',
+    ida_y_vuelta: false, maps_url: '', genero: null,
+    vidas_por_equipo: 3,
   });
 
   const upd = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -184,21 +239,22 @@ function GestorCreateEvent({ navigation }) {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') return;
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true, aspect: [16, 9], quality: 0.75,
     });
-    if (!result.canceled) setCanchaUri(result.assets[0].uri);
+    if (result.canceled) return;
+    const asset = result.assets[0];
+    // En web guardamos el asset entero (incluye .file → File real, evita blob: URL expiring).
+    // En native guardamos sólo el uri (string) para mantener compat con el patrón existente.
+    setCanchaUri(Platform.OS === 'web' ? asset : asset.uri);
   };
 
-  const uploadCanchaPhoto = async (uri, eventId) => {
-    const ext  = uri.split('.').pop().toLowerCase().replace(/\?.*$/, '');
-    const path = `events/${eventId}.${ext}`;
-    const resp = await fetch(uri);
-    const blob = await resp.blob();
-    const { error } = await supabase.storage.from('event-photos').upload(path, blob, { upsert: true, contentType: `image/${ext}` });
-    if (error) throw error;
-    const { data } = supabase.storage.from('event-photos').getPublicUrl(path);
-    return data.publicUrl;
+  const uploadCanchaPhoto = async (source, eventId) => {
+    const uri = typeof source === 'string' ? source : source?.uri ?? '';
+    const ext = (uri.split('.').pop() ?? '').toLowerCase().replace(/\?.*$/, '');
+    const safeExt = ['jpg','jpeg','png','webp','heic'].includes(ext) ? (ext === 'jpeg' ? 'jpg' : ext) : 'jpg';
+    const path = `events/${eventId}_${Date.now()}.${safeExt}`;
+    return uploadImage('event-photos', path, source);
   };
   const teamCalc = form.jugadores_por_equipo && cuposNum
     ? calcTeams(cuposNum, form.jugadores_por_equipo) : null;
@@ -246,6 +302,7 @@ function GestorCreateEvent({ navigation }) {
         fecha:               form.fecha,
         hora:                form.hora,
         lugar:               form.lugar.trim(),
+        direccion:           form.direccion.trim() || null,
         precio:              precioVal,
         cupos_total:         form.cupos_ilimitado ? null : (parseInt(form.cupos_total) || null),
         cupos_ilimitado:     form.cupos_ilimitado,
@@ -254,6 +311,7 @@ function GestorCreateEvent({ navigation }) {
         visible:             false,
         created_by:          user?.id,
         jugadores_por_equipo:form.jugadores_por_equipo,
+        genero:              form.genero || null,
         jornadas:            form.formato === 'Liga' ? (parseInt(form.jornadas) || 1) : 1,
         num_grupos:          form.formato === 'Torneo' ? (parseInt(form.num_grupos) || 2) : null,
         equipos_por_grupo:   form.formato === 'Torneo' ? (parseInt(form.equipos_por_grupo) || 3) : null,
@@ -264,6 +322,7 @@ function GestorCreateEvent({ navigation }) {
         tiene_final:         form.formato === 'Torneo' ? form.tiene_final : false,
         ida_y_vuelta:        form.ida_y_vuelta,
         maps_url:            form.maps_url.trim() || null,
+        vidas_por_equipo:    form.formato === '2 Vidas' ? (form.vidas_por_equipo ?? 3) : null,
       }).select('id').single();
       if (error) throw error;
 
@@ -292,7 +351,8 @@ function GestorCreateEvent({ navigation }) {
         </TouchableOpacity>
         <Text style={[styles.title, { padding: 0, flex: 1 }]}>NUEVO EVENTO</Text>
       </View>
-      <ScrollView contentContainerStyle={[styles.list, { paddingBottom: 60 }]}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <ScrollView contentContainerStyle={[styles.list, { paddingBottom: 60 }]} keyboardShouldPersistTaps="handled">
         <Text style={styles.fieldLabel}>Nombre *</Text>
         <TextInput style={styles.input} placeholder="Nombre del evento" placeholderTextColor={COLORS.gray} value={form.nombre} onChangeText={(v) => upd('nombre', v)} />
 
@@ -309,29 +369,58 @@ function GestorCreateEvent({ navigation }) {
 
         <Text style={styles.fieldLabel}>Formato</Text>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.sm }}>
-          {['Liga','Torneo','Amistoso'].map((f) => (
+          {['Liga','Torneo','Amistoso','2 Vidas'].map((f) => (
             <TouchableOpacity key={f} style={[styles.chip, form.formato === f && styles.chipActive]} onPress={() => upd('formato', f)}>
               <Text style={[styles.chipText, form.formato === f && { color: COLORS.white }]}>{f}</Text>
             </TouchableOpacity>
           ))}
         </View>
 
-        <Text style={styles.fieldLabel}>Fecha * (YYYY-MM-DD)</Text>
-        <TextInput style={styles.input} placeholder="2026-06-15" placeholderTextColor={COLORS.gray} value={form.fecha} onChangeText={(v) => upd('fecha', v)} />
+        {form.formato === '2 Vidas' && (
+          <View style={{ backgroundColor: COLORS.card, padding: SPACING.md, borderRadius: RADIUS.md, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.gold + '40' }}>
+            <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.gold, fontSize: 12, marginBottom: 4 }}>⚡ MODO 2 VIDAS</Text>
+            <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12, marginBottom: SPACING.sm }}>
+              4 o 6 equipos (pares). Cada equipo arranca con vidas. Pierde partido = pierde 1 vida. Empate = penales (perdedor pierde vida). Los 2 con más vidas al final juegan la GRAN FINAL.
+            </Text>
+            <Text style={styles.fieldLabel}>Vidas por equipo</Text>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+              {[2, 3].map((v) => (
+                <TouchableOpacity key={v} style={[styles.chip, (form.vidas_por_equipo ?? 3) === v && styles.chipActive]} onPress={() => upd('vidas_por_equipo', v)}>
+                  <Text style={[styles.chipText, (form.vidas_por_equipo ?? 3) === v && { color: COLORS.white }]}>{v} vidas</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
-        <Text style={styles.fieldLabel}>Hora * (HH:MM)</Text>
-        <TextInput style={styles.input} placeholder="08:00" placeholderTextColor={COLORS.gray} value={form.hora} onChangeText={(v) => upd('hora', v)} />
+        <Text style={styles.fieldLabel}>Género</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.sm }}>
+          {[null, 'Masculino', 'Femenino', 'Mixto'].map((g) => (
+            <TouchableOpacity key={String(g)} style={[styles.chip, form.genero === g && styles.chipActive]} onPress={() => upd('genero', g)}>
+              <Text style={[styles.chipText, form.genero === g && { color: COLORS.white }]}>{g ?? 'Todos'}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={styles.fieldLabel}>Fecha *</Text>
+        <DateField style={styles.input} value={form.fecha} onChange={(v) => upd('fecha', v)} />
+
+        <Text style={styles.fieldLabel}>Hora *</Text>
+        <TimeField style={styles.input} value={form.hora} onChange={(v) => upd('hora', v)} />
 
         <Text style={styles.fieldLabel}>Lugar *</Text>
         <TextInput style={styles.input} placeholder="Cancha / Estadio" placeholderTextColor={COLORS.gray} value={form.lugar} onChangeText={(v) => upd('lugar', v)} />
 
+        <Text style={styles.fieldLabel}>Dirección (opcional)</Text>
+        <TextInput style={styles.input} placeholder="Calle, barrio, ciudad..." placeholderTextColor={COLORS.gray} value={form.direccion} onChangeText={(v) => upd('direccion', v)} />
+
         <Text style={styles.fieldLabel}>Link de Google Maps (opcional)</Text>
-        <TextInput style={styles.input} placeholder="https://maps.google.com/..." placeholderTextColor={COLORS.gray} autoCapitalize="none" value={form.maps_url} onChangeText={(v) => upd('maps_url', v)} />
+        <TextInput style={styles.input} placeholder="https://maps.google.com/..." placeholderTextColor={COLORS.gray} autoCapitalize="none" autoCorrect={false} value={form.maps_url} onChangeText={(v) => upd('maps_url', v)} />
 
         <Text style={styles.fieldLabel}>Foto de la cancha (opcional)</Text>
         <TouchableOpacity style={[styles.input, { alignItems: 'center', justifyContent: 'center', minHeight: 80 }]} onPress={pickCanchaPhoto}>
           {canchaImageUri
-            ? <Image source={{ uri: canchaImageUri }} style={{ width: '100%', height: 120, borderRadius: RADIUS.sm }} resizeMode="cover" />
+            ? <Image source={{ uri: typeof canchaImageUri === 'string' ? canchaImageUri : canchaImageUri.uri }} style={{ width: '100%', height: 120, borderRadius: RADIUS.sm }} resizeMode="cover" />
             : <Text style={{ color: COLORS.gray, fontFamily: FONTS.body }}>📷 Agregar foto de cancha</Text>
           }
         </TouchableOpacity>
@@ -401,13 +490,18 @@ function GestorCreateEvent({ navigation }) {
         {form.formato === 'Torneo' && (
           <>
             <Text style={styles.fieldLabel}>Grupos</Text>
-            <View style={{ flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm }}>
-              {['2','3','4'].map((n) => (
+            <View style={{ flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.sm, flexWrap: 'wrap' }}>
+              {['1','2','3','4'].map((n) => (
                 <TouchableOpacity key={n} style={[styles.chip, form.num_grupos === n && styles.chipActive]} onPress={() => upd('num_grupos', n)}>
-                  <Text style={[styles.chipText, form.num_grupos === n && { color: COLORS.white }]}>{n} grupos</Text>
+                  <Text style={[styles.chipText, form.num_grupos === n && { color: COLORS.white }]}>{n === '1' ? 'Grupo único' : `${n} grupos`}</Text>
                 </TouchableOpacity>
               ))}
             </View>
+            {form.num_grupos === '1' && (
+              <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 11, marginBottom: SPACING.sm }}>
+                ℹ Grupo único: todos los equipos juegan round-robin entre sí. Después avanzan TODOS a fase eliminatoria.
+              </Text>
+            )}
             <Text style={styles.fieldLabel}>Fases eliminatorias</Text>
             {[['tiene_cuartos','Cuartos de final'],['tiene_semis','Semifinales'],['tiene_tercer_lugar','3er lugar'],['tiene_final','Final']].map(([key, label]) => (
               <View key={key} style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: 4 }}>
@@ -443,6 +537,7 @@ function GestorCreateEvent({ navigation }) {
           }
         </TouchableOpacity>
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -458,22 +553,62 @@ function GestorTeams({ route }) {
   const [editTeamModal,   setEditTeamModal]   = useState(null); // null | team obj
   const [editTeamForm,    setEditTeamForm]    = useState({ nombre: '', color: '' });
   const [assignExpanded,  setAssignExpanded]  = useState(null); // userId being assigned
+  const [addPlayerModal,  setAddPlayerModal]  = useState(false);
+  const [addPlayerNombre, setAddPlayerNombre] = useState('');
+  const [addPlayerGenero, setAddPlayerGenero] = useState(null);
+  const [addPlayerSaving, setAddPlayerSaving] = useState(false);
 
-  // WC fix M5: guard against undefined eventId (deep-link / missing params)
-  useEffect(() => { if (eventId) fetchData(); }, []);
+  // Refresh every time the screen comes into focus so new guests appear immediately
+  useFocusEffect(useCallback(() => { if (eventId) fetchData(); }, [eventId]));
 
   async function fetchData() {
     try {
-      const [{ data: ev }, { data: t }, { data: regs }] = await Promise.all([
+      const [{ data: ev }, { data: t }, { data: regs, error: regsErr }, { data: gs, error: gsErr }] = await Promise.all([
         supabase.from('events').select('*').eq('id', eventId).single(),
-        supabase.from('teams').select('*, team_players(user_id, users(nombre, genero))').eq('event_id', eventId),
+        supabase.from('teams').select('*, team_players(id, user_id, guest_id)').eq('event_id', eventId),
         supabase.from('event_registrations').select('user_id, users(nombre, genero)').eq('event_id', eventId).eq('status', 'confirmed'),
+        supabase.from('event_guests').select('id, nombre, genero, status, invited_by').eq('event_id', eventId).in('status', ['confirmed', 'pending_payment']),
       ]);
+
+      console.log('[GestorTeams] EVENT ID:', eventId);
+      console.log('[GestorTeams] REGISTRATIONS RAW:', regs);
+      console.log('[GestorTeams] GUESTS RAW:', gs);
+      if (regsErr) console.warn('[GestorTeams] regs error:', regsErr.message);
+      if (gsErr)   console.warn('[GestorTeams] guests error:', gsErr.message);
+
       setEvent(ev ?? null);
       setTeams(t ?? []);
-      setPlayers(regs ?? []);
+
+      const regPlayers = (regs ?? []).map(r => ({
+        participantKey: `user:${r.user_id}`,
+        user_id:  r.user_id,
+        guest_id: null,
+        users:    r.users,
+        isGuest:  false,
+      }));
+
+      const activeGuests = filterActiveEventGuests(gs ?? [], regs ?? []);
+
+      const guestPlayers = activeGuests.map(g => ({
+        participantKey: `guest:${g.id}`,
+        user_id:  null,
+        guest_id: g.id,
+        users:    { nombre: g.nombre, genero: g.genero ?? null },
+        isGuest:  true,
+      }));
+
+      const unified = [...regPlayers, ...guestPlayers];
+      console.log('[GestorTeams] REGISTERED PLAYERS:', regPlayers);
+      console.log('[GestorTeams] GUEST PLAYERS:', guestPlayers);
+      console.log('[GestorTeams] PLAYERS UNIFIED:', unified);
+      console.log('[GestorTeams] PLAYERS UNIFIED COUNT:', unified.length);
+      console.log('[GestorTeams] TEAMS RAW:', t);
+      const allTp = (t ?? []).flatMap(team => team.team_players ?? []);
+      console.log('[GestorTeams] TEAM PLAYERS RAW:', allTp);
+      console.log('[GestorTeams] TEAM PLAYERS WITHOUT USER OR GUEST:', allTp.filter(tp => !tp.user_id && !tp.guest_id));
+      setPlayers(unified);
     } catch (e) {
-      console.warn('GestorTeams fetchData error:', e.message);
+      console.warn('[GestorTeams] fetchData error:', e.message);
     }
   }
 
@@ -481,6 +616,10 @@ function GestorTeams({ route }) {
     const jpq   = event?.jugadores_por_equipo;
     const cupos = event?.cupos_total ?? players.length;
     if (!jpq) { Alert.alert('Error', 'El evento no tiene jugadores por equipo definido.'); return; }
+    if (players.length === 0) {
+      Alert.alert('Sin jugadores', 'No hay jugadores inscritos ni invitados disponibles para crear equipos.');
+      return;
+    }
 
     // Hard block — cupos must be exact multiple of jugadores_por_equipo
     if (jpq && cupos > 0 && cupos % jpq !== 0) {
@@ -537,6 +676,10 @@ function GestorTeams({ route }) {
   }
 
   function requestAutoAssign() {
+    if (players.length === 0) {
+      Alert.alert('Sin jugadores', 'No hay jugadores inscritos ni invitados disponibles para asignar.');
+      return;
+    }
     const hasWomen = players.some((p) => p.users?.genero === 'Femenino');
     if (hasWomen) { setMixModal(true); }
     else { doAutoAssign(0); }
@@ -545,47 +688,50 @@ function GestorTeams({ route }) {
   async function doAutoAssign(chicasCount) {
     if (teams.length === 0) { Alert.alert('Error', 'Crea equipos primero.'); return; }
     setMixModal(false);
-    // Limpiar asignaciones previas
     for (const t of teams) {
       await supabase.from('team_players').delete().eq('team_id', t.id);
     }
 
-    const mujeres   = players.filter((p) => p.users?.genero === 'Femenino').sort(() => Math.random() - 0.5);
-    const hombres   = players.filter((p) => p.users?.genero !== 'Femenino').sort(() => Math.random() - 0.5);
-    const sobrantes = [];
+    // Helper: always pick team with fewest players → perfectly even distribution
+    const teamCount = new Array(teams.length).fill(0);
+    const nextTeamIdx = () => {
+      let min = 0;
+      for (let i = 1; i < teamCount.length; i++) if (teamCount[i] < teamCount[min]) min = i;
+      teamCount[min]++;
+      return min;
+    };
+
+    const toInsert = (p, teamId) => ({ team_id: teamId, ...(p.isGuest ? { guest_id: p.guest_id } : { user_id: p.user_id }) });
     const allInserts = [];
 
-    // Slot-filling: garantiza chicasCount mujeres por equipo
-    let fi = 0;
-    for (let t = 0; t < teams.length && fi < mujeres.length; t++) {
-      for (let slot = 0; slot < chicasCount && fi < mujeres.length; slot++) {
-        allInserts.push({ team_id: teams[t].id, user_id: mujeres[fi].user_id });
-        fi++;
+    if (chicasCount > 0) {
+      const mujeres = players.filter(p => p.users?.genero === 'Femenino').sort(() => Math.random() - 0.5);
+      // First: assign exactly chicasCount mujeres per team
+      let fi = 0;
+      for (let t = 0; t < teams.length; t++) {
+        for (let slot = 0; slot < chicasCount && fi < mujeres.length; slot++, fi++) {
+          allInserts.push(toInsert(mujeres[fi], teams[t].id));
+          teamCount[t]++;
+        }
       }
+      // Remaining players (extra mujeres + hombres + guests) → fill smallest team
+      const rest = [
+        ...mujeres.slice(fi),
+        ...players.filter(p => p.users?.genero !== 'Femenino'),
+      ].sort(() => Math.random() - 0.5);
+      for (const p of rest) allInserts.push(toInsert(p, teams[nextTeamIdx()].id));
+    } else {
+      // Non-mixto: shuffle all, fill smallest team
+      const all = [...players].sort(() => Math.random() - 0.5);
+      for (const p of all) allInserts.push(toInsert(p, teams[nextTeamIdx()].id));
     }
-    while (fi < mujeres.length) { sobrantes.push(mujeres[fi]); fi++; }
-
-    // Hombres en round-robin
-    hombres.forEach((p, i) => {
-      allInserts.push({ team_id: teams[i % teams.length].id, user_id: p.user_id });
-    });
 
     if (allInserts.length > 0) {
-      // WC fix C8: verificar error en insert — no mostrar "asignados" si falló
       const { error } = await supabase.from('team_players').insert(allInserts);
-      if (error) {
-        Alert.alert('Error al asignar', error.message);
-        fetchData();
-        return;
-      }
+      if (error) { Alert.alert('Error al asignar', error.message); fetchData(); return; }
     }
     fetchData();
-    Alert.alert(
-      '¡Listo!',
-      sobrantes.length > 0
-        ? `Jugadores asignados. ${sobrantes.length} mujer(es) quedaron sin equipo — asígnalas manualmente.`
-        : 'Jugadores asignados aleatoriamente.',
-    );
+    Alert.alert('¡Listo!', `${allInserts.length} jugadores asignados aleatoriamente.`);
   }
 
   function deleteTeam(team) {
@@ -611,23 +757,74 @@ function GestorTeams({ route }) {
     fetchData();
   }
 
-  async function removePlayerFromTeam(teamId, userId) {
-    const { error } = await supabase.from('team_players').delete().eq('team_id', teamId).eq('user_id', userId);
+  async function removePlayerFromTeam(teamId, playerId, isGuest = false) {
+    const q = supabase.from('team_players').delete().eq('team_id', teamId);
+    const { error } = await (isGuest ? q.eq('guest_id', playerId) : q.eq('user_id', playerId));
     if (error) { Alert.alert('Error', error.message); return; }
     fetchData();
   }
 
-  async function assignPlayerToTeam(teamId, userId) {
-    // WC fix M8: eliminar de cualquier otro equipo antes de asignar
-    await supabase.from('team_players').delete().eq('user_id', userId);
-    const { error } = await supabase.from('team_players').insert({ team_id: teamId, user_id: userId });
-    if (error) { Alert.alert('Error', error.message); return; }
+  async function assignPlayerToTeam(teamId, playerId, isGuest = false) {
+    if (isGuest) {
+      await supabase.from('team_players').delete().eq('guest_id', playerId);
+      const { error } = await supabase.from('team_players').insert({ team_id: teamId, guest_id: playerId });
+      if (error) { Alert.alert('Error', error.message); return; }
+    } else {
+      await supabase.from('team_players').delete().eq('user_id', playerId);
+      const { error } = await supabase.from('team_players').insert({ team_id: teamId, user_id: playerId });
+      if (error) { Alert.alert('Error', error.message); return; }
+    }
     setAssignExpanded(null);
     fetchData();
   }
 
-  const assignedIds = new Set(teams.flatMap(t => t.team_players?.map(tp => tp.user_id) ?? []));
-  const unassigned  = players.filter(p => !assignedIds.has(p.user_id));
+  // Map para lookup de nombres sin depender del join anidado de PostgREST
+  const playerMap = new Map();
+  players.forEach(p => {
+    if (p.user_id)  playerMap.set(p.user_id,  p);
+    if (p.guest_id) playerMap.set(p.guest_id, p);
+  });
+  const assignedActiveKeys = new Set(
+    teams.flatMap(t => t.team_players ?? []).map(tp => {
+      if (tp.guest_id && playerMap.has(tp.guest_id)) return `guest:${tp.guest_id}`;
+      if (tp.user_id && playerMap.has(tp.user_id)) return `user:${tp.user_id}`;
+      return null;
+    }).filter(Boolean)
+  );
+  const unassigned = players.filter(p => !assignedActiveKeys.has(p.participantKey));
+  console.log('[GestorTeams] assignedKeys:', [...assignedActiveKeys]);
+  console.log('[GestorTeams] unassigned:', unassigned.length, unassigned);
+  const activeTeamPlayers = (team) => (team.team_players ?? []).filter((tp) => {
+    if (tp.user_id) return playerMap.has(tp.user_id);
+    if (tp.guest_id) return playerMap.has(tp.guest_id);
+    return false;
+  });
+
+  async function addManualPlayer() {
+    if (!addPlayerNombre.trim()) { Alert.alert('Error', 'El nombre es requerido'); return; }
+    if (!addPlayerGenero) { Alert.alert('Error', 'El género es requerido'); return; }
+    setAddPlayerSaving(true);
+    try {
+      const { error } = await supabase.from('event_guests').insert({
+        event_id:     eventId,
+        nombre:       addPlayerNombre.trim(),
+        genero:       addPlayerGenero,
+        invited_by:   null,
+        metodo_pago:  'efectivo',
+        monto_pagado: 0,
+        status:       'confirmed',
+      });
+      if (error) throw error;
+      setAddPlayerNombre('');
+      setAddPlayerGenero(null);
+      setAddPlayerModal(false);
+      fetchData();
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setAddPlayerSaving(false);
+    }
+  }
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -640,6 +837,14 @@ function GestorTeams({ route }) {
         </TouchableOpacity>
         <TouchableOpacity style={[styles.btn, { backgroundColor: COLORS.purple ?? COLORS.blue }]} onPress={requestAutoAssign}>
           <Text style={styles.btnText}>🎲 Asignar aleatoria</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={{ paddingHorizontal: SPACING.md, marginBottom: SPACING.sm }}>
+        <TouchableOpacity
+          style={{ backgroundColor: COLORS.green + 'CC', borderRadius: RADIUS.sm, padding: SPACING.sm, alignItems: 'center' }}
+          onPress={() => { setAddPlayerNombre(''); setAddPlayerModal(true); }}
+        >
+          <Text style={styles.btnText}>➕ Agregar jugador manualmente</Text>
         </TouchableOpacity>
       </View>
 
@@ -665,7 +870,7 @@ function GestorTeams({ route }) {
                   <Text style={styles.grupoBadgeText}>GRP {t.grupo}</Text>
                 </View>
               )}
-              <Text style={styles.cardSub}>{t.team_players?.length ?? 0} jug.</Text>
+              <Text style={styles.cardSub}>{activeTeamPlayers(t).length} jug.</Text>
               <TouchableOpacity
                 style={[styles.btnSmall, { backgroundColor: COLORS.blue + '40' }]}
                 onPress={() => { setEditTeamModal(t); setEditTeamForm({ nombre: t.nombre, color: t.color ?? '' }); }}
@@ -681,21 +886,35 @@ function GestorTeams({ route }) {
             </View>
 
             {/* Jugadores con botón quitar */}
-            {(t.team_players?.length ?? 0) === 0
+            {activeTeamPlayers(t).length === 0
               ? <Text style={[styles.cardSub, { fontStyle:'italic', paddingLeft: 18 }]}>Sin jugadores asignados</Text>
-              : t.team_players?.map((tp) => (
-                <View key={tp.user_id} style={{ flexDirection:'row', alignItems:'center', paddingLeft: 18, paddingVertical: 2 }}>
-                  <Text style={[styles.playerItem, { flex: 1 }]}>
-                    {tp.users?.nombre}{tp.users?.genero === 'Femenino' ? ' ♀' : ''}
-                  </Text>
-                  <TouchableOpacity
-                    style={{ paddingHorizontal: 8 }}
-                    onPress={() => removePlayerFromTeam(t.id, tp.user_id)}
-                  >
-                    <Text style={{ color: COLORS.red, fontFamily: FONTS.bodyBold, fontSize: 14 }}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              ))
+              : activeTeamPlayers(t).map((tp) => {
+                  if (!tp.user_id && !tp.guest_id) {
+                    console.warn('[GestorTeams] team_player sin user_id ni guest_id, id:', tp.id);
+                    return null;
+                  }
+                  const isGuest  = !!tp.guest_id;
+                  const playerId = tp.user_id ?? tp.guest_id;
+                  const p        = playerMap.get(playerId);
+                  if (!p) console.warn('[GestorTeams] jugador en equipo no encontrado en players list, id:', playerId);
+                  const nombre   = p
+                    ? (p.isGuest ? p.users?.nombre + ' 👤' : p.users?.nombre)
+                    : (isGuest ? '? 👤' : '?');
+                  const genero   = p?.users?.genero;
+                  return (
+                    <View key={tp.id} style={{ flexDirection:'row', alignItems:'center', paddingLeft: 18, paddingVertical: 2 }}>
+                      <Text style={[styles.playerItem, { flex: 1 }]}>
+                        {nombre}{genero === 'Femenino' ? ' ♀' : ''}
+                      </Text>
+                      <TouchableOpacity
+                        style={{ paddingHorizontal: 8 }}
+                        onPress={() => removePlayerFromTeam(t.id, playerId, isGuest)}
+                      >
+                        <Text style={{ color: COLORS.red, fontFamily: FONTS.bodyBold, fontSize: 14 }}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })
             }
           </View>
         ))}
@@ -706,35 +925,38 @@ function GestorTeams({ route }) {
             <Text style={[styles.cardName, { color: COLORS.gold, marginBottom: SPACING.sm }]}>
               ⚠️ Sin equipo ({unassigned.length})
             </Text>
-            {unassigned.map((p) => (
-              <View key={p.user_id}>
-                <View style={{ flexDirection:'row', alignItems:'center', paddingVertical: 4 }}>
-                  <Text style={[styles.cardSub, { flex: 1 }]}>
-                    {p.users?.nombre}{p.users?.genero === 'Femenino' ? ' ♀' : ''}
-                  </Text>
-                  <TouchableOpacity
-                    style={[styles.btnSmall, { backgroundColor: COLORS.green + '40' }]}
-                    onPress={() => setAssignExpanded(assignExpanded === p.user_id ? null : p.user_id)}
-                  >
-                    <Text style={styles.btnSmallText}>{assignExpanded === p.user_id ? '▲' : '+ Equipo'}</Text>
-                  </TouchableOpacity>
-                </View>
-                {assignExpanded === p.user_id && (
-                  <View style={{ flexDirection:'row', flexWrap:'wrap', gap: 6, paddingLeft: 8, paddingBottom: 4 }}>
-                    {teams.map((t) => (
-                      <TouchableOpacity
-                        key={t.id}
-                        style={{ flexDirection:'row', alignItems:'center', gap: 4, backgroundColor: (t.color ?? COLORS.blue) + '30', borderRadius: RADIUS.sm, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: t.color ?? COLORS.navy }}
-                        onPress={() => assignPlayerToTeam(t.id, p.user_id)}
-                      >
-                        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: t.color ?? COLORS.blue }} />
-                        <Text style={{ fontFamily: FONTS.bodyMedium, fontSize: 12, color: COLORS.white }}>{t.nombre}</Text>
-                      </TouchableOpacity>
-                    ))}
+            {unassigned.map((p) => {
+              const pid = p.isGuest ? p.guest_id : p.user_id;
+              return (
+                <View key={pid}>
+                  <View style={{ flexDirection:'row', alignItems:'center', paddingVertical: 4 }}>
+                    <Text style={[styles.cardSub, { flex: 1 }]}>
+                      {p.users?.nombre}{p.isGuest ? ' 👤' : ''}{p.users?.genero === 'Femenino' ? ' ♀' : ''}
+                    </Text>
+                    <TouchableOpacity
+                      style={[styles.btnSmall, { backgroundColor: COLORS.green + '40' }]}
+                      onPress={() => setAssignExpanded(assignExpanded === pid ? null : pid)}
+                    >
+                      <Text style={styles.btnSmallText}>{assignExpanded === pid ? '▲' : '+ Equipo'}</Text>
+                    </TouchableOpacity>
                   </View>
-                )}
-              </View>
-            ))}
+                  {assignExpanded === pid && (
+                    <View style={{ flexDirection:'row', flexWrap:'wrap', gap: 6, paddingLeft: 8, paddingBottom: 4 }}>
+                      {teams.map((t) => (
+                        <TouchableOpacity
+                          key={t.id}
+                          style={{ flexDirection:'row', alignItems:'center', gap: 4, backgroundColor: (t.color ?? COLORS.blue) + '30', borderRadius: RADIUS.sm, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1, borderColor: t.color ?? COLORS.navy }}
+                          onPress={() => assignPlayerToTeam(t.id, pid, p.isGuest)}
+                        >
+                          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: t.color ?? COLORS.blue }} />
+                          <Text style={{ fontFamily: FONTS.bodyMedium, fontSize: 12, color: COLORS.white }}>{t.nombre}</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
           </View>
         )}
       </ScrollView>
@@ -770,7 +992,7 @@ function GestorTeams({ route }) {
 
       {/* Modal editar equipo */}
       <Modal visible={!!editTeamModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={[styles.modalBox, { borderColor: (editTeamForm.color || COLORS.blue) + '80' }]}>
             <Text style={[styles.modalTitle, { color: editTeamForm.color || COLORS.blue, marginBottom: SPACING.sm }]}>✏️ Editar equipo</Text>
             <Text style={styles.modalSub}>Nombre</Text>
@@ -801,7 +1023,56 @@ function GestorTeams({ route }) {
               </TouchableOpacity>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Modal agregar jugador manualmente */}
+      <Modal visible={addPlayerModal} transparent animationType="fade">
+        <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <View style={styles.modalBox}>
+            <Text style={[styles.modalTitle, { marginBottom: SPACING.sm }]}>➕ Agregar jugador</Text>
+            <Text style={styles.modalSub}>Nombre completo</Text>
+            <TextInput
+              style={[styles.input, { marginTop: 4, marginBottom: SPACING.sm }]}
+              value={addPlayerNombre}
+              onChangeText={setAddPlayerNombre}
+              placeholder="Ej: Juan Pérez"
+              placeholderTextColor={COLORS.gray}
+              autoFocus
+              autoCapitalize="words"
+            />
+            <Text style={[styles.modalSub, { marginBottom: 4 }]}>Género</Text>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm, marginBottom: SPACING.md }}>
+              {['Masculino', 'Femenino'].map((g) => (
+                <TouchableOpacity
+                  key={g}
+                  style={[styles.chip, { flex: 1, justifyContent: 'center' }, addPlayerGenero === g && styles.chipActive]}
+                  onPress={() => setAddPlayerGenero(g)}
+                >
+                  <Text style={[styles.chipText, addPlayerGenero === g && { color: COLORS.white }]}>
+                    {g === 'Masculino' ? '♂ Masc.' : '♀ Fem.'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+              <TouchableOpacity
+                style={[styles.btn, { flex: 1, backgroundColor: COLORS.gray }]}
+                onPress={() => { setAddPlayerModal(false); setAddPlayerNombre(''); setAddPlayerGenero(null); }}
+                disabled={addPlayerSaving}
+              >
+                <Text style={styles.btnText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, { flex: 1, backgroundColor: COLORS.green }]}
+                onPress={addManualPlayer}
+                disabled={addPlayerSaving || !addPlayerNombre.trim()}
+              >
+                <Text style={styles.btnText}>{addPlayerSaving ? 'Guardando…' : '✓ Guardar'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -814,8 +1085,8 @@ function GestorMatches({ route }) {
   const [matches, setMatches] = useState([]);
   const [teams,   setTeams]   = useState([]);
 
-  // WC fix M5: guard against undefined eventId
-  useEffect(() => { if (eventId) fetchData(); }, []);
+  // BUG A FIX: useFocusEffect so the list refreshes when navigating back
+  useFocusEffect(useCallback(() => { if (eventId) fetchData(); }, [eventId]));
 
   async function fetchData() {
     try {
@@ -885,6 +1156,19 @@ function GestorMatches({ route }) {
         }),
       ];
 
+    } else if (formato === '2 Vidas') {
+      // Validar 4 o 6 equipos
+      if (![4, 6].includes(teams.length)) {
+        Alert.alert('Modo 2 Vidas', `Necesitas 4 o 6 equipos exactos. Tienes ${teams.length}.`);
+        return;
+      }
+      // Setear vidas iniciales y actuales en cada team
+      const vidasIni = event?.vidas_por_equipo ?? 3;
+      await Promise.all(teams.map((t) =>
+        supabase.from('teams').update({ vidas_iniciales: vidasIni, vidas_actuales: vidasIni }).eq('id', t.id)
+      ));
+      fixtures = generate2VidasFixture(teams);
+
     } else {
       fixtures = generateRoundRobin(teams).map((f) => ({ ...f, fase: 'grupos' }));
     }
@@ -946,23 +1230,38 @@ function GestorMatches({ route }) {
 // ── Resultados ─────────────────────────────────────────────────────────────
 function GestorResults({ route }) {
   const { eventId } = route.params ?? {};
+  const [event,   setEvent]   = useState(null);
   const [matches, setMatches] = useState([]);
+  const [teams,   setTeams]   = useState([]);
   const [scores,  setScores]  = useState({});
-  const [saving,  setSaving]  = useState(null); // matchId being saved — WC M2: previene doble-tap
+  const [saving,  setSaving]  = useState(null);
 
-  useEffect(() => {
-    if (!eventId) return; // WC fix M5
-    supabase.from('matches')
-      .select('*, home:team_home_id(nombre,color), away:team_away_id(nombre,color)')
-      .eq('event_id', eventId)
-      .neq('status', 'finished')
-      .not('team_home_id', 'is', null)
-      .order('jornada')
-      .then(({ data }) => setMatches(data ?? []));
-  }, []);
+  const fetchData = useCallback(() => {
+    if (!eventId) return;
+    Promise.all([
+      supabase.from('events').select('status, formato, vidas_por_equipo').eq('id', eventId).single(),
+      supabase.from('matches')
+        .select('*, home:team_home_id(nombre,color), away:team_away_id(nombre,color)')
+        .eq('event_id', eventId)
+        .not('team_home_id', 'is', null)
+        .order('jornada'),
+      supabase.from('teams')
+        .select('id, nombre, color, vidas_iniciales, vidas_actuales')
+        .eq('event_id', eventId),
+    ]).then(([{ data: ev }, { data: m }, { data: t }]) => {
+      setEvent(ev ?? null);
+      setMatches(m ?? []);
+      setTeams(t ?? []);
+    });
+  }, [eventId]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   async function saveResult(match) {
-    if (saving === match.id) return; // WC fix M2: previene doble-tap
+    if (saving === match.id) return;
+    if (event?.status === 'finished') {
+      Alert.alert('Evento finalizado', 'No se pueden editar resultados de un evento finalizado.'); return;
+    }
     const { home: hG, away: aG } = scores[match.id] ?? {};
     if (hG === undefined || hG === '' || aG === undefined || aG === '') {
       Alert.alert('Error', 'Ingresa los goles de ambos equipos.'); return;
@@ -972,90 +1271,302 @@ function GestorResults({ route }) {
     if (isNaN(homeGoals) || isNaN(awayGoals) || homeGoals < 0 || awayGoals < 0) {
       Alert.alert('Error', 'Ingresa un número válido (0 o más) para el marcador.'); return;
     }
+    // Empate: si formato 2 Vidas o knockout, requerir marcador de penales
+    const phase = match.fase ?? 'grupos';
+    const isKnockout = ['octavos','cuartos','semis','tercer_lugar','final'].includes(phase);
+    const is2Vidas = event?.formato === '2 Vidas';
+    const isTie = homeGoals === awayGoals;
+    const needsPenalties = isTie && (is2Vidas || isKnockout);
+
+    let penH = null, penA = null, fuePenales = false;
+    if (needsPenalties) {
+      const { penHome, penAway } = scores[match.id] ?? {};
+      const ph = parseInt(penHome, 10);
+      const pa = parseInt(penAway, 10);
+      if (isNaN(ph) || isNaN(pa) || ph < 0 || pa < 0) {
+        Alert.alert('Penales requeridos', 'Empate en tiempo regular. Ingresa el marcador de penales.'); return;
+      }
+      if (ph === pa) {
+        Alert.alert('Penales empatados', 'No puede empatar en penales — debe haber un ganador.'); return;
+      }
+      penH = ph; penA = pa; fuePenales = true;
+    }
+
     setSaving(match.id);
     try {
-      const now      = new Date().toISOString();
-      const closesAt = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString();
-      // BUG FIX: add .neq('status','finished') guard so a re-save on an already-finished
-      // match (e.g. app closed mid-save, screen not yet refreshed) does NOT overwrite.
-      const { error, count } = await supabase.from('matches').update({
-        goles_home:    homeGoals,
-        goles_away:    awayGoals,
-        status:        'finished',
-        finished_at:   now,
-        mvp_closes_at: closesAt,
-      }).eq('id', match.id).neq('status', 'finished').select('id', { count: 'exact', head: true });
+      const now = new Date().toISOString();
+      const { error } = await supabase.from('matches').update({
+        goles_home:     homeGoals,
+        goles_away:     awayGoals,
+        goles_pen_home: penH,
+        goles_pen_away: penA,
+        fue_a_penales:  fuePenales,
+        status:         'finished',
+        finished_at:    now,
+      }).eq('id', match.id);
       if (error) { Alert.alert('Error', error.message); return; }
-      if (count === 0) {
-        // 0 rows affected — already finished by another session
-        Alert.alert('Ya registrado', 'Este partido ya fue registrado por otra sesión.');
-        setMatches((prev) => prev.filter((m) => m.id !== match.id));
-        return;
+      const updatedMatch = {
+        ...match, status: 'finished',
+        goles_home: homeGoals, goles_away: awayGoals,
+        goles_pen_home: penH, goles_pen_away: penA, fue_a_penales: fuePenales,
+        team_home_id: match.team_home_id, team_away_id: match.team_away_id,
+      };
+      setMatches((prev) => prev.map((m) => m.id === match.id ? { ...m, ...updatedMatch } : m));
+      setScores((s) => { const n = { ...s }; delete n[match.id]; return n; });
+
+      // Modo 2 Vidas: restar vida al perdedor + auto-crear final si terminó round-robin
+      if (is2Vidas) {
+        const loss = await applyVidaLossFor2Vidas({ supabase, match: updatedMatch });
+        // Refrescar teams para calcular finalistas con vidas actualizadas
+        const { data: freshTeams } = await supabase.from('teams')
+          .select('id, nombre, color, vidas_iniciales, vidas_actuales')
+          .eq('event_id', eventId);
+        const allMatchesUpdated = matches.map((m) => m.id === match.id ? updatedMatch : m);
+        const finalCreated = await ensure2VidasFinalIfReady({
+          supabase, eventId, matches: allMatchesUpdated, teams: freshTeams ?? [],
+        });
+        if (finalCreated?.final) {
+          Alert.alert('🏆 ¡Final generada!', `Los 2 con más vidas se enfrentan: ${finalCreated.finalists[0].nombre} vs ${finalCreated.finalists[1].nombre}`);
+        }
+        fetchData();
       }
-      setMatches((prev) => prev.filter((m) => m.id !== match.id));
-      // Standings se actualizan automáticamente via VIEW en Supabase
-      // Notify all registered players about the result
-      sendPushNotificationsToEventPlayers(
-        eventId,
-        `Resultado registrado`,
-        `${match.home?.nombre} ${homeGoals} - ${awayGoals} ${match.away?.nombre}`
-      );
-      Alert.alert('✓ Guardado', `${match.home?.nombre} ${homeGoals} - ${awayGoals} ${match.away?.nombre}\n\n🏆 Votación MVP abierta por 2 horas.`);
+
+      // Knockout: auto-popular la siguiente fase con los ganadores cuando termine la actual
+      if (isKnockout && phase !== 'final') {
+        const allMatchesUpdated = matches.map((m) => m.id === match.id ? updatedMatch : m);
+        const result = await populateNextKnockoutPhase({
+          supabase, eventId, matches: allMatchesUpdated,
+        });
+        if (result?.ok) {
+          Alert.alert('⚡ Avance automático', `Los ganadores pasaron a ${result.populated.toUpperCase()}.`);
+          fetchData();
+        }
+      }
+
+      const penTxt = fuePenales ? ` (pen ${penH}-${penA})` : '';
+      sendPushNotificationsToEventPlayers(eventId, 'Resultado registrado', `${match.home?.nombre} ${homeGoals} - ${awayGoals} ${match.away?.nombre}${penTxt}`);
+      Alert.alert('✓ Guardado', `${match.home?.nombre} ${homeGoals} - ${awayGoals} ${match.away?.nombre}${penTxt}`);
     } finally {
       setSaving(null);
     }
   }
 
+  const eventLocked  = event?.status === 'finished';
+  const pendingMatches  = matches.filter(m => m.status !== 'finished');
+  const finishedMatches = matches.filter(m => m.status === 'finished');
+
+  // ── Cierre de fase de grupos para formato Torneo ─────────────────────────
+  const [tieModal, setTieModal] = useState(null); // null | { conflicts, standings, avanzan }
+  const [tieOverrides, setTieOverrides] = useState({}); // { grupo: [team_id_avance_1, team_id_avance_2] }
+
+  const isTorneo = event?.formato === 'Torneo';
+  const groupComplete = isTorneo && isGroupStageComplete(matches);
+  const koPopulated = matches.some((m) =>
+    ['octavos','cuartos','semis'].includes(m.fase) && (m.team_home_id || m.team_away_id)
+  );
+  const shouldShowAdvanceButton = isTorneo && groupComplete && !koPopulated && !eventLocked;
+
+  async function handleAdvanceToKnockout() {
+    const standings = computeStandingsFromMatches(matches, teams);
+    // Grupo único: TODOS los equipos avanzan a knockout
+    // Múltiples grupos: top 2 por grupo
+    const numGrupos = parseInt(event?.num_grupos ?? '2', 10) || 2;
+    const teamsPerGroup = teams.length;  // total de equipos
+    const avanzan = numGrupos === 1 ? teamsPerGroup : 2;
+    const conflicts = detectGroupTiesNeedingDecision(standings, avanzan);
+    if (conflicts.length > 0) {
+      // Inicializar overrides con orden actual (DG)
+      const initial = {};
+      const byGroup = standings.reduce((acc, s) => { (acc[s.grupo] ??= []).push(s); return acc; }, {});
+      Object.entries(byGroup).forEach(([g, list]) => {
+        initial[g] = list.slice(0, avanzan).map((s) => s.team_id);
+      });
+      setTieOverrides(initial);
+      setTieModal({ conflicts, standings, avanzan });
+      return;
+    }
+    const qualified = getQualifiedTeams(standings, avanzan);
+    const result = await populateKnockoutFromGroups({ supabase, eventId, qualifiedByGroup: qualified });
+    if (result?.error) { Alert.alert('Error', result.error); return; }
+    Alert.alert('⚡ Avance a knockout', `${result.count} llaves de ${result.phase.toUpperCase()} pobladas con los clasificados.`);
+    fetchData();
+  }
+
+  async function confirmAdvanceWithOverrides() {
+    const standings = tieModal?.standings ?? computeStandingsFromMatches(matches, teams);
+    const avanzan = tieModal?.avanzan ?? 2;
+    const qualified = getQualifiedTeams(standings, avanzan, tieOverrides);
+    const result = await populateKnockoutFromGroups({ supabase, eventId, qualifiedByGroup: qualified });
+    if (result?.error) { Alert.alert('Error', result.error); return; }
+    setTieModal(null);
+    Alert.alert('⚡ Avance confirmado', `${result.count} llaves pobladas.`);
+    fetchData();
+  }
+
   return (
     <SafeAreaView style={styles.safe}>
       <Text style={styles.title}>RESULTADOS</Text>
+      {eventLocked && (
+        <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.gold, textAlign:'center', marginBottom: SPACING.sm }}>
+          🔒 Evento finalizado — resultados bloqueados
+        </Text>
+      )}
+      {shouldShowAdvanceButton && (
+        <TouchableOpacity
+          style={[styles.btn, { backgroundColor: COLORS.gold, marginHorizontal: SPACING.md, marginBottom: SPACING.sm }]}
+          onPress={handleAdvanceToKnockout}
+        >
+          <Text style={[styles.btnText, { color: COLORS.bg }]}>⚡ Avanzar a knockout (cerrar grupos)</Text>
+        </TouchableOpacity>
+      )}
+
+      {event?.formato === '2 Vidas' && teams.length > 0 && (
+        <View style={{ marginHorizontal: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.gold + '40' }}>
+          <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.gold, fontSize: 12, marginBottom: SPACING.sm }}>⚡ VIDAS RESTANTES</Text>
+          {teams.sort((a,b) => (b.vidas_actuales ?? 0) - (a.vidas_actuales ?? 0)).map((t) => (
+            <View key={t.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 4 }}>
+              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: t.color ?? COLORS.gray, marginRight: 8 }} />
+              <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.white, fontSize: 13, flex: 1 }}>{t.nombre}</Text>
+              <Text style={{ fontFamily: FONTS.bodyBold, color: (t.vidas_actuales ?? 0) > 0 ? COLORS.red : COLORS.gray, fontSize: 14 }}>
+                {'❤'.repeat(t.vidas_actuales ?? 0) || '☠ Eliminado'}
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
       <ScrollView contentContainerStyle={styles.list}>
-        {matches.length === 0 && <Text style={styles.empty}>No hay partidos pendientes</Text>}
-        {matches.map((m) => (
+        {matches.length === 0 && <Text style={styles.empty}>Sin partidos. Genera el fixture primero.</Text>}
+        {pendingMatches.map((m) => {
+          const sc = scores[m.id] ?? {};
+          const hG = parseInt(sc.home, 10);
+          const aG = parseInt(sc.away, 10);
+          const tieEntered = !isNaN(hG) && !isNaN(aG) && hG === aG;
+          const phase = m.fase ?? 'grupos';
+          const isKO = ['octavos','cuartos','semis','tercer_lugar','final'].includes(phase);
+          const showPenInputs = tieEntered && (event?.formato === '2 Vidas' || isKO);
+          return (
           <View key={m.id} style={styles.card}>
-            <Text style={styles.cardSub}>Jornada {m.jornada} · {(m.fase ?? 'grupos').toUpperCase()}</Text>
+            <Text style={styles.cardSub}>Jornada {m.jornada} · {phase.toUpperCase()}</Text>
             <View style={styles.resultRow}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                 {m.home?.color && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.home.color, marginRight: 6 }} />}
                 <Text style={[styles.teamName, { flex: 0 }]}>{m.home?.nombre}</Text>
               </View>
-              <TextInput
-                style={styles.scoreInput}
-                keyboardType="number-pad"
-                maxLength={2}
-                placeholder="0"
-                placeholderTextColor={COLORS.gray}
-                value={scores[m.id]?.home ?? ''}
-                onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], home: v } }))}
-              />
+              <TextInput style={styles.scoreInput} keyboardType="number-pad" maxLength={2} placeholder="0" placeholderTextColor={COLORS.gray} value={sc.home ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], home: v } }))} />
               <Text style={styles.vsText}>:</Text>
-              <TextInput
-                style={styles.scoreInput}
-                keyboardType="number-pad"
-                maxLength={2}
-                placeholder="0"
-                placeholderTextColor={COLORS.gray}
-                value={scores[m.id]?.away ?? ''}
-                onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], away: v } }))}
-              />
+              <TextInput style={styles.scoreInput} keyboardType="number-pad" maxLength={2} placeholder="0" placeholderTextColor={COLORS.gray} value={sc.away ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], away: v } }))} />
               <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
                 <Text style={[styles.teamName, { flex: 0, textAlign: 'right' }]}>{m.away?.nombre}</Text>
                 {m.away?.color && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.away.color, marginLeft: 6 }} />}
               </View>
             </View>
-            <TouchableOpacity
-              style={[styles.btn, { backgroundColor: '#2DC65399', marginTop: SPACING.sm, opacity: saving === m.id ? 0.6 : 1 }]}
-              onPress={() => saveResult(m)}
-              disabled={saving === m.id}
-            >
-              {saving === m.id
-                ? <ActivityIndicator color={COLORS.white} size="small" />
-                : <Text style={styles.btnText}>✓ Guardar resultado</Text>
-              }
+            {showPenInputs && (
+              <View style={[styles.resultRow, { marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.navy }]}>
+                <Text style={[styles.cardSub, { flex: 1, color: COLORS.gold }]}>🎯 Penales</Text>
+                <TextInput style={styles.scoreInput} keyboardType="number-pad" maxLength={2} placeholder="0" placeholderTextColor={COLORS.gray} value={sc.penHome ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], penHome: v } }))} />
+                <Text style={styles.vsText}>:</Text>
+                <TextInput style={styles.scoreInput} keyboardType="number-pad" maxLength={2} placeholder="0" placeholderTextColor={COLORS.gray} value={sc.penAway ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], penAway: v } }))} />
+                <Text style={[styles.cardSub, { flex: 1, textAlign: 'right', color: COLORS.gold }]}>muerte súbita</Text>
+              </View>
+            )}
+            <TouchableOpacity style={[styles.btn, { backgroundColor: '#2DC65399', marginTop: SPACING.sm, opacity: saving === m.id ? 0.6 : 1 }]} onPress={() => saveResult(m)} disabled={saving === m.id}>
+              {saving === m.id ? <ActivityIndicator color={COLORS.white} size="small" /> : <Text style={styles.btnText}>✓ Guardar resultado</Text>}
             </TouchableOpacity>
           </View>
-        ))}
+          );
+        })}
+        {finishedMatches.length > 0 && (
+          <>
+            <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.green, marginTop: SPACING.md, marginBottom: 4 }}>REGISTRADOS ({finishedMatches.length})</Text>
+            {finishedMatches.map((m) => (
+              <View key={m.id} style={[styles.card, { borderColor: '#2DC65340' }]}>
+                <Text style={styles.cardSub}>Jornada {m.jornada} · {(m.fase ?? 'grupos').toUpperCase()} ✓</Text>
+                <View style={styles.resultRow}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                    {m.home?.color && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.home.color, marginRight: 6 }} />}
+                    <Text style={[styles.teamName, { flex: 0 }]}>{m.home?.nombre}</Text>
+                  </View>
+                  {eventLocked
+                    ? <Text style={[styles.vsText, { color: COLORS.gold }]}>{m.goles_home} - {m.goles_away}</Text>
+                    : <>
+                        <TextInput style={styles.scoreInput} keyboardType="number-pad" maxLength={2} placeholder={String(m.goles_home ?? 0)} placeholderTextColor={COLORS.gray} value={scores[m.id]?.home ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], home: v } }))} />
+                        <Text style={styles.vsText}>:</Text>
+                        <TextInput style={styles.scoreInput} keyboardType="number-pad" maxLength={2} placeholder={String(m.goles_away ?? 0)} placeholderTextColor={COLORS.gray} value={scores[m.id]?.away ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], away: v } }))} />
+                      </>
+                  }
+                  <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
+                    <Text style={[styles.teamName, { flex: 0, textAlign: 'right' }]}>{m.away?.nombre}</Text>
+                    {m.away?.color && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.away.color, marginLeft: 6 }} />}
+                  </View>
+                </View>
+                {!eventLocked && (
+                  <TouchableOpacity style={[styles.btn, { backgroundColor: COLORS.blue + '99', marginTop: SPACING.sm, opacity: saving === m.id ? 0.6 : 1 }]} onPress={() => saveResult(m)} disabled={saving === m.id}>
+                    {saving === m.id ? <ActivityIndicator color={COLORS.white} size="small" /> : <Text style={styles.btnText}>✏️ Editar resultado</Text>}
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+          </>
+        )}
+        <View style={{ height: SPACING.xxl }} />
       </ScrollView>
+
+      {/* Modal de override para empates ambiguos */}
+      <Modal visible={!!tieModal} transparent animationType="slide" onRequestClose={() => setTieModal(null)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', padding: SPACING.md }}>
+          <View style={{ backgroundColor: COLORS.card, borderRadius: RADIUS.lg, padding: SPACING.md, maxHeight: '85%' }}>
+            <ScrollView>
+              <Text style={{ fontFamily: FONTS.heading, fontSize: 20, color: COLORS.gold, marginBottom: SPACING.sm }}>EMPATE EN GRUPOS</Text>
+              <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2, marginBottom: SPACING.md }}>
+                Hay equipos con mismos puntos, diferencia de goles y goles a favor. Elegí manualmente el orden de avance.
+              </Text>
+              {tieModal?.conflicts.map(({ grupo, tied }) => (
+                <View key={grupo} style={{ marginBottom: SPACING.md }}>
+                  <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.white, marginBottom: 4 }}>Grupo {grupo}</Text>
+                  {(tieModal?.standings ?? []).filter((s) => s.grupo === grupo).map((s, idx) => {
+                    const order = (tieOverrides[grupo] ?? []).indexOf(s.team_id);
+                    const isAdvance = order !== -1;
+                    return (
+                      <TouchableOpacity
+                        key={s.team_id}
+                        style={{ flexDirection: 'row', alignItems: 'center', padding: SPACING.sm, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: isAdvance ? COLORS.gold : COLORS.navy, marginBottom: 4, backgroundColor: isAdvance ? COLORS.gold + '20' : 'transparent' }}
+                        onPress={() => {
+                          // Toggle: si está, quitarlo; sino agregarlo si hay espacio
+                          const cur = tieOverrides[grupo] ?? [];
+                          let next;
+                          if (cur.includes(s.team_id)) {
+                            next = cur.filter((id) => id !== s.team_id);
+                          } else if (cur.length < (tieModal?.avanzan ?? 2)) {
+                            next = [...cur, s.team_id];
+                          } else {
+                            next = [...cur.slice(1), s.team_id];  // FIFO
+                          }
+                          setTieOverrides({ ...tieOverrides, [grupo]: next });
+                        }}
+                      >
+                        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: s.color ?? COLORS.gray, marginRight: 8 }} />
+                        <Text style={{ flex: 1, fontFamily: FONTS.bodyMedium, color: COLORS.white }}>{s.equipo}</Text>
+                        <Text style={{ fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2 }}>
+                          {s.pts}pts · DG {s.dg > 0 ? '+' : ''}{s.dg} · GF {s.gf}
+                        </Text>
+                        {isAdvance && <Text style={{ marginLeft: 8, color: COLORS.gold, fontFamily: FONTS.bodyBold }}>{order + 1}º</Text>}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              ))}
+              <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.md }}>
+                <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: COLORS.navy }]} onPress={() => setTieModal(null)}>
+                  <Text style={styles.btnText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: COLORS.gold }]} onPress={confirmAdvanceWithOverrides}>
+                  <Text style={[styles.btnText, { color: COLORS.bg }]}>Confirmar avance</Text>
+                </TouchableOpacity>
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1063,24 +1574,33 @@ function GestorResults({ route }) {
 // ── MVP ────────────────────────────────────────────────────────────────────
 function GestorMvp({ route }) {
   const { eventId } = route.params ?? {};
-  const [event,          setEvent]          = useState(null);
-  const [players,        setPlayers]        = useState([]);
-  const [mvpResult,      setMvpResult]      = useState(null);
+  const [event,            setEvent]            = useState(null);
+  // BUG B FIX: unified candidate list (registered users + guests)
+  const [candidates,       setCandidates]       = useState([]);
+  // keep original registered players list for vote-lookup
+  const [regPlayers,       setRegPlayers]       = useState([]);
+  const [mvpResult,        setMvpResult]        = useState(null);
   const [mvpVotesByPlayer, setMvpVotesByPlayer] = useState({});
-  const [mvpTotalVotes,  setMvpTotalVotes]  = useState(0);
-  const [loading,        setLoading]        = useState(true);
+  const [mvpTotalVotes,    setMvpTotalVotes]    = useState(0);
+  const [loading,          setLoading]          = useState(true);
+  // BUG B FIX: state for manually selected MVP candidate and local guest MVP nombre
+  const [selectedMvp,      setSelectedMvp]      = useState(null);
+  const [localMvpNombre,   setLocalMvpNombre]   = useState(null);
 
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 
-  useEffect(() => { if (eventId) fetchData(); else setLoading(false); }, []);
+  // BUG E FIX: useFocusEffect so data refreshes when navigating back to this screen
+  useFocusEffect(useCallback(() => { if (eventId) fetchData(); else setLoading(false); }, [eventId]));
 
   async function fetchData() {
     if (mountedRef.current) setLoading(true);
     try {
-      const [{ data: ev }, { data: regs }, { data: evMvpResult }, { data: evVotes }] = await Promise.all([
+      // BUG B FIX: load both event_registrations and event_guests as candidates
+      const [{ data: ev }, { data: regs }, { data: gs }, { data: evMvpResult }, { data: evVotes }] = await Promise.all([
         supabase.from('events').select('*').eq('id', eventId).single(),
         supabase.from('event_registrations').select('user_id, users(nombre, foto_url)').eq('event_id', eventId).eq('status', 'confirmed'),
+        supabase.from('event_guests').select('id, nombre, genero, status, invited_by').eq('event_id', eventId).in('status', ['confirmed', 'pending_payment']),
         supabase.from('mvp_results').select('*, users(nombre, foto_url)').eq('event_id', eventId).maybeSingle(),
         supabase.from('mvp_votes').select('voted_for_id').eq('event_id', eventId),
       ]);
@@ -1091,11 +1611,34 @@ function GestorMvp({ route }) {
         return acc;
       }, {});
 
+      // BUG B FIX: build unified candidate list (same pattern as GestorTeams)
+      const regCandidates = (regs ?? []).map(r => ({
+        key:      `user:${r.user_id}`,
+        user_id:  r.user_id,
+        guest_id: null,
+        nombre:   r.users?.nombre ?? '?',
+        foto_url: r.users?.foto_url ?? null,
+        isGuest:  false,
+      }));
+      const activeGuests = filterActiveEventGuests(gs ?? [], regs ?? []);
+      const guestCandidates = activeGuests.map(g => ({
+        key:      `guest:${g.id}`,
+        user_id:  null,
+        guest_id: g.id,
+        nombre:   g.nombre + ' 👤',
+        foto_url: null,
+        isGuest:  true,
+      }));
+      const allCandidates = [...regCandidates, ...guestCandidates];
+
       setEvent(ev);
-      setPlayers(regs ?? []);
+      setCandidates(allCandidates);
+      setRegPlayers(regs ?? []);
       setMvpResult(evMvpResult ?? null);
       setMvpVotesByPlayer(byPlayer);
       setMvpTotalVotes((evVotes ?? []).length);
+      // Reset selection on refresh
+      setSelectedMvp(null);
     } catch (e) {
       console.warn('GestorMvp fetchData error:', e.message);
     } finally {
@@ -1149,9 +1692,53 @@ function GestorMvp({ route }) {
       console.warn('credit_wallet error:', e.message);
     }
 
-    const winner = players.find((p) => p.user_id === winnerId);
+    const winner = regPlayers.find((p) => p.user_id === winnerId);
     Alert.alert('🏆 MVP Definido', `${winner?.users?.nombre ?? 'Jugador'} con ${winnerVotes} voto(s). +$1 acreditado.`);
     fetchData();
+  }
+
+  // BUG B FIX: declareMvp — handles both registered users and guests
+  async function declareMvp(candidate) {
+    if (!candidate) return;
+
+    if (candidate.isGuest) {
+      // Guest MVP: mvp_results.user_id is NOT NULL so we can't insert there.
+      // Save locally and show confirmation — no DB persist for guests.
+      const nombreLimpio = candidate.nombre.replace(' 👤', '');
+      setLocalMvpNombre(nombreLimpio);
+      setSelectedMvp(null);
+      Alert.alert('🏆 MVP Declarado', `${nombreLimpio} es el MVP del evento.`);
+    } else {
+      // Registered user MVP: insert into mvp_results as usual
+      const { error } = await supabase.from('mvp_results').insert({
+        event_id:      eventId,
+        user_id:       candidate.user_id,
+        votos_totales: mvpVotesByPlayer[candidate.user_id] ?? 0,
+        premio_wallet: 1.00,
+        premio_pagado: true,
+      });
+      if (error?.code === '23505') {
+        Alert.alert('Ya declarado', 'El MVP ya fue registrado.');
+      } else if (error) {
+        Alert.alert('Error', error.message);
+      } else {
+        // Acreditar $1 al wallet del MVP. Antes el Alert decía "+$1 acreditado"
+        // pero nunca se llamaba a credit_wallet — el premio quedaba en cero.
+        const { error: cwErr } = await supabase.rpc('credit_wallet', {
+          p_user_id:     candidate.user_id,
+          p_monto:       1.00,
+          p_tipo:        'mvp_premio',
+          p_descripcion: `Premio MVP — ${event?.nombre ?? 'Evento'}`,
+        });
+        if (cwErr) {
+          console.warn('[declareMvp] credit_wallet error:', cwErr.message);
+          Alert.alert('🏆 MVP Declarado', `${candidate.nombre} es el MVP. (Premio pendiente de acreditar — contacta al admin.)`);
+        } else {
+          Alert.alert('🏆 MVP Declarado', `${candidate.nombre} es el MVP. +$1 acreditado.`);
+        }
+      }
+      fetchData();
+    }
   }
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
@@ -1163,6 +1750,10 @@ function GestorMvp({ route }) {
     ? Math.max(0, Math.ceil((closesAt - new Date()) / 60000))
     : 0;
 
+  // Determine if MVP has already been declared (DB result or local guest result)
+  const mvpDeclared = !!mvpResult || !!localMvpNombre;
+  const mvpNombre   = mvpResult?.users?.nombre ?? localMvpNombre ?? null;
+
   return (
     <SafeAreaView style={styles.safe}>
       <Text style={styles.title}>MVP DEL EVENTO</Text>
@@ -1170,10 +1761,15 @@ function GestorMvp({ route }) {
         <View style={styles.card}>
           <Text style={[styles.cardName, { marginBottom: SPACING.sm }]}>🏆 Jugador más valioso</Text>
 
-          {mvpResult ? (
+          {mvpDeclared ? (
             <View style={{ backgroundColor: COLORS.gold + '20', borderRadius: RADIUS.sm, padding: SPACING.md }}>
-              <Text style={[styles.cardName, { color: COLORS.gold }]}>🥇 {mvpResult.users?.nombre}</Text>
-              <Text style={styles.cardSub}>{mvpResult.votos_totales} votos · +${mvpResult.premio_wallet} acreditado</Text>
+              <Text style={[styles.cardName, { color: COLORS.gold }]}>🥇 {mvpNombre}</Text>
+              {mvpResult && (
+                <Text style={styles.cardSub}>{mvpResult.votos_totales} votos · +${mvpResult.premio_wallet} acreditado</Text>
+              )}
+              {localMvpNombre && !mvpResult && (
+                <Text style={styles.cardSub}>Declarado manualmente por el gestor</Text>
+              )}
             </View>
           ) : votingOpen ? (
             <>
@@ -1188,7 +1784,7 @@ function GestorMvp({ route }) {
                 .sort((a, b) => b[1] - a[1])
                 .slice(0, 5)
                 .map(([uid, cnt]) => {
-                  const p = players.find(pl => pl.user_id === uid);
+                  const p = regPlayers.find(pl => pl.user_id === uid);
                   return (
                     <View key={uid} style={{ flexDirection:'row', justifyContent:'space-between', paddingVertical: 2 }}>
                       <Text style={styles.cardSub}>{p?.users?.nombre ?? 'Jugador'}</Text>
@@ -1207,7 +1803,7 @@ function GestorMvp({ route }) {
           ) : (
             <>
               <Text style={styles.cardSub}>
-                {players.length} jugador(es) inscrito(s) son candidatos.
+                {candidates.length} candidato(s) ({candidates.filter(c => !c.isGuest).length} inscritos + {candidates.filter(c => c.isGuest).length} invitados).
               </Text>
               <TouchableOpacity
                 style={[styles.btn, { backgroundColor: COLORS.blue, marginTop: SPACING.sm,
@@ -1225,6 +1821,49 @@ function GestorMvp({ route }) {
             </>
           )}
         </View>
+
+        {/* BUG B FIX: Manual MVP declaration — gestor selects from full candidate list */}
+        {!mvpDeclared && (
+          <View style={styles.card}>
+            <Text style={[styles.cardName, { marginBottom: SPACING.sm }]}>🎯 Declarar MVP manualmente</Text>
+            <Text style={styles.cardSub}>Toca un candidato para seleccionarlo, luego pulsa el botón.</Text>
+            {candidates.map((c) => (
+              <TouchableOpacity
+                key={c.key}
+                style={{
+                  flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: SPACING.sm,
+                  borderRadius: RADIUS.sm, marginTop: 4,
+                  backgroundColor: selectedMvp?.key === c.key ? COLORS.gold + '30' : COLORS.navy,
+                  borderWidth: 1,
+                  borderColor: selectedMvp?.key === c.key ? COLORS.gold : COLORS.navy,
+                }}
+                onPress={() => setSelectedMvp(selectedMvp?.key === c.key ? null : c)}
+              >
+                <Text style={{ fontSize: 16, marginRight: 8 }}>{c.isGuest ? '👤' : '⚽'}</Text>
+                <Text style={[styles.cardSub, { flex: 1, color: selectedMvp?.key === c.key ? COLORS.gold : COLORS.gray2 }]}>
+                  {c.nombre}
+                  {!c.isGuest && mvpVotesByPlayer[c.user_id] ? ` · ${mvpVotesByPlayer[c.user_id]} voto(s)` : ''}
+                </Text>
+                {selectedMvp?.key === c.key && (
+                  <Text style={{ color: COLORS.gold, fontSize: 18 }}>★</Text>
+                )}
+              </TouchableOpacity>
+            ))}
+            {selectedMvp && (
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: COLORS.gold + 'CC', marginTop: SPACING.md }]}
+                onPress={() => declareMvp(selectedMvp)}
+              >
+                <Text style={styles.btnText}>🏆 Declarar MVP: {selectedMvp.nombre}</Text>
+              </TouchableOpacity>
+            )}
+            {candidates.length === 0 && (
+              <Text style={[styles.cardSub, { fontStyle: 'italic', textAlign: 'center', marginTop: SPACING.sm }]}>
+                Sin candidatos — agrega jugadores o invitados primero.
+              </Text>
+            )}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -1256,7 +1895,7 @@ function GestorConfig({ route, navigation }) {
       const { error } = await supabase.from('events').update({ status: 'finished', event_finished_at: finishedAt }).eq('id', eventId);
       if (error) { Alert.alert('Error', error.message); return; }
       setEvent((e) => ({ ...e, status: 'finished', event_finished_at: finishedAt }));
-      await supabase.from('news').insert({ titulo: newsTitle, contenido: newsBody, tipo: 'resultados' }).catch(() => {});
+      try { await supabase.from('news').insert({ titulo: newsTitle, contenido: newsBody, tipo: 'resultados' }); } catch {}
       sendLocalNotification(newsTitle, newsBody);
       sendPushNotificationsToEventPlayers(eventId, newsTitle, newsBody);
       Alert.alert('Evento finalizado', 'Se publicó una noticia automáticamente.');
@@ -1284,7 +1923,7 @@ function GestorConfig({ route, navigation }) {
   async function cancelEventWithRefunds() {
     Alert.alert(
       'Cancelar evento',
-      `¿Cancelar "${event.nombre}"?\n\nTodos los jugadores con inscripción confirmada recibirán un reembolso automático a su wallet. Esta acción NO se puede deshacer.`,
+      `¿Cancelar "${event.nombre}"?\n\nTodos los jugadores con inscripción confirmada recibirán un reembolso automático a sus créditos. Esta acción NO se puede deshacer.`,
       [
         { text: 'No cancelar', style: 'cancel' },
         { text: 'Cancelar evento', style: 'destructive', onPress: async () => {
@@ -1379,6 +2018,13 @@ function GestorConfig({ route, navigation }) {
           {event.jugadores_por_equipo && (
             <Text style={styles.cardSub}>Jugadores por equipo: {event.jugadores_por_equipo}v{event.jugadores_por_equipo}</Text>
           )}
+
+          <TouchableOpacity
+            style={[styles.btn, { backgroundColor: COLORS.blue, marginTop: SPACING.md }]}
+            onPress={() => navigation.navigate('EditEvent', { eventId })}
+          >
+            <Text style={styles.btnText}>✏️ Editar información del evento</Text>
+          </TouchableOpacity>
 
           <View style={[styles.btnRow, { marginTop: SPACING.sm }]}>
             {(statusActions[event.status] ?? []).map((a) => (
@@ -1559,6 +2205,7 @@ function GestorCashApprovals({ route, navigation }) {
   const eventId  = route?.params?.eventId;
 
   const [requests,  setRequests]  = useState([]);
+  const [guestReqs, setGuestReqs] = useState([]);
   const [loading,   setLoading]   = useState(true);
   const [processing,setProcessing]= useState(null);
 
@@ -1570,27 +2217,55 @@ function GestorCashApprovals({ route, navigation }) {
 
   async function fetchRequests() {
     setLoading(true);
-    const query = supabase
+    // PERMISOS: el gestor SOLO debe ver requests de SUS eventos. Antes la
+    // query traía todas las pendientes de la plataforma (bug de permisos).
+    // Sacamos los event_ids del gestor primero y luego filtramos por esos.
+    const { data: myEvents } = await supabase
+      .from('events').select('id').eq('created_by', user.id);
+    const myEventIds = (myEvents ?? []).map((e) => e.id);
+    // Si el gestor no tiene eventos, no hay solicitudes que mostrar.
+    if (myEventIds.length === 0) {
+      setRequests([]); setGuestReqs([]); setLoading(false); return;
+    }
+    // Si vienen filtrados por eventId del prop, intersectamos.
+    const targetIds = eventId ? [eventId].filter((id) => myEventIds.includes(id)) : myEventIds;
+    if (targetIds.length === 0) {
+      setRequests([]); setGuestReqs([]); setLoading(false); return;
+    }
+
+    // 1. Solicitudes de usuarios registrados (cash_payment_requests)
+    const q1 = supabase
       .from('cash_payment_requests')
       .select('*, user:users!user_id(nombre, correo), event:events!event_id(nombre, precio)')
       .eq('status', 'pending')
+      .in('event_id', targetIds)
       .order('created_at', { ascending: true });
-    if (eventId) query.eq('event_id', eventId);
-    const { data } = await query;
-    setRequests(data ?? []);
+
+    // 2. Invitados pendientes de pago en efectivo (event_guests con status='pending_payment')
+    const q2 = supabase
+      .from('event_guests')
+      .select('id, event_id, nombre, telefono, monto_pagado, invited_by, created_at, event:events!event_id(nombre, precio), inviter:users!invited_by(nombre, correo)')
+      .eq('status', 'pending_payment')
+      .eq('metodo_pago', 'efectivo')
+      .in('event_id', targetIds)
+      .order('created_at', { ascending: true });
+
+    const [{ data: regs }, { data: gs }] = await Promise.all([q1, q2]);
+    setRequests(regs ?? []);
+    setGuestReqs(gs ?? []);
     setLoading(false);
   }
 
   async function approve(r) {
     setProcessing(r.id);
     try {
-      const { error } = await supabase.from('event_registrations').insert({
+      const { error } = await supabase.from('event_registrations').upsert({
         event_id:     r.event_id,
         user_id:      r.user_id,
         metodo_pago:  'efectivo',
         monto_pagado: r.amount,
         status:       'confirmed',
-      });
+      }, { onConflict: 'event_id,user_id' });
       if (error) throw error;
 
       await supabase
@@ -1617,12 +2292,55 @@ function GestorCashApprovals({ route, navigation }) {
     setProcessing(null);
   }
 
+  async function approveGuest(g) {
+    setProcessing(`g:${g.id}`);
+    try {
+      const { error } = await supabase
+        .from('event_guests')
+        .update({ status: 'confirmed' })
+        .eq('id', g.id);
+      if (error) throw error;
+      fetchRequests();
+      Alert.alert('✅ Invitado confirmado', `${g.nombre} ha sido aceptado.`);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setProcessing(null);
+    }
+  }
+
+  async function rejectGuest(g) {
+    Alert.alert(
+      'Rechazar invitado',
+      `¿Rechazar a "${g.nombre}"? El cupo se libera.`,
+      [
+        { text: 'No', style: 'cancel' },
+        { text: 'Sí, rechazar', style: 'destructive', onPress: async () => {
+          setProcessing(`g:${g.id}`);
+          await supabase
+            .from('event_guests')
+            .update({ status: 'cancelled' })
+            .eq('id', g.id);
+          fetchRequests();
+          setProcessing(null);
+        }},
+      ],
+    );
+  }
+
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
+  const totalPending = requests.length + guestReqs.length;
   return (
     <SafeAreaView style={styles.safe}>
       <Text style={styles.title}>PAGOS EFECTIVO</Text>
       <ScrollView contentContainerStyle={styles.list}>
-        {requests.length === 0 && <Text style={styles.empty}>Sin solicitudes de efectivo pendientes</Text>}
+        {totalPending === 0 && <Text style={styles.empty}>Sin solicitudes de efectivo pendientes</Text>}
+
+        {requests.length > 0 && (
+          <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gold, letterSpacing: 1, marginTop: SPACING.sm }}>
+            JUGADORES REGISTRADOS ({requests.length})
+          </Text>
+        )}
         {requests.map((r) => {
           const expired   = new Date(r.expires_at) < new Date();
           const hoursLeft = Math.max(0, Math.ceil((new Date(r.expires_at) - new Date()) / 3600000));
@@ -1665,6 +2383,48 @@ function GestorCashApprovals({ route, navigation }) {
             </View>
           );
         })}
+
+        {guestReqs.length > 0 && (
+          <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gold, letterSpacing: 1, marginTop: SPACING.lg }}>
+            👥 INVITADOS PENDIENTES ({guestReqs.length})
+          </Text>
+        )}
+        {guestReqs.map((g) => (
+          <View key={`g:${g.id}`} style={[styles.card, { borderColor: COLORS.purple + '80' }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.cardName}>{g.nombre}</Text>
+                <Text style={styles.cardSub}>{g.event?.nombre}</Text>
+                <Text style={styles.cardSub}>Invitado por: {g.inviter?.nombre ?? '?'}</Text>
+                {!!g.telefono && <Text style={styles.cardSub}>📱 {g.telefono}</Text>}
+              </View>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={styles.walletBalance}>${Number(g.monto_pagado ?? 0).toFixed(2)}</Text>
+                <Text style={[styles.cardSub, { color: COLORS.purple }]}>⏳ Esperando</Text>
+              </View>
+            </View>
+            <View style={styles.btnRow}>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: COLORS.green + 'CC', opacity: processing === `g:${g.id}` ? 0.5 : 1 }]}
+                onPress={() => approveGuest(g)}
+                disabled={!!processing}
+              >
+                {processing === `g:${g.id}`
+                  ? <ActivityIndicator color={COLORS.white} size="small" />
+                  : <Text style={styles.btnText}>✓ Confirmar invitado</Text>
+                }
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.btn, { backgroundColor: COLORS.red + 'CC', opacity: processing === `g:${g.id}` ? 0.5 : 1 }]}
+                onPress={() => rejectGuest(g)}
+                disabled={!!processing}
+              >
+                <Text style={styles.btnText}>✗ Rechazar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+
         <View style={{ height: 40 }} />
       </ScrollView>
     </SafeAreaView>

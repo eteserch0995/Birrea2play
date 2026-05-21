@@ -38,15 +38,15 @@ export default function PlanesModal({ visible, onClose, onPlanActivado }) {
   async function comprarPlan(plan) {
     if (walletBalance < plan.precio_mensual) {
       Alert.alert(
-        'Saldo insuficiente',
-        `Necesitas $${plan.precio_mensual.toFixed(2)} en tu wallet.\nSaldo actual: $${walletBalance.toFixed(2)}\n\nRecarga tu wallet primero.`
+        'Créditos insuficientes',
+        `Necesitas $${plan.precio_mensual.toFixed(2)} en créditos internos.\nCréditos actuales: $${walletBalance.toFixed(2)}\n\nCompra créditos primero.`
       );
       return;
     }
 
     Alert.alert(
       `Activar ${plan.nombre}`,
-      `Se descontarán $${plan.precio_mensual.toFixed(2)} de tu wallet por 30 días.${plan.bonus_wallet > 0 ? `\n\n¡Recibirás $${plan.bonus_wallet.toFixed(2)} de bonus inmediato!` : ''}`,
+      `Se descontarán $${plan.precio_mensual.toFixed(2)} de tus créditos internos por 30 días.${plan.bonus_wallet > 0 ? `\n\n¡Recibirás $${plan.bonus_wallet.toFixed(2)} de bonus inmediato!` : ''}`,
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -126,7 +126,7 @@ export default function PlanesModal({ visible, onClose, onPlanActivado }) {
                       <View style={styles.planPerks}>
                         <Text style={styles.perk}>🎯 {plan.descuento_pct}% descuento en inscripciones</Text>
                         {plan.bonus_wallet > 0 && (
-                          <Text style={styles.perk}>💰 +${plan.bonus_wallet.toFixed(2)} bonus en wallet</Text>
+                          <Text style={styles.perk}>💰 +${plan.bonus_wallet.toFixed(2)} bonus en créditos</Text>
                         )}
                         <Text style={styles.perk}>📅 30 días de vigencia</Text>
                       </View>
