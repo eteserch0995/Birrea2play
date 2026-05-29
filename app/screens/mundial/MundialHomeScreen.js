@@ -102,6 +102,28 @@ export default function MundialHomeScreen({ navigation }) {
         )}
 
         <View style={styles.header}>
+          <View style={styles.brandMosaic}>
+            {[
+              COLORS.neon,
+              COLORS.blue2,
+              COLORS.red,
+              COLORS.white,
+              COLORS.bg,
+              COLORS.magenta,
+              COLORS.gold,
+              COLORS.orange,
+              COLORS.green,
+            ].map((color, index) => (
+              <View key={`${color}-${index}`} style={[styles.mosaicTile, { backgroundColor: color }]}>
+                <Text style={[
+                  styles.mosaicText,
+                  [COLORS.neon, COLORS.white, COLORS.gold].includes(color) && styles.mosaicTextDark,
+                ]}>
+                  26
+                </Text>
+              </View>
+            ))}
+          </View>
           <Text style={styles.kicker}>FIFA WORLD CUP</Text>
           <Text style={styles.title}>MUNDIAL 2026</Text>
           <Text style={styles.subtitle}>USA · México · Canadá · 48 equipos</Text>
@@ -248,6 +270,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: SPACING.lg,
   },
+  brandMosaic: {
+    width: '100%',
+    maxWidth: 360,
+    aspectRatio: 3,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    borderWidth: 4,
+    borderColor: COLORS.bg,
+    marginBottom: SPACING.md,
+    backgroundColor: COLORS.bg,
+  },
+  mosaicTile: {
+    width: '33.333%',
+    height: '33.333%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: COLORS.bg,
+  },
+  mosaicText: {
+    fontFamily: FONTS.heading,
+    fontSize: 22,
+    color: COLORS.white,
+    letterSpacing: 1,
+  },
+  mosaicTextDark: {
+    color: COLORS.bg,
+  },
   kicker: {
     fontFamily: FONTS.bodyBold,
     fontSize: 11,
@@ -269,9 +321,9 @@ const styles = StyleSheet.create({
   },
 
   countdownCard: {
-    backgroundColor: COLORS.card,
-    borderColor: COLORS.line,
-    borderWidth: 1,
+    backgroundColor: COLORS.gold,
+    borderColor: COLORS.white,
+    borderWidth: 2,
     borderRadius: RADIUS.lg,
     padding: SPACING.lg,
     alignItems: 'center',
@@ -281,14 +333,14 @@ const styles = StyleSheet.create({
   countdownLabel: {
     fontFamily: FONTS.bodyBold,
     fontSize: 11,
-    color: COLORS.gray,
+    color: COLORS.bg,
     letterSpacing: 2,
     textTransform: 'uppercase',
   },
   countdownValue: {
     fontFamily: FONTS.heading,
     fontSize: 38,
-    color: COLORS.neon,
+    color: COLORS.bg,
     letterSpacing: 1,
     marginTop: 8,
   },
@@ -296,7 +348,7 @@ const styles = StyleSheet.create({
   countdownDate: {
     fontFamily: FONTS.body,
     fontSize: 12,
-    color: COLORS.gray2,
+    color: COLORS.bg,
     marginTop: 6,
   },
 

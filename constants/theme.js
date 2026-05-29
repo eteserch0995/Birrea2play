@@ -1,4 +1,12 @@
-export const COLORS = {
+const MUNDIAL_THEME_START_MS = Date.UTC(2026, 4, 29, 5, 0, 0); // 2026-05-29 00:00 PA
+const MUNDIAL_THEME_END_MS = Date.UTC(2026, 6, 20, 5, 0, 0); // 2026-07-20 00:00 PA
+
+function isMundialThemeWindow() {
+  const now = Date.now();
+  return now >= MUNDIAL_THEME_START_MS && now < MUNDIAL_THEME_END_MS;
+}
+
+const BASE_COLORS = {
   bg: '#07080B',
   bg2: '#101318',
   navy: '#1B2230',
@@ -23,6 +31,33 @@ export const COLORS = {
   orange: '#FF7A18',
 };
 
+const MUNDIAL_COLORS = {
+  bg: '#0A0E14',
+  bg2: '#111827',
+  navy: '#0033CC',
+  blue: '#2457FF',
+  blue2: '#72A7FF',
+  red: '#E1062C',
+  red2: '#FF3B1F',
+  magenta: '#FF1A6B',
+  purple: '#6E22FF',
+  purple2: '#9B6DFF',
+  gold: '#FFD700',
+  gold2: '#FFE766',
+  white: '#FFFFFF',
+  gray: '#8C96A8',
+  gray2: '#D7DCE6',
+  card: '#141821',
+  card2: '#1C2230',
+  green: '#23D18B',
+  asphalt: '#05070B',
+  line: '#2F384A',
+  neon: '#B8FF00',
+  orange: '#FF7A18',
+};
+
+export const COLORS = isMundialThemeWindow() ? MUNDIAL_COLORS : BASE_COLORS;
+
 export const FONTS = {
   heading: 'BebasNeue_400Regular',
   body: 'Barlow_400Regular',
@@ -40,7 +75,13 @@ export const SPACING = {
   xxl: 48,
 };
 
-export const RADIUS = {
+export const RADIUS = isMundialThemeWindow() ? {
+  sm: 6,
+  md: 12,
+  lg: 18,
+  xl: 24,
+  full: 9999,
+} : {
   sm: 8,
   md: 10,
   lg: 14,
@@ -52,15 +93,15 @@ export const SHADOWS = {
   card: {
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.38,
-    shadowRadius: 16,
-    elevation: 10,
+    shadowOpacity: isMundialThemeWindow() ? 0.45 : 0.38,
+    shadowRadius: isMundialThemeWindow() ? 18 : 16,
+    elevation: isMundialThemeWindow() ? 12 : 10,
   },
   glow: {
-    shadowColor: '#E1062C',
+    shadowColor: isMundialThemeWindow() ? '#FF1A6B' : '#E1062C',
     shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.28,
-    shadowRadius: 18,
-    elevation: 12,
+    shadowOpacity: isMundialThemeWindow() ? 0.36 : 0.28,
+    shadowRadius: isMundialThemeWindow() ? 22 : 18,
+    elevation: isMundialThemeWindow() ? 14 : 12,
   },
 };

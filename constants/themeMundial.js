@@ -1,6 +1,6 @@
 // ============================================================
 // Tema visual Mundial 2026 — paleta basada en branding FIFA WC 2026.
-// Activo cuando useWCTheme() === true (admin siempre, resto desde 1-jun).
+// Activo cuando useWCTheme() === true (admin siempre, resto desde 29-may).
 //
 // Reglas de contraste obligatorias (WCAG AA mínimo):
 // - Texto CLARO (white, white90) → SOLO sobre fondos OSCUROS (bg, bgDeep, primaryDark).
