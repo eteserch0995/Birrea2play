@@ -8,7 +8,7 @@ export default function MundialScreenFrame({ children, style }) {
     <View style={[styles.root, style]}>
       <ImageBackground
         source={mundialBg}
-        resizeMode="cover"
+        resizeMode="contain"
         style={StyleSheet.absoluteFill}
         imageStyle={styles.image}
       >
@@ -23,7 +23,7 @@ export default function MundialScreenFrame({ children, style }) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: '#07110B',
+    backgroundColor: '#ECFFB9',
   },
   image: {
     opacity: 0.96,
