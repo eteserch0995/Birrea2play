@@ -24,7 +24,7 @@ import OrderConfirmationScreen from '../screens/store/OrderConfirmationScreen';
 import PlayerProfileScreen     from '../screens/player/PlayerProfileScreen';
 import PrivacyPolicyScreen     from '../screens/legal/PrivacyPolicyScreen';
 import TermsScreen             from '../screens/legal/TermsScreen';
-import AssistantScreen         from '../screens/assistant/AssistantScreen';
+// import AssistantScreen      from '../screens/assistant/AssistantScreen'; // deshabilitado 2026-05-29
 import EditEventScreen         from '../screens/event/EditEventScreen';
 import SlotsDisponiblesScreen  from '../screens/gestor/SlotsDisponiblesScreen';
 import MundialNavigator        from './MundialNavigator';
@@ -37,7 +37,6 @@ const TAB_ICONS = {
   Eventos:   '📅',
   Wallet:    '💳',
   Tienda:    '🛍',
-  Asistente: 'IA',
   Noticias:  '📰',
   Mundial:   '🏆',
   Panel:     '⚙',
@@ -50,7 +49,6 @@ const TAB_LABELS = {
   Eventos:   'Eventos',
   Wallet:    'Créditos',
   Tienda:    'Tienda',
-  Asistente: 'IA',
   Noticias:  'Noticias',
   Mundial:   'Mundial',
   Slots:     'Slots',
@@ -149,7 +147,6 @@ function MainTabs() {
       />
       <Tab.Screen name="Wallet" component={WalletScreen} />
       <Tab.Screen name="Tienda"    component={StoreScreen} />
-      <Tab.Screen name="Asistente" component={AssistantScreen} />
       {showMundial ? (
         <Tab.Screen name="Mundial" component={MundialNavigator} />
       ) : (
