@@ -10,6 +10,43 @@ import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 
 const TABS = ['Grupos', 'Bracket', 'Ranking', 'Bonus'];
+
+/**
+ * Para un partido KO, devuelve los grupos cuyo team puede llegar a jugarlo.
+ * - "1° Grupo X" o "2° Grupo X" → grupo X
+ * - "3° A/B/C/D/F" → esos grupos
+ * - "Ganador Mxxx" / "Perdedor Mxxx" → grupos de los placeholders del match referenciado (recursivo)
+ */
+function parseGroupsFromPlaceholder(placeholder, koMatches) {
+  if (!placeholder) return new Set();
+  let m = placeholder.match(/^[12]°\s*Grupo\s*([A-L])$/i);
+  if (m) return new Set([m[1].toUpperCase()]);
+  m = placeholder.match(/^3°\s+(.+)$/i);
+  if (m) return new Set(m[1].split('/').map(s => s.trim().toUpperCase()).filter(Boolean));
+  m = placeholder.match(/^(?:Ganador|Perdedor)\s+M(\d+)$/i);
+  if (m) {
+    const prevMatchNum = parseInt(m[1], 10);
+    const prev = koMatches.find(km => km.match_number === prevMatchNum);
+    if (!prev) return new Set();
+    const homeGroups = parseGroupsFromPlaceholder(prev.home_placeholder, koMatches);
+    const awayGroups = parseGroupsFromPlaceholder(prev.away_placeholder, koMatches);
+    return new Set([...homeGroups, ...awayGroups]);
+  }
+  return new Set();
+}
+
+function getEligibleTeamsForMatch(match, koMatches, allTeams) {
+  // Si ambos teams ya están resueltos en BD, solo esos 2 son válidos
+  if (match.team_home_id && match.team_away_id) {
+    return allTeams.filter(t => t.id === match.team_home_id || t.id === match.team_away_id);
+  }
+  const groups = new Set([
+    ...parseGroupsFromPlaceholder(match.home_placeholder, koMatches),
+    ...parseGroupsFromPlaceholder(match.away_placeholder, koMatches),
+  ]);
+  if (groups.size === 0) return allTeams; // fallback defensivo
+  return allTeams.filter(t => groups.has(t.group_letter));
+}
 const PHASE_LABEL = {
   group: 'Grupos', round_32: '16avos', round_16: 'Octavos',
   quarter: 'Cuartos', semi: 'Semis', third_place: '3°', final: 'Final',
@@ -290,7 +327,10 @@ export default function MundialPollaScreen({ navigation }) {
                       match={m}
                       prediction={predictions[m.id]}
                       teamsById={teamsById}
-                      onPickTeam={() => setKoTeamPicker({ matchId: m.id })}
+                      onPickTeam={() => {
+                        const eligible = getEligibleTeamsForMatch(m, koMatches, allTeams);
+                        setKoTeamPicker({ matchId: m.id, eligibleTeams: eligible });
+                      }}
                     />
                   ))}
                 </View>
@@ -351,7 +391,7 @@ export default function MundialPollaScreen({ navigation }) {
 
       {koTeamPicker && (
         <KoTeamPickerModal
-          allTeams={allTeams}
+          allTeams={koTeamPicker.eligibleTeams ?? allTeams}
           onCancel={() => setKoTeamPicker(null)}
           onPick={async (teamId) => {
             try {
