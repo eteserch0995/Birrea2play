@@ -13,40 +13,66 @@ import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 const TABS = ['Grupos', 'Bracket', 'Ranking', 'Bonus'];
 
 /**
- * Para un partido KO, devuelve los grupos cuyo team puede llegar a jugarlo.
- * - "1° Grupo X" o "2° Grupo X" → grupo X
- * - "3° A/B/C/D/F" → esos grupos
- * - "Ganador Mxxx" / "Perdedor Mxxx" → grupos de los placeholders del match referenciado (recursivo)
+ * Resuelve un placeholder a teams elegibles, considerando los picks previos del user.
+ * - "1° Grupo X" / "2° Grupo X" → todos los teams del grupo X
+ * - "3° A/B/C/D/F" → todos los teams de esos grupos
+ * - "Ganador Mxxx" → el team que el user pickeó en Mxxx (1 team). Si no pickeo → blocked.
+ * - "Perdedor Mxxx" → los teams candidatos del Mxxx menos el winner pickeado.
+ * Devuelve { teams: [], blocked: 'mensaje' | null }.
  */
-function parseGroupsFromPlaceholder(placeholder, koMatches) {
-  if (!placeholder) return new Set();
+function getTeamsForPlaceholder(placeholder, koMatches, allTeams, predictions, teamsById) {
+  if (!placeholder) return { teams: [], blocked: null };
+
   let m = placeholder.match(/^[12]°\s*Grupo\s*([A-L])$/i);
-  if (m) return new Set([m[1].toUpperCase()]);
+  if (m) {
+    const grp = m[1].toUpperCase();
+    return { teams: allTeams.filter(t => t.group_letter === grp), blocked: null };
+  }
   m = placeholder.match(/^3°\s+(.+)$/i);
-  if (m) return new Set(m[1].split('/').map(s => s.trim().toUpperCase()).filter(Boolean));
-  m = placeholder.match(/^(?:Ganador|Perdedor)\s+M(\d+)$/i);
+  if (m) {
+    const groups = new Set(m[1].split('/').map(s => s.trim().toUpperCase()).filter(Boolean));
+    return { teams: allTeams.filter(t => groups.has(t.group_letter)), blocked: null };
+  }
+  m = placeholder.match(/^Ganador\s+M(\d+)$/i);
   if (m) {
     const prevMatchNum = parseInt(m[1], 10);
     const prev = koMatches.find(km => km.match_number === prevMatchNum);
-    if (!prev) return new Set();
-    const homeGroups = parseGroupsFromPlaceholder(prev.home_placeholder, koMatches);
-    const awayGroups = parseGroupsFromPlaceholder(prev.away_placeholder, koMatches);
-    return new Set([...homeGroups, ...awayGroups]);
+    if (!prev) return { teams: [], blocked: `Falta datos del M${prevMatchNum}` };
+    const pickId = predictions[prev.id]?.pred_winner_team_id;
+    if (!pickId) return { teams: [], blocked: `Pickeá primero M${prevMatchNum}` };
+    const t = teamsById[pickId];
+    return { teams: t ? [t] : [], blocked: null };
   }
-  return new Set();
+  m = placeholder.match(/^Perdedor\s+M(\d+)$/i);
+  if (m) {
+    const prevMatchNum = parseInt(m[1], 10);
+    const prev = koMatches.find(km => km.match_number === prevMatchNum);
+    if (!prev) return { teams: [], blocked: `Falta datos del M${prevMatchNum}` };
+    const winnerId = predictions[prev.id]?.pred_winner_team_id;
+    if (!winnerId) return { teams: [], blocked: `Pickeá primero M${prevMatchNum}` };
+    const prevElig = getEligibleTeamsForMatch(prev, koMatches, allTeams, predictions, teamsById);
+    if (prevElig.blocked) return { teams: [], blocked: prevElig.blocked };
+    return { teams: prevElig.teams.filter(t => t.id !== winnerId), blocked: null };
+  }
+  return { teams: [], blocked: null };
 }
 
-function getEligibleTeamsForMatch(match, koMatches, allTeams) {
-  // Si ambos teams ya están resueltos en BD, solo esos 2 son válidos
+function getEligibleTeamsForMatch(match, koMatches, allTeams, predictions, teamsById) {
+  // Si los teams están resueltos en BD (post fase grupos real), solo esos 2
   if (match.team_home_id && match.team_away_id) {
-    return allTeams.filter(t => t.id === match.team_home_id || t.id === match.team_away_id);
+    return {
+      teams: allTeams.filter(t => t.id === match.team_home_id || t.id === match.team_away_id),
+      blocked: null,
+    };
   }
-  const groups = new Set([
-    ...parseGroupsFromPlaceholder(match.home_placeholder, koMatches),
-    ...parseGroupsFromPlaceholder(match.away_placeholder, koMatches),
-  ]);
-  if (groups.size === 0) return allTeams; // fallback defensivo
-  return allTeams.filter(t => groups.has(t.group_letter));
+  const home = getTeamsForPlaceholder(match.home_placeholder, koMatches, allTeams, predictions, teamsById);
+  const away = getTeamsForPlaceholder(match.away_placeholder, koMatches, allTeams, predictions, teamsById);
+  if (home.blocked || away.blocked) {
+    return { teams: [], blocked: home.blocked || away.blocked };
+  }
+  const map = new Map();
+  [...home.teams, ...away.teams].forEach(t => map.set(t.id, t));
+  return { teams: Array.from(map.values()), blocked: null };
 }
 const PHASE_LABEL = {
   group: 'Grupos', round_32: '16avos', round_16: 'Octavos',
@@ -327,18 +353,27 @@ export default function MundialPollaScreen({ navigation }) {
                       {filled}/{phaseMatches.length} · x{mult} · {isOpen ? '▲' : '▼'}
                     </Text>
                   </TouchableOpacity>
-                  {isOpen && phaseMatches.map((m) => (
-                    <BracketRow
-                      key={m.id}
-                      match={m}
-                      prediction={predictions[m.id]}
-                      teamsById={teamsById}
-                      onPickTeam={() => {
-                        const eligible = getEligibleTeamsForMatch(m, koMatches, allTeams);
-                        setKoTeamPicker({ matchId: m.id, eligibleTeams: eligible });
-                      }}
-                    />
-                  ))}
+                  {isOpen && phaseMatches.map((m) => {
+                    const elig = getEligibleTeamsForMatch(m, koMatches, allTeams, predictions, teamsById);
+                    return (
+                      <BracketRow
+                        key={m.id}
+                        match={m}
+                        prediction={predictions[m.id]}
+                        teamsById={teamsById}
+                        blockedReason={elig.blocked}
+                        userId={user.id}
+                        onSaved={load}
+                        onPickTeam={() => {
+                          if (elig.blocked) {
+                            Alert.alert('Pick bloqueado', elig.blocked);
+                            return;
+                          }
+                          setKoTeamPicker({ matchId: m.id, eligibleTeams: elig.teams });
+                        }}
+                      />
+                    );
+                  })}
                 </View>
               );
             })}
@@ -556,17 +591,59 @@ function PredictionRow({ match, prediction, userId, onSaved }) {
   );
 }
 
-function BracketRow({ match, prediction, teamsById, onPickTeam }) {
+function BracketRow({ match, prediction, teamsById, blockedReason, userId, onSaved, onPickTeam }) {
   const picked = prediction?.pred_winner_team_id ? teamsById[prediction.pred_winner_team_id] : null;
   const finished = match.status === 'finished';
   const homeName = match.team_home?.name_es || match.home_placeholder || '—';
   const awayName = match.team_away?.name_es || match.away_placeholder || '—';
 
+  const [scoreHome, setScoreHome] = useState(prediction?.pred_score_home != null ? String(prediction.pred_score_home) : '');
+  const [scoreAway, setScoreAway] = useState(prediction?.pred_score_away != null ? String(prediction.pred_score_away) : '');
+  const [savingScore, setSavingScore] = useState(false);
+
+  const ENROLLMENT_DEADLINE_MS = Date.UTC(2026, 5, 11, 16, 0, 0);
+  const closed = Date.now() >= ENROLLMENT_DEADLINE_MS;
+
+  const saveScore = async () => {
+    if (!picked) {
+      Alert.alert('Falta pick', 'Primero elegí el equipo ganador.');
+      return;
+    }
+    const h = scoreHome === '' ? null : parseInt(scoreHome, 10);
+    const a = scoreAway === '' ? null : parseInt(scoreAway, 10);
+    if ((h !== null && Number.isNaN(h)) || (a !== null && Number.isNaN(a))) {
+      Alert.alert('Marcador inválido', 'Números enteros 0..20.');
+      return;
+    }
+    if ((h === null) !== (a === null)) {
+      Alert.alert('Marcador incompleto', 'Llená home y away, o dejá ambos vacíos.');
+      return;
+    }
+    setSavingScore(true);
+    try {
+      const { error } = await supabase.rpc('wc_submit_polla_prediction', {
+        p_user_id: userId,
+        p_match_id: match.id,
+        p_pred_score_home: h,
+        p_pred_score_away: a,
+        p_pred_winner_team_id: prediction.pred_winner_team_id,
+      });
+      if (error) throw error;
+      await onSaved();
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setSavingScore(false);
+    }
+  };
+
   return (
     <View style={[
       styles.bracketRow,
       finished && styles.bracketRowFinished,
-      prediction?.hit_level === 'winner' && { borderColor: COLORS.green },
+      prediction?.hit_level === 'winner' && { borderColor: COLORS.gold },
+      prediction?.hit_level === 'winner_diff' && { borderColor: COLORS.neon },
+      prediction?.hit_level === 'exact' && { borderColor: COLORS.green },
     ]}>
       <View style={styles.bracketHead}>
         <Text style={styles.predNum}>M{match.match_number}</Text>
@@ -575,16 +652,60 @@ function BracketRow({ match, prediction, teamsById, onPickTeam }) {
         </Text>
       </View>
       <Text style={styles.bracketCruceLabel}>{homeName}  vs  {awayName}</Text>
-      <TouchableOpacity style={styles.bracketPickBtn} onPress={onPickTeam}>
-        <Text style={styles.bracketPickLabel}>MI PICK</Text>
-        <Text style={styles.bracketPickValue}>
-          {picked ? `${picked.code} · ${picked.name_es}` : 'Tocá para elegir →'}
-        </Text>
-      </TouchableOpacity>
+
+      {blockedReason ? (
+        <View style={styles.bracketBlocked}>
+          <Text style={styles.bracketBlockedText}>🔒 {blockedReason}</Text>
+        </View>
+      ) : (
+        <>
+          <TouchableOpacity style={styles.bracketPickBtn} onPress={onPickTeam} disabled={closed}>
+            <Text style={styles.bracketPickLabel}>MI PICK · GANADOR</Text>
+            <Text style={styles.bracketPickValue}>
+              {picked ? `${picked.code} · ${picked.name_es}` : 'Tocá para elegir →'}
+            </Text>
+          </TouchableOpacity>
+
+          {picked && !closed && (
+            <View style={styles.bracketScoreRow}>
+              <Text style={styles.bracketScoreLabel}>Marcador exacto (opcional · bonus)</Text>
+              <View style={styles.bracketScoreInputs}>
+                <TextInput
+                  style={styles.predInput}
+                  value={scoreHome}
+                  onChangeText={setScoreHome}
+                  keyboardType="number-pad"
+                  placeholder="–"
+                  placeholderTextColor={COLORS.gray}
+                  maxLength={2}
+                />
+                <Text style={styles.predDash}>–</Text>
+                <TextInput
+                  style={styles.predInput}
+                  value={scoreAway}
+                  onChangeText={setScoreAway}
+                  keyboardType="number-pad"
+                  placeholder="–"
+                  placeholderTextColor={COLORS.gray}
+                  maxLength={2}
+                />
+                <TouchableOpacity
+                  style={[styles.predSaveBtn, savingScore && { opacity: 0.5 }]}
+                  onPress={saveScore}
+                  disabled={savingScore}
+                >
+                  <Text style={styles.predSaveBtnText}>{savingScore ? '…' : 'Guardar'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </>
+      )}
+
       {finished && (
         <Text style={styles.actualScore}>
           Real: {match.score_home}–{match.score_away}
-          {prediction?.hit_level === 'winner' ? ` · +${prediction.points_earned} pts ✓` : prediction ? ' · 0 pts ✗' : ''}
+          {prediction?.points_earned > 0 ? ` · +${prediction.points_earned} pts ${prediction.hit_level === 'exact' ? '🎯' : prediction.hit_level === 'winner_diff' ? '✨' : '✓'}` : prediction ? ' · 0 pts ✗' : ''}
         </Text>
       )}
     </View>
@@ -723,6 +844,27 @@ const styles = StyleSheet.create({
   },
   bracketPickValue: {
     fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white, marginTop: 4,
+  },
+  bracketBlocked: {
+    backgroundColor: COLORS.gold + '14', borderColor: COLORS.gold + '66',
+    borderWidth: 1, borderRadius: RADIUS.sm, padding: SPACING.sm,
+    alignItems: 'center', marginTop: 4,
+  },
+  bracketBlockedText: {
+    fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.gold,
+    textAlign: 'center',
+  },
+  bracketScoreRow: {
+    marginTop: SPACING.sm,
+    paddingTop: SPACING.sm,
+    borderTopWidth: 1, borderTopColor: COLORS.line,
+  },
+  bracketScoreLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gray2,
+    letterSpacing: 1, textTransform: 'uppercase', marginBottom: 6,
+  },
+  bracketScoreInputs: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
   },
 
   modalBackdrop: {
