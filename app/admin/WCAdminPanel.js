@@ -66,7 +66,7 @@ export default function WCAdminPanel({ navigation }) {
           team_away:team_away_id ( code, name_es )
         `)
         .order('scheduled_at', { ascending: true })
-        .limit(40),
+        .limit(110),
     ]);
 
     setStats({
