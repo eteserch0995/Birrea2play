@@ -9,6 +9,7 @@ import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
+import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 
 export default function MundialEnrollScreen({ route, navigation }) {
   const mode = route?.params?.mode ?? 'survivor';
@@ -183,35 +184,40 @@ export default function MundialEnrollScreen({ route, navigation }) {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <ActivityIndicator size="large" color={COLORS.neon} style={{ marginTop: 80 }} />
-      </SafeAreaView>
+      <MundialScreenFrame>
+        <SafeAreaView style={styles.safe}>
+          <ActivityIndicator size="large" color={COLORS.neon} style={{ marginTop: 80 }} />
+        </SafeAreaView>
+      </MundialScreenFrame>
     );
   }
 
   if (enrolled) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.alreadyWrap}>
-          <Text style={styles.alreadyTitle}>Ya estás inscrito</Text>
-          <Text style={styles.alreadyText}>
-            Inscripción confirmada para {isPolla ? 'Polla Ganadora' : 'Survivor 3 Vidas'}.
-          </Text>
-          <TouchableOpacity
-            style={styles.payBtn}
-            onPress={() => navigation.replace(isPolla ? 'MundialPolla' : 'MundialSurvivor')}
-          >
-            <Text style={styles.payBtnText}>IR AL JUEGO</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => navigation.goBack()}>
-            <Text style={styles.backLink}>← Volver</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <MundialScreenFrame>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.alreadyWrap}>
+            <Text style={styles.alreadyTitle}>Ya estás inscrito</Text>
+            <Text style={styles.alreadyText}>
+              Inscripción confirmada para {isPolla ? 'Polla Ganadora' : 'Survivor 3 Vidas'}.
+            </Text>
+            <TouchableOpacity
+              style={styles.payBtn}
+              onPress={() => navigation.replace(isPolla ? 'MundialPolla' : 'MundialSurvivor')}
+            >
+              <Text style={styles.payBtnText}>IR AL JUEGO</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => navigation.goBack()}>
+              <Text style={styles.backLink}>Volver</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </MundialScreenFrame>
     );
   }
 
   return (
+    <MundialScreenFrame>
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.back}>
@@ -436,6 +442,7 @@ export default function MundialEnrollScreen({ route, navigation }) {
         </View>
       </Modal>
     </SafeAreaView>
+    </MundialScreenFrame>
   );
 }
 
@@ -459,7 +466,7 @@ function BonusTeamRow({ label, teamId, teamsById, onPress }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
   back: { paddingVertical: 4, marginBottom: SPACING.sm },
   backLink: { color: COLORS.gray2, fontFamily: FONTS.body, fontSize: 14 },
@@ -503,7 +510,7 @@ const styles = StyleSheet.create({
   payMethodRow: { flexDirection: 'row', gap: SPACING.sm },
   payMethodBtn: {
     flex: 1, paddingVertical: SPACING.md, alignItems: 'center',
-    backgroundColor: COLORS.card2, borderColor: COLORS.line,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.line,
     borderWidth: 1, borderRadius: RADIUS.md,
   },
   payMethodBtnActive: {
@@ -524,7 +531,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4,
   },
   yappyInput: {
-    backgroundColor: COLORS.bg, borderColor: COLORS.line, borderWidth: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)', borderColor: COLORS.line, borderWidth: 1,
     borderRadius: RADIUS.sm, paddingHorizontal: SPACING.sm, paddingVertical: 12,
     color: COLORS.white, fontFamily: FONTS.heading, fontSize: 22,
     letterSpacing: 2, textAlign: 'center',
@@ -541,7 +548,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', padding: SPACING.lg,
   },
   waitingCard: {
-    backgroundColor: COLORS.card, borderColor: COLORS.neon + '66', borderWidth: 1,
+    backgroundColor: 'rgba(10, 14, 20, 0.96)', borderColor: COLORS.neon + '66', borderWidth: 1,
     borderRadius: RADIUS.lg, padding: SPACING.lg, alignItems: 'center',
     maxWidth: 380,
   },
@@ -561,7 +568,7 @@ const styles = StyleSheet.create({
   waitingCancelText: { color: COLORS.gray2, fontFamily: FONTS.bodyBold, fontSize: 14 },
 
   bonusBlock: {
-    backgroundColor: COLORS.card, borderColor: COLORS.magenta + '44',
+    backgroundColor: 'rgba(10, 14, 20, 0.93)', borderColor: COLORS.magenta + '66',
     borderWidth: 1, borderRadius: RADIUS.lg, padding: SPACING.md,
     marginBottom: SPACING.lg,
   },
@@ -592,7 +599,7 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4,
   },
   bonusInput: {
-    backgroundColor: COLORS.bg, borderColor: COLORS.line, borderWidth: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)', borderColor: COLORS.line, borderWidth: 1,
     borderRadius: RADIUS.sm, paddingHorizontal: SPACING.sm, paddingVertical: 10,
     color: COLORS.white, fontFamily: FONTS.body, fontSize: 14,
   },
@@ -602,7 +609,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.line, borderWidth: 1,
     textAlign: 'center', color: COLORS.white,
     fontFamily: FONTS.heading, fontSize: 28,
-    backgroundColor: COLORS.bg,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
   },
   vs: { color: COLORS.gray, fontFamily: FONTS.heading, fontSize: 22 },
 
@@ -635,7 +642,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: COLORS.card,
+    backgroundColor: 'rgba(10, 14, 20, 0.97)',
     borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
     padding: SPACING.md,
     maxHeight: '85%',

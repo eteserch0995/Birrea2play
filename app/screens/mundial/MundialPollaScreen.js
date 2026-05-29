@@ -8,6 +8,7 @@ import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/them
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
+import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 
 const TABS = ['Grupos', 'Bracket', 'Ranking', 'Bonus'];
 
@@ -180,32 +181,37 @@ export default function MundialPollaScreen({ navigation }) {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <ActivityIndicator size="large" color={COLORS.neon} style={{ marginTop: 80 }} />
-      </SafeAreaView>
+      <MundialScreenFrame>
+        <SafeAreaView style={styles.safe}>
+          <ActivityIndicator size="large" color={COLORS.neon} style={{ marginTop: 80 }} />
+        </SafeAreaView>
+      </MundialScreenFrame>
     );
   }
 
   if (!enrollment || enrollment.payment_status !== 'paid') {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.notEnrolled}>
-          <Text style={styles.notEnrolledTitle}>No estás inscrito a la Polla</Text>
-          <Text style={styles.notEnrolledText}>
-            Inscribite y predice los 104 partidos del Mundial.
-          </Text>
-          <TouchableOpacity
-            style={styles.enrollBtn}
-            onPress={() => navigation.navigate('MundialEnroll', { mode: 'polla' })}
-          >
-            <Text style={styles.enrollBtnText}>INSCRIBIRME · $15</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <MundialScreenFrame>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.notEnrolled}>
+            <Text style={styles.notEnrolledTitle}>No estás inscrito a la Polla</Text>
+            <Text style={styles.notEnrolledText}>
+              Inscribite y predice los 104 partidos del Mundial.
+            </Text>
+            <TouchableOpacity
+              style={styles.enrollBtn}
+              onPress={() => navigation.navigate('MundialEnroll', { mode: 'polla' })}
+            >
+              <Text style={styles.enrollBtnText}>INSCRIBIRME · $15</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </MundialScreenFrame>
     );
   }
 
   return (
+    <MundialScreenFrame>
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -412,6 +418,7 @@ export default function MundialPollaScreen({ navigation }) {
         />
       )}
     </SafeAreaView>
+    </MundialScreenFrame>
   );
 }
 
@@ -605,7 +612,7 @@ function BonusViewRow({ label, value, correct }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
   back: { paddingVertical: 4, marginBottom: SPACING.sm },
   backLink: { color: COLORS.gray2, fontFamily: FONTS.body, fontSize: 14 },
@@ -628,7 +635,7 @@ const styles = StyleSheet.create({
   },
 
   pozoCard: {
-    flexDirection: 'row', backgroundColor: COLORS.card,
+    flexDirection: 'row', backgroundColor: 'rgba(10, 14, 20, 0.93)',
     borderColor: COLORS.neon + '66', borderWidth: 1,
     borderRadius: RADIUS.lg, padding: SPACING.md,
     marginBottom: SPACING.sm, ...SHADOWS.card,
@@ -654,7 +661,7 @@ const styles = StyleSheet.create({
   pozoMeta: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 4 },
 
   pointsCard: {
-    backgroundColor: COLORS.card, borderColor: COLORS.magenta + '88',
+    backgroundColor: 'rgba(10, 14, 20, 0.93)', borderColor: COLORS.magenta + '88',
     borderWidth: 1, borderRadius: RADIUS.lg,
     padding: SPACING.lg, alignItems: 'center',
     marginBottom: SPACING.lg, ...SHADOWS.card,
@@ -673,7 +680,7 @@ const styles = StyleSheet.create({
   tabRow: { flexDirection: 'row', marginBottom: SPACING.md, gap: 8 },
   tabBtn: {
     flex: 1, paddingVertical: 10, alignItems: 'center',
-    borderRadius: RADIUS.sm, backgroundColor: COLORS.card2,
+    borderRadius: RADIUS.sm, backgroundColor: 'rgba(10, 14, 20, 0.90)',
     borderColor: COLORS.line, borderWidth: 1,
   },
   tabBtnActive: { backgroundColor: COLORS.magenta, borderColor: COLORS.magenta },
@@ -687,7 +694,7 @@ const styles = StyleSheet.create({
   groupBlock: { marginBottom: SPACING.sm },
   groupHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    backgroundColor: COLORS.card2, borderColor: COLORS.line, borderWidth: 1,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.line, borderWidth: 1,
     borderRadius: RADIUS.md, padding: SPACING.md,
   },
   groupHeaderOpen: { borderColor: COLORS.magenta },
@@ -697,7 +704,7 @@ const styles = StyleSheet.create({
   groupHeaderMeta: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2 },
 
   bracketRow: {
-    backgroundColor: COLORS.card, borderColor: COLORS.line, borderWidth: 1,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.line, borderWidth: 1,
     borderRadius: RADIUS.md, padding: SPACING.sm, marginTop: 6,
   },
   bracketRowFinished: { opacity: 0.85 },
@@ -707,7 +714,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   bracketPickBtn: {
-    backgroundColor: COLORS.bg, borderColor: COLORS.magenta + '88', borderWidth: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.70)', borderColor: COLORS.magenta + '88', borderWidth: 1,
     borderRadius: RADIUS.sm, padding: SPACING.sm,
   },
   bracketPickLabel: {
@@ -724,7 +731,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   modalContent: {
-    backgroundColor: COLORS.card,
+    backgroundColor: 'rgba(10, 14, 20, 0.97)',
     borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
     padding: SPACING.md, maxHeight: '85%',
   },
@@ -743,7 +750,7 @@ const styles = StyleSheet.create({
   modalCancelText: { color: COLORS.gray2, fontFamily: FONTS.bodyBold, fontSize: 14 },
 
   predCard: {
-    backgroundColor: COLORS.card, borderColor: COLORS.line, borderWidth: 1,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.line, borderWidth: 1,
     borderRadius: RADIUS.md, padding: SPACING.sm, marginBottom: SPACING.sm,
   },
   predCardFinished: { opacity: 0.85 },
@@ -759,9 +766,9 @@ const styles = StyleSheet.create({
     borderColor: COLORS.line, borderWidth: 1,
     textAlign: 'center', color: COLORS.white,
     fontFamily: FONTS.heading, fontSize: 18,
-    backgroundColor: COLORS.bg,
+    backgroundColor: 'rgba(0, 0, 0, 0.70)',
   },
-  predInputClosed: { backgroundColor: COLORS.card2, color: COLORS.gray },
+  predInputClosed: { backgroundColor: 'rgba(10, 14, 20, 0.92)', color: COLORS.gray },
   predDash: { color: COLORS.gray, fontFamily: FONTS.heading, fontSize: 18 },
   predSaveBtn: {
     marginTop: 8, backgroundColor: COLORS.magenta,
@@ -785,7 +792,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
     borderBottomWidth: 1, borderBottomColor: COLORS.line,
   },
-  rankRowMe: { backgroundColor: COLORS.magenta + '12' },
+  rankRowMe: { backgroundColor: 'rgba(255, 26, 107, 0.18)' },
   rankPos:  { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.gray2, width: 40 },
   rankName: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white },
   rankSubtext: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 },
@@ -794,7 +801,7 @@ const styles = StyleSheet.create({
   emptyText: { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray, textAlign: 'center', marginTop: SPACING.lg },
 
   bonusViewCard: {
-    backgroundColor: COLORS.card, borderColor: COLORS.magenta + '44',
+    backgroundColor: 'rgba(10, 14, 20, 0.93)', borderColor: COLORS.magenta + '66',
     borderWidth: 1, borderRadius: RADIUS.md, padding: SPACING.md,
   },
   bonusViewRow: {

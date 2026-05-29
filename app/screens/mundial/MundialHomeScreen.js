@@ -7,12 +7,16 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
+import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
+
+const mundialLogo = require('../../../assets/mundial/mundial-logo.jpg');
 
 function formatCountdown(targetIso) {
   if (!targetIso) return null;
@@ -69,28 +73,31 @@ export default function MundialHomeScreen({ navigation }) {
 
   if (loading && !pool) {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={COLORS.neon} />
-          <Text style={styles.loadingText}>Cargando Mundial 2026…</Text>
-        </View>
-      </SafeAreaView>
+      <MundialScreenFrame>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator size="large" color={COLORS.neon} />
+            <Text style={styles.loadingText}>Cargando Mundial 2026...</Text>
+          </View>
+        </SafeAreaView>
+      </MundialScreenFrame>
     );
   }
 
   return (
-    <SafeAreaView style={styles.safe} edges={['top']}>
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor={COLORS.neon}
-            colors={[COLORS.neon]}
-          />
-        }
-      >
+    <MundialScreenFrame>
+      <SafeAreaView style={styles.safe} edges={['top']}>
+        <ScrollView
+          contentContainerStyle={styles.scroll}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={COLORS.neon}
+              colors={[COLORS.neon]}
+            />
+          }
+        >
         {isAdmin && pool && !pool.is_visible && (
           <View style={styles.adminBanner}>
             <Text style={styles.adminBannerLabel}>MODO ADMIN</Text>
@@ -102,28 +109,7 @@ export default function MundialHomeScreen({ navigation }) {
         )}
 
         <View style={styles.header}>
-          <View style={styles.brandMosaic}>
-            {[
-              COLORS.neon,
-              COLORS.blue2,
-              COLORS.red,
-              COLORS.white,
-              COLORS.bg,
-              COLORS.magenta,
-              COLORS.gold,
-              COLORS.orange,
-              COLORS.green,
-            ].map((color, index) => (
-              <View key={`${color}-${index}`} style={[styles.mosaicTile, { backgroundColor: color }]}>
-                <Text style={[
-                  styles.mosaicText,
-                  [COLORS.neon, COLORS.white, COLORS.gold].includes(color) && styles.mosaicTextDark,
-                ]}>
-                  26
-                </Text>
-              </View>
-            ))}
-          </View>
+          <Image source={mundialLogo} style={styles.logo} resizeMode="contain" />
           <Text style={styles.kicker}>FIFA WORLD CUP</Text>
           <Text style={styles.title}>MUNDIAL 2026</Text>
           <Text style={styles.subtitle}>USA · México · Canadá · 48 equipos</Text>
@@ -227,13 +213,14 @@ export default function MundialHomeScreen({ navigation }) {
             3° (20), goleador (25), MVP (15).
           </Text>
         </View>
-      </ScrollView>
-    </SafeAreaView>
+        </ScrollView>
+      </SafeAreaView>
+    </MundialScreenFrame>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
 
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -270,35 +257,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: SPACING.lg,
   },
-  brandMosaic: {
-    width: '100%',
-    maxWidth: 360,
-    aspectRatio: 3,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  logo: {
+    width: 132,
+    height: 132,
     borderRadius: RADIUS.lg,
-    overflow: 'hidden',
-    borderWidth: 4,
-    borderColor: COLORS.bg,
     marginBottom: SPACING.md,
-    backgroundColor: COLORS.bg,
-  },
-  mosaicTile: {
-    width: '33.333%',
-    height: '33.333%',
-    alignItems: 'center',
-    justifyContent: 'center',
     borderWidth: 2,
-    borderColor: COLORS.bg,
-  },
-  mosaicText: {
-    fontFamily: FONTS.heading,
-    fontSize: 22,
-    color: COLORS.white,
-    letterSpacing: 1,
-  },
-  mosaicTextDark: {
-    color: COLORS.bg,
+    borderColor: COLORS.white,
+    backgroundColor: COLORS.white,
   },
   kicker: {
     fontFamily: FONTS.bodyBold,
@@ -321,8 +287,8 @@ const styles = StyleSheet.create({
   },
 
   countdownCard: {
-    backgroundColor: COLORS.gold,
-    borderColor: COLORS.white,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    borderColor: COLORS.neon,
     borderWidth: 2,
     borderRadius: RADIUS.lg,
     padding: SPACING.lg,
@@ -357,7 +323,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.lg,
   },
   modeCard: {
-    backgroundColor: COLORS.card,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)',
     borderRadius: RADIUS.lg,
     padding: SPACING.lg,
     borderWidth: 1,
@@ -412,7 +378,7 @@ const styles = StyleSheet.create({
   },
 
   rulesCard: {
-    backgroundColor: COLORS.card2,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)',
     borderColor: COLORS.line,
     borderWidth: 1,
     borderRadius: RADIUS.md,
@@ -420,7 +386,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
   },
   scoringCard: {
-    backgroundColor: COLORS.card2,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)',
     borderColor: COLORS.line,
     borderWidth: 1,
     borderRadius: RADIUS.md,

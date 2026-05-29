@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
-import { Text, Platform, View, StyleSheet } from 'react-native';
+import { Text, Platform, View, StyleSheet, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, FONTS } from '../../constants/theme';
 import useAuthStore from '../../store/authStore';
@@ -31,6 +31,7 @@ import MundialNavigator        from './MundialNavigator';
 
 const Tab   = createBottomTabNavigator();
 const Stack = createStackNavigator();
+const mundialLogo = require('../../assets/mundial/mundial-logo.jpg');
 
 const TAB_ICONS = {
   Inicio:    '🏠',
@@ -119,14 +120,18 @@ function MainTabs() {
         tabBarIcon: ({ color, focused }) => (
           <View style={tabStyles.iconSlot}>
             <View style={[tabStyles.iconBadge, focused && tabStyles.iconBadgeActive]}>
-              <Text
-                style={[
-                  route.name === 'Asistente' ? tabStyles.aiText : tabStyles.iconText,
-                  { color },
-                ]}
-              >
-                {TAB_ICONS[route.name]}
-              </Text>
+              {route.name === 'Mundial' ? (
+                <Image source={mundialLogo} style={tabStyles.mundialIcon} resizeMode="contain" />
+              ) : (
+                <Text
+                  style={[
+                    route.name === 'Asistente' ? tabStyles.aiText : tabStyles.iconText,
+                    { color },
+                  ]}
+                >
+                  {TAB_ICONS[route.name]}
+                </Text>
+              )}
             </View>
           </View>
         ),
@@ -190,6 +195,12 @@ const tabStyles = StyleSheet.create({
   iconBadgeActive: {
     borderColor: COLORS.neon + '55',
     backgroundColor: COLORS.neon + '14',
+  },
+  mundialIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 5,
+    backgroundColor: COLORS.white,
   },
   iconText: {
     fontSize: 20,

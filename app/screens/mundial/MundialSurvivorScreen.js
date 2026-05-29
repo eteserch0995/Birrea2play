@@ -8,6 +8,7 @@ import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/them
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
+import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 
 const TABS = ['Pick', 'Comunidad', 'Historial', 'Ranking'];
 
@@ -199,29 +200,33 @@ export default function MundialSurvivorScreen({ navigation }) {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.safe}>
-        <ActivityIndicator size="large" color={COLORS.neon} style={{ marginTop: 80 }} />
-      </SafeAreaView>
+      <MundialScreenFrame>
+        <SafeAreaView style={styles.safe}>
+          <ActivityIndicator size="large" color={COLORS.neon} style={{ marginTop: 80 }} />
+        </SafeAreaView>
+      </MundialScreenFrame>
     );
   }
 
   // No inscrito
   if (!enrollment || enrollment.payment_status !== 'paid') {
     return (
-      <SafeAreaView style={styles.safe} edges={['top']}>
-        <View style={styles.notEnrolled}>
-          <Text style={styles.notEnrolledTitle}>No estás inscrito al Survivor</Text>
-          <Text style={styles.notEnrolledText}>
-            Inscribite para empezar a participar.
-          </Text>
-          <TouchableOpacity
-            style={styles.enrollBtn}
-            onPress={() => navigation.navigate('MundialEnroll', { mode: 'survivor' })}
-          >
-            <Text style={styles.enrollBtnText}>INSCRIBIRME · $10</Text>
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
+      <MundialScreenFrame>
+        <SafeAreaView style={styles.safe} edges={['top']}>
+          <View style={styles.notEnrolled}>
+            <Text style={styles.notEnrolledTitle}>No estás inscrito al Survivor</Text>
+            <Text style={styles.notEnrolledText}>
+              Inscribite para empezar a participar.
+            </Text>
+            <TouchableOpacity
+              style={styles.enrollBtn}
+              onPress={() => navigation.navigate('MundialEnroll', { mode: 'survivor' })}
+            >
+              <Text style={styles.enrollBtnText}>INSCRIBIRME · $10</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </MundialScreenFrame>
     );
   }
 
@@ -229,6 +234,7 @@ export default function MundialSurvivorScreen({ navigation }) {
   const eliminated = lives <= 0;
 
   return (
+    <MundialScreenFrame>
     <SafeAreaView style={styles.safe} edges={['top']}>
       <ScrollView
         contentContainerStyle={styles.scroll}
@@ -478,6 +484,7 @@ export default function MundialSurvivorScreen({ navigation }) {
         )}
       </ScrollView>
     </SafeAreaView>
+    </MundialScreenFrame>
   );
 }
 
@@ -519,7 +526,7 @@ function TeamButton({ team, usage, selected, onPress, disabled }) {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.bg },
+  safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
   back: { paddingVertical: 4, marginBottom: SPACING.sm },
   backLink: { color: COLORS.gray2, fontFamily: FONTS.body, fontSize: 14 },
@@ -544,7 +551,7 @@ const styles = StyleSheet.create({
   },
 
   pozoCard: {
-    flexDirection: 'row', backgroundColor: COLORS.card,
+    flexDirection: 'row', backgroundColor: 'rgba(10, 14, 20, 0.93)',
     borderColor: COLORS.neon + '66', borderWidth: 1,
     borderRadius: RADIUS.lg, padding: SPACING.md,
     marginBottom: SPACING.md, ...SHADOWS.card,
@@ -572,7 +579,7 @@ const styles = StyleSheet.create({
   distRow: { flexDirection: 'row', gap: 6, marginBottom: SPACING.md },
   distTile: {
     flex: 1, paddingVertical: SPACING.sm,
-    backgroundColor: COLORS.card2, borderWidth: 1,
+    backgroundColor: 'rgba(10, 14, 20, 0.90)', borderWidth: 1,
     borderRadius: RADIUS.sm, alignItems: 'center',
   },
   distLives: {
@@ -589,7 +596,7 @@ const styles = StyleSheet.create({
   },
   communityRow: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
-    backgroundColor: COLORS.card, borderColor: COLORS.line, borderWidth: 1,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.line, borderWidth: 1,
     borderRadius: RADIUS.sm, padding: SPACING.sm, marginBottom: 6,
   },
   communityCode: { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.neon, width: 50 },
@@ -601,7 +608,7 @@ const styles = StyleSheet.create({
   communityCount: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray },
 
   insightCard: {
-    backgroundColor: COLORS.gold + '14', borderColor: COLORS.gold + '66',
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.gold + '99',
     borderWidth: 1, borderRadius: RADIUS.md, padding: SPACING.md,
     marginTop: SPACING.md,
   },
@@ -614,7 +621,7 @@ const styles = StyleSheet.create({
   },
 
   livesCard: {
-    backgroundColor: COLORS.card, borderRadius: RADIUS.lg,
+    backgroundColor: 'rgba(10, 14, 20, 0.93)', borderRadius: RADIUS.lg,
     padding: SPACING.lg, alignItems: 'center',
     borderColor: COLORS.line, borderWidth: 1,
     marginBottom: SPACING.lg, ...SHADOWS.card,
@@ -634,7 +641,7 @@ const styles = StyleSheet.create({
   tabRow: { flexDirection: 'row', marginBottom: SPACING.md, gap: 8 },
   tabBtn: {
     flex: 1, paddingVertical: 10, alignItems: 'center',
-    borderRadius: RADIUS.sm, backgroundColor: COLORS.card2,
+    borderRadius: RADIUS.sm, backgroundColor: 'rgba(10, 14, 20, 0.90)',
     borderColor: COLORS.line, borderWidth: 1,
   },
   tabBtnActive: { backgroundColor: COLORS.red, borderColor: COLORS.red },
@@ -642,7 +649,7 @@ const styles = StyleSheet.create({
   tabTextActive: { color: COLORS.white },
 
   noDayCard: {
-    backgroundColor: COLORS.card2, borderRadius: RADIUS.md,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderRadius: RADIUS.md,
     padding: SPACING.lg, alignItems: 'center',
     borderColor: COLORS.line, borderWidth: 1,
   },
@@ -661,7 +668,7 @@ const styles = StyleSheet.create({
   },
 
   currentPickCard: {
-    backgroundColor: COLORS.neon + '14', borderColor: COLORS.neon + '88',
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.neon + '88',
     borderWidth: 1, borderRadius: RADIUS.md, padding: SPACING.md,
     marginBottom: SPACING.md,
   },
@@ -679,7 +686,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1, marginVertical: SPACING.sm,
   },
   matchCard: {
-    backgroundColor: COLORS.card, borderRadius: RADIUS.md,
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderRadius: RADIUS.md,
     padding: SPACING.sm, marginBottom: SPACING.sm,
     borderColor: COLORS.line, borderWidth: 1,
   },
@@ -690,7 +697,7 @@ const styles = StyleSheet.create({
   matchTeams: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   teamBtn: {
     flex: 1, paddingVertical: 10, paddingHorizontal: 8,
-    backgroundColor: COLORS.card2, borderRadius: RADIUS.sm,
+    backgroundColor: 'rgba(0, 0, 0, 0.62)', borderRadius: RADIUS.sm,
     borderColor: COLORS.line, borderWidth: 1,
     alignItems: 'center',
   },
@@ -718,7 +725,7 @@ const styles = StyleSheet.create({
 
   historyRow: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: COLORS.card2, borderRadius: RADIUS.sm,
+    backgroundColor: 'rgba(10, 14, 20, 0.90)', borderRadius: RADIUS.sm,
     padding: SPACING.sm, marginBottom: 6,
     borderLeftWidth: 4, borderLeftColor: COLORS.line,
   },
