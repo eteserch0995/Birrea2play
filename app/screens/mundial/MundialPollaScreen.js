@@ -9,7 +9,7 @@ import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 
-const TABS = ['Predicciones', 'Ranking', 'Bonus'];
+const TABS = ['Grupos', 'Bracket', 'Ranking', 'Bonus'];
 const PHASE_LABEL = {
   group: 'Grupos', round_32: '16avos', round_16: 'Octavos',
   quarter: 'Cuartos', semi: 'Semis', third_place: '3°', final: 'Final',
@@ -20,13 +20,18 @@ export default function MundialPollaScreen({ navigation }) {
   const { pool, loadPool } = useWcStore();
   const [enrollment, setEnrollment] = useState(null);
   const [matches, setMatches] = useState([]);
+  const [koMatches, setKoMatches] = useState([]);
+  const [allTeams, setAllTeams] = useState([]);
   const [predictions, setPredictions] = useState({});
   const [bonus, setBonus] = useState(null);
   const [teamsById, setTeamsById] = useState({});
   const [ranking, setRanking] = useState([]);
   const [myRank, setMyRank] = useState(null);
   const [totalEnrolled, setTotalEnrolled] = useState(0);
-  const [tab, setTab] = useState('Predicciones');
+  const [tab, setTab] = useState('Grupos');
+  const [expandedGroup, setExpandedGroup] = useState(null);
+  const [expandedKoPhase, setExpandedKoPhase] = useState(null);
+  const [koTeamPicker, setKoTeamPicker] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -46,8 +51,7 @@ export default function MundialPollaScreen({ navigation }) {
         return;
       }
 
-      // Próximos 40 matches (acepta predicciones)
-      const nowIso = new Date().toISOString();
+      // Matches de grupos (72) — para tab "Grupos"
       const { data: m } = await supabase
         .from('wc_matches')
         .select(`
@@ -56,9 +60,31 @@ export default function MundialPollaScreen({ navigation }) {
           team_home:team_home_id ( code, name_es ),
           team_away:team_away_id ( code, name_es )
         `)
-        .order('scheduled_at')
-        .limit(60);
+        .eq('phase', 'group')
+        .order('match_number')
+        .limit(80);
       setMatches(m ?? []);
+
+      // Matches KO (32) — para tab "Bracket"
+      const { data: ko } = await supabase
+        .from('wc_matches')
+        .select(`
+          id, match_number, phase, scheduled_at, status, multiplier,
+          home_placeholder, away_placeholder,
+          team_home:team_home_id ( code, name_es ),
+          team_away:team_away_id ( code, name_es )
+        `)
+        .neq('phase', 'group')
+        .order('match_number')
+        .limit(40);
+      setKoMatches(ko ?? []);
+
+      // Lista de todos los teams para el picker KO
+      const { data: tAll } = await supabase
+        .from('wc_teams')
+        .select('id, code, name_es, group_letter')
+        .order('group_letter').order('name_es');
+      setAllTeams(tAll ?? []);
 
       // Mis predicciones
       const { data: preds } = await supabase
@@ -196,17 +222,80 @@ export default function MundialPollaScreen({ navigation }) {
           ))}
         </View>
 
-        {tab === 'Predicciones' && (
+        {tab === 'Grupos' && (
           <View>
-            {matches.map((m) => (
-              <PredictionRow
-                key={m.id}
-                match={m}
-                prediction={predictions[m.id]}
-                userId={user.id}
-                onSaved={load}
-              />
-            ))}
+            <Text style={styles.helpText}>
+              Predicí el marcador de los 72 partidos de fase de grupos. Tocá un grupo para abrirlo.
+            </Text>
+            {['A','B','C','D','E','F','G','H','I','J','K','L'].map((letter) => {
+              const groupMatches = matches.filter(m => m.group_letter === letter);
+              const filled = groupMatches.filter(m => predictions[m.id]).length;
+              const isOpen = expandedGroup === letter;
+              return (
+                <View key={letter} style={styles.groupBlock}>
+                  <TouchableOpacity
+                    style={[styles.groupHeader, isOpen && styles.groupHeaderOpen]}
+                    onPress={() => setExpandedGroup(isOpen ? null : letter)}
+                  >
+                    <Text style={styles.groupHeaderTitle}>GRUPO {letter}</Text>
+                    <Text style={styles.groupHeaderMeta}>
+                      {filled}/{groupMatches.length} · {isOpen ? '▲' : '▼'}
+                    </Text>
+                  </TouchableOpacity>
+                  {isOpen && groupMatches.map((m) => (
+                    <PredictionRow
+                      key={m.id}
+                      match={m}
+                      prediction={predictions[m.id]}
+                      userId={user.id}
+                      onSaved={load}
+                    />
+                  ))}
+                </View>
+              );
+            })}
+          </View>
+        )}
+
+        {tab === 'Bracket' && (
+          <View>
+            <Text style={styles.helpText}>
+              Predicí quién avanza en cada partido de eliminatoria.
+            </Text>
+            {[
+              { phase: 'round_32',    label: '16AVOS',   mult: 1.5 },
+              { phase: 'round_16',    label: 'OCTAVOS',  mult: 2.0 },
+              { phase: 'quarter',     label: 'CUARTOS',  mult: 2.5 },
+              { phase: 'semi',        label: 'SEMIS',    mult: 3.0 },
+              { phase: 'third_place', label: '3ER LUGAR',mult: 4.0 },
+              { phase: 'final',       label: 'FINAL',    mult: 4.0 },
+            ].map(({ phase, label, mult }) => {
+              const phaseMatches = koMatches.filter(m => m.phase === phase);
+              const filled = phaseMatches.filter(m => predictions[m.id]?.pred_winner_team_id).length;
+              const isOpen = expandedKoPhase === phase;
+              return (
+                <View key={phase} style={styles.groupBlock}>
+                  <TouchableOpacity
+                    style={[styles.groupHeader, isOpen && styles.groupHeaderOpen]}
+                    onPress={() => setExpandedKoPhase(isOpen ? null : phase)}
+                  >
+                    <Text style={styles.groupHeaderTitle}>{label}</Text>
+                    <Text style={styles.groupHeaderMeta}>
+                      {filled}/{phaseMatches.length} · x{mult} · {isOpen ? '▲' : '▼'}
+                    </Text>
+                  </TouchableOpacity>
+                  {isOpen && phaseMatches.map((m) => (
+                    <BracketRow
+                      key={m.id}
+                      match={m}
+                      prediction={predictions[m.id]}
+                      teamsById={teamsById}
+                      onPickTeam={() => setKoTeamPicker({ matchId: m.id })}
+                    />
+                  ))}
+                </View>
+              );
+            })}
           </View>
         )}
 
@@ -259,7 +348,56 @@ export default function MundialPollaScreen({ navigation }) {
           </View>
         )}
       </ScrollView>
+
+      {koTeamPicker && (
+        <KoTeamPickerModal
+          allTeams={allTeams}
+          onCancel={() => setKoTeamPicker(null)}
+          onPick={async (teamId) => {
+            try {
+              const { error } = await supabase.rpc('wc_submit_polla_prediction', {
+                p_user_id: user.id,
+                p_match_id: koTeamPicker.matchId,
+                p_pred_score_home: null,
+                p_pred_score_away: null,
+                p_pred_winner_team_id: teamId,
+              });
+              if (error) throw error;
+              setKoTeamPicker(null);
+              await load();
+            } catch (e) {
+              Alert.alert('Error', e.message || 'No se pudo guardar el pick');
+            }
+          }}
+        />
+      )}
     </SafeAreaView>
+  );
+}
+
+function KoTeamPickerModal({ allTeams, onCancel, onPick }) {
+  return (
+    <View style={styles.modalBackdrop}>
+      <View style={styles.modalContent}>
+        <Text style={styles.modalTitle}>Elegí tu pick</Text>
+        <ScrollView style={{ maxHeight: 500 }}>
+          {allTeams.map((t) => (
+            <TouchableOpacity
+              key={t.id}
+              style={styles.modalTeamRow}
+              onPress={() => onPick(t.id)}
+            >
+              <Text style={styles.modalTeamCode}>{t.code}</Text>
+              <Text style={styles.modalTeamName} numberOfLines={1}>{t.name_es}</Text>
+              <Text style={styles.modalTeamGroup}>{t.group_letter}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+        <TouchableOpacity onPress={onCancel} style={styles.modalCancel}>
+          <Text style={styles.modalCancelText}>Cancelar</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
@@ -268,8 +406,10 @@ function PredictionRow({ match, prediction, userId, onSaved }) {
   const [away, setAway] = useState(prediction?.pred_score_away != null ? String(prediction.pred_score_away) : '');
   const [saving, setSaving] = useState(false);
 
-  const deadlineMs = new Date(match.prediction_deadline).getTime();
-  const closed = deadlineMs <= Date.now() || match.status !== 'scheduled';
+  // Deadline unificado: todas las predicciones cierran al enrollment_deadline del pool
+  // (11-jun-2026 11:00 PA). Después no se pueden tocar más, hasta que termine el Mundial.
+  const ENROLLMENT_DEADLINE_MS = Date.UTC(2026, 5, 11, 16, 0, 0); // 11-jun 16:00 UTC = 11am PA
+  const closed = Date.now() >= ENROLLMENT_DEADLINE_MS || match.status !== 'scheduled';
   const finished = match.status === 'finished';
   const homeName = match.team_home?.name_es || match.home_placeholder || '—';
   const awayName = match.team_away?.name_es || match.away_placeholder || '—';
@@ -364,6 +504,41 @@ function PredictionRow({ match, prediction, userId, onSaved }) {
       )}
       {closed && !finished && (
         <Text style={styles.closedText}>Predicciones cerradas — esperando resultado</Text>
+      )}
+    </View>
+  );
+}
+
+function BracketRow({ match, prediction, teamsById, onPickTeam }) {
+  const picked = prediction?.pred_winner_team_id ? teamsById[prediction.pred_winner_team_id] : null;
+  const finished = match.status === 'finished';
+  const homeName = match.team_home?.name_es || match.home_placeholder || '—';
+  const awayName = match.team_away?.name_es || match.away_placeholder || '—';
+
+  return (
+    <View style={[
+      styles.bracketRow,
+      finished && styles.bracketRowFinished,
+      prediction?.hit_level === 'winner' && { borderColor: COLORS.green },
+    ]}>
+      <View style={styles.bracketHead}>
+        <Text style={styles.predNum}>M{match.match_number}</Text>
+        <Text style={styles.predDate}>
+          {new Date(match.scheduled_at).toLocaleString('es-PA', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+        </Text>
+      </View>
+      <Text style={styles.bracketCruceLabel}>{homeName}  vs  {awayName}</Text>
+      <TouchableOpacity style={styles.bracketPickBtn} onPress={onPickTeam}>
+        <Text style={styles.bracketPickLabel}>MI PICK</Text>
+        <Text style={styles.bracketPickValue}>
+          {picked ? `${picked.code} · ${picked.name_es}` : 'Tocá para elegir →'}
+        </Text>
+      </TouchableOpacity>
+      {finished && (
+        <Text style={styles.actualScore}>
+          Real: {match.score_home}–{match.score_away}
+          {prediction?.hit_level === 'winner' ? ` · +${prediction.points_earned} pts ✓` : prediction ? ' · 0 pts ✗' : ''}
+        </Text>
       )}
     </View>
   );
@@ -464,6 +639,68 @@ const styles = StyleSheet.create({
   tabBtnActive: { backgroundColor: COLORS.magenta, borderColor: COLORS.magenta },
   tabText: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.gray2, letterSpacing: 1 },
   tabTextActive: { color: COLORS.white },
+
+  helpText: {
+    fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2,
+    marginBottom: SPACING.sm, lineHeight: 17,
+  },
+  groupBlock: { marginBottom: SPACING.sm },
+  groupHeader: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: COLORS.card2, borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.md, padding: SPACING.md,
+  },
+  groupHeaderOpen: { borderColor: COLORS.magenta },
+  groupHeaderTitle: {
+    fontFamily: FONTS.heading, fontSize: 16, color: COLORS.white, letterSpacing: 1.5,
+  },
+  groupHeaderMeta: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2 },
+
+  bracketRow: {
+    backgroundColor: COLORS.card, borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.md, padding: SPACING.sm, marginTop: 6,
+  },
+  bracketRowFinished: { opacity: 0.85 },
+  bracketHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
+  bracketCruceLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white,
+    marginBottom: 8,
+  },
+  bracketPickBtn: {
+    backgroundColor: COLORS.bg, borderColor: COLORS.magenta + '88', borderWidth: 1,
+    borderRadius: RADIUS.sm, padding: SPACING.sm,
+  },
+  bracketPickLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.magenta,
+    letterSpacing: 1.5, textTransform: 'uppercase',
+  },
+  bracketPickValue: {
+    fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white, marginTop: 4,
+  },
+
+  modalBackdrop: {
+    position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: COLORS.card,
+    borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
+    padding: SPACING.md, maxHeight: '85%',
+  },
+  modalTitle: {
+    fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white,
+    letterSpacing: 1, marginBottom: SPACING.md, textAlign: 'center',
+  },
+  modalTeamRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 12,
+    borderBottomWidth: 1, borderBottomColor: COLORS.line,
+  },
+  modalTeamCode: { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.neon, width: 50 },
+  modalTeamName: { flex: 1, fontFamily: FONTS.body, fontSize: 14, color: COLORS.white },
+  modalTeamGroup: { fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gray2 },
+  modalCancel: { marginTop: SPACING.md, padding: 12, alignItems: 'center' },
+  modalCancelText: { color: COLORS.gray2, fontFamily: FONTS.bodyBold, fontSize: 14 },
 
   predCard: {
     backgroundColor: COLORS.card, borderColor: COLORS.line, borderWidth: 1,
