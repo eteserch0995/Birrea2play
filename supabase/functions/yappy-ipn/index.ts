@@ -150,6 +150,20 @@ serve(async (req) => {
       }
       console.log('YAPPY_IPN_EVENTO_INSCRITO', { orderId, userId: order.user_id, event_id: order.event_id });
 
+    } else if (orderTipo === 'wc_enrollment' && order.wc_enrollment_id) {
+      // Inscripción al Mundial 2026 (Survivor o Polla)
+      const { error: rpcErr } = await supabase.rpc('wc_pay_enrollment_yappy', {
+        p_user_id:       order.user_id,
+        p_enrollment_id: order.wc_enrollment_id,
+        p_amount:        order.amount,
+        p_yappy_order_id: orderId,
+      });
+      if (rpcErr) {
+        console.error('YAPPY_IPN_WC_ENROLL_ERROR', { orderId, error: rpcErr.message });
+        return err({ success: false, error: 'Mundial enrollment failed' }, 500);
+      }
+      console.log('YAPPY_IPN_WC_ENROLLED', { orderId, userId: order.user_id, enrollmentId: order.wc_enrollment_id });
+
     } else {
       // Recarga wallet normal
       const descripcion = `yappy:${orderId}`;

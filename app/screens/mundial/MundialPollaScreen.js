@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
+import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 
 const TABS = ['Predicciones', 'Ranking', 'Bonus'];
@@ -16,6 +17,7 @@ const PHASE_LABEL = {
 
 export default function MundialPollaScreen({ navigation }) {
   const { user } = useAuthStore();
+  const { pool, loadPool } = useWcStore();
   const [enrollment, setEnrollment] = useState(null);
   const [matches, setMatches] = useState([]);
   const [predictions, setPredictions] = useState({});
@@ -23,6 +25,7 @@ export default function MundialPollaScreen({ navigation }) {
   const [teamsById, setTeamsById] = useState({});
   const [ranking, setRanking] = useState([]);
   const [myRank, setMyRank] = useState(null);
+  const [totalEnrolled, setTotalEnrolled] = useState(0);
   const [tab, setTab] = useState('Predicciones');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -89,10 +92,20 @@ export default function MundialPollaScreen({ navigation }) {
       setRanking(rnk ?? []);
       const myIdx = (rnk ?? []).findIndex(r => r.user_id === user.id);
       setMyRank(myIdx >= 0 ? myIdx + 1 : null);
+
+      // Total inscritos (para pozo)
+      const { count: totalCount } = await supabase
+        .from('wc_enrollments')
+        .select('*', { count: 'exact', head: true })
+        .eq('mode', 'polla')
+        .eq('payment_status', 'paid');
+      setTotalEnrolled(totalCount ?? 0);
+
+      await loadPool();
     } finally {
       setLoading(false);
     }
-  }, [user.id]);
+  }, [user.id, loadPool]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -139,7 +152,24 @@ export default function MundialPollaScreen({ navigation }) {
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
-        {/* Header con puntos */}
+        {/* Pozo + puntos */}
+        <View style={styles.pozoCard}>
+          <View style={styles.pozoLeft}>
+            <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
+            <Text style={styles.pozoValue}>
+              ${((totalEnrolled * (pool?.polla_price ?? 15) * (1 - (pool?.fee_rate ?? 0.05))) || 0).toFixed(0)}
+            </Text>
+            <Text style={styles.pozoMeta}>
+              {totalEnrolled} inscritos × ${pool?.polla_price ?? 15}
+            </Text>
+          </View>
+          <View style={styles.pozoRight}>
+            <Text style={styles.pozoLabel}>POSICIÓN</Text>
+            <Text style={styles.pozoRank}>{myRank ? `#${myRank}` : '—'}</Text>
+            <Text style={styles.pozoMeta}>de {totalEnrolled}</Text>
+          </View>
+        </View>
+
         <View style={styles.pointsCard}>
           <Text style={styles.pointsLabel}>TUS PUNTOS</Text>
           <Text style={styles.pointsValue}>{enrollment.total_points}</Text>
@@ -150,11 +180,6 @@ export default function MundialPollaScreen({ navigation }) {
             <Text style={styles.pointsBreakItem}>
               {enrollment.bonus_points} pts · bonus
             </Text>
-            {myRank && (
-              <Text style={styles.pointsBreakItem}>
-                Posición #{myRank}
-              </Text>
-            )}
           </View>
         </View>
 
@@ -386,6 +411,32 @@ const styles = StyleSheet.create({
   enrollBtnText: {
     color: COLORS.white, fontFamily: FONTS.heading, fontSize: 16, letterSpacing: 2,
   },
+
+  pozoCard: {
+    flexDirection: 'row', backgroundColor: COLORS.card,
+    borderColor: COLORS.neon + '66', borderWidth: 1,
+    borderRadius: RADIUS.lg, padding: SPACING.md,
+    marginBottom: SPACING.sm, ...SHADOWS.card,
+  },
+  pozoLeft: {
+    flex: 1, alignItems: 'flex-start',
+    borderRightWidth: 1, borderRightColor: COLORS.line,
+    paddingRight: SPACING.md,
+  },
+  pozoRight: { flex: 1, alignItems: 'center', paddingLeft: SPACING.md },
+  pozoLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gray,
+    letterSpacing: 1.5, textTransform: 'uppercase',
+  },
+  pozoValue: {
+    fontFamily: FONTS.heading, fontSize: 32, color: COLORS.neon,
+    letterSpacing: 1, marginTop: 4,
+  },
+  pozoRank: {
+    fontFamily: FONTS.heading, fontSize: 32, color: COLORS.magenta,
+    letterSpacing: 1, marginTop: 4,
+  },
+  pozoMeta: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 4 },
 
   pointsCard: {
     backgroundColor: COLORS.card, borderColor: COLORS.magenta + '88',

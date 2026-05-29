@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput,
   ActivityIndicator, Alert, Modal,
@@ -8,6 +8,7 @@ import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/them
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
+import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 
 export default function MundialEnrollScreen({ route, navigation }) {
   const mode = route?.params?.mode ?? 'survivor';
@@ -27,6 +28,10 @@ export default function MundialEnrollScreen({ route, navigation }) {
   const [showTeamPicker, setShowTeamPicker] = useState(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState('wallet');
+  const [yappyPhone, setYappyPhone] = useState('');
+  const [yappyStep, setYappyStep] = useState('idle'); // idle | waiting | confirmed
+  const yappyPollRef = useRef(null);
 
   const price = mode === 'survivor' ? pool?.survivor_price : pool?.polla_price;
   const walletBalance = user?.wallets?.balance ?? 0;
@@ -57,9 +62,18 @@ export default function MundialEnrollScreen({ route, navigation }) {
 
   const handleEnroll = async () => {
     if (processing) return;
-    if (walletBalance < price) {
-      Alert.alert('Saldo insuficiente', `Necesitás $${price} en tu wallet. Tenés $${walletBalance.toFixed(2)}.`);
+
+    // Validar método de pago
+    if (paymentMethod === 'wallet' && walletBalance < price) {
+      Alert.alert('Saldo insuficiente', `Necesitás $${price} en tu wallet. Tenés $${walletBalance.toFixed(2)}. Probá con Yappy o recargá tu wallet primero.`);
       return;
+    }
+    if (paymentMethod === 'yappy') {
+      const cleanPhone = String(yappyPhone).replace(/\D/g, '');
+      if (cleanPhone.length < 7 || cleanPhone.length > 12) {
+        Alert.alert('Número Yappy inválido', 'Ingresá tu número de teléfono Yappy (ej: 6XXX-XXXX).');
+        return;
+      }
     }
 
     // Validar bonus picks si es polla
@@ -111,21 +125,60 @@ export default function MundialEnrollScreen({ route, navigation }) {
         if (e2) throw e2;
       }
 
-      // 3) Pagar con wallet
-      const { error: e3 } = await supabase.rpc('wc_pay_enrollment_wallet', {
-        p_user_id: user.id,
-        p_enrollment_id: enrollId,
-      });
-      if (e3) throw e3;
+      // 3) Pagar — wallet directo, o Yappy con polling
+      if (paymentMethod === 'wallet') {
+        const { error: e3 } = await supabase.rpc('wc_pay_enrollment_wallet', {
+          p_user_id: user.id,
+          p_enrollment_id: enrollId,
+        });
+        if (e3) throw e3;
+      } else {
+        // Yappy: iniciar orden, mostrar "Esperando confirmación", poll hasta executed
+        setYappyStep('waiting');
+        const cleanPhone = String(yappyPhone).replace(/\D/g, '');
+        const { orderId } = await iniciarBotonYappy({
+          phone: cleanPhone,
+          amount: price,
+          tipo: 'wc_enrollment',
+          event_id: null,
+          guest_id: null,
+        });
+        // Asociar el enrollment_id al order recién creado
+        await supabase
+          .from('yappy_orders')
+          .update({ wc_enrollment_id: enrollId })
+          .eq('order_id', orderId);
 
+        // Poll hasta executed o timeout
+        const poll = pollBotonOrder({ orderId });
+        yappyPollRef.current = poll;
+        await poll.promise;
+        yappyPollRef.current = null;
+      }
+
+      setYappyStep('confirmed');
       Alert.alert('¡Inscripción confirmada!', `Estás dentro del ${isPolla ? 'Polla Ganadora' : 'Survivor 3 Vidas'}.`);
       await refreshProfile();
       navigation.replace(isPolla ? 'MundialPolla' : 'MundialSurvivor');
     } catch (err) {
-      Alert.alert('Error', err.message || 'No se pudo procesar la inscripción.');
+      if (err.message === 'cancelled') {
+        Alert.alert('Pago cancelado', 'Cancelaste el cobro Yappy.');
+      } else {
+        Alert.alert('Error', err.message || 'No se pudo procesar la inscripción.');
+      }
+      setYappyStep('idle');
     } finally {
       setProcessing(false);
     }
+  };
+
+  const cancelYappy = () => {
+    if (yappyPollRef.current) {
+      yappyPollRef.current.cancel();
+      yappyPollRef.current = null;
+    }
+    setYappyStep('idle');
+    setProcessing(false);
   };
 
   if (loading) {
@@ -173,13 +226,57 @@ export default function MundialEnrollScreen({ route, navigation }) {
             : 'Pick 1 equipo por jornada-día. Cada equipo máximo 2 veces en grupos. Sobreviví la fase de grupos.'}
         </Text>
 
-        <View style={styles.walletCard}>
-          <Text style={styles.walletLabel}>Tu saldo wallet</Text>
-          <Text style={styles.walletValue}>${walletBalance.toFixed(2)}</Text>
-          {walletBalance < price && (
+        {/* Selector de método de pago */}
+        <View style={styles.payMethodBlock}>
+          <Text style={styles.payMethodTitle}>Método de pago</Text>
+          <View style={styles.payMethodRow}>
+            <TouchableOpacity
+              style={[styles.payMethodBtn, paymentMethod === 'wallet' && styles.payMethodBtnActive]}
+              onPress={() => setPaymentMethod('wallet')}
+              disabled={processing}
+            >
+              <Text style={styles.payMethodIcon}>💳</Text>
+              <Text style={[styles.payMethodLabel, paymentMethod === 'wallet' && styles.payMethodLabelActive]}>
+                Wallet
+              </Text>
+              <Text style={styles.payMethodSub}>${walletBalance.toFixed(2)}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.payMethodBtn, paymentMethod === 'yappy' && styles.payMethodBtnActive]}
+              onPress={() => setPaymentMethod('yappy')}
+              disabled={processing}
+            >
+              <Text style={styles.payMethodIcon}>📱</Text>
+              <Text style={[styles.payMethodLabel, paymentMethod === 'yappy' && styles.payMethodLabelActive]}>
+                Yappy
+              </Text>
+              <Text style={styles.payMethodSub}>Request</Text>
+            </TouchableOpacity>
+          </View>
+
+          {paymentMethod === 'wallet' && walletBalance < price && (
             <Text style={styles.walletWarn}>
-              Necesitás ${(price - walletBalance).toFixed(2)} más. Recargá en Wallet.
+              Saldo insuficiente. Necesitás ${(price - walletBalance).toFixed(2)} más, o pagá con Yappy.
             </Text>
+          )}
+
+          {paymentMethod === 'yappy' && (
+            <View style={styles.yappyInputBlock}>
+              <Text style={styles.yappyInputLabel}>Tu número Yappy</Text>
+              <TextInput
+                style={styles.yappyInput}
+                value={yappyPhone}
+                onChangeText={(v) => setYappyPhone(v.replace(/[^0-9]/g, ''))}
+                keyboardType="number-pad"
+                placeholder="6XXX-XXXX"
+                placeholderTextColor={COLORS.gray}
+                maxLength={12}
+                editable={!processing}
+              />
+              <Text style={styles.yappyHint}>
+                Vas a recibir una notificación en tu app Yappy para aprobar el cobro de ${price}.
+              </Text>
+            </View>
           )}
         </View>
 
@@ -259,19 +356,50 @@ export default function MundialEnrollScreen({ route, navigation }) {
         )}
 
         <TouchableOpacity
-          style={[styles.payBtn, (processing || walletBalance < price) && { opacity: 0.5 }]}
+          style={[
+            styles.payBtn,
+            (processing || (paymentMethod === 'wallet' && walletBalance < price)) && { opacity: 0.5 },
+          ]}
           onPress={handleEnroll}
-          disabled={processing || walletBalance < price}
+          disabled={processing || (paymentMethod === 'wallet' && walletBalance < price)}
         >
           <Text style={styles.payBtnText}>
-            {processing ? 'PROCESANDO…' : `INSCRIBIRME · $${price}`}
+            {processing
+              ? (yappyStep === 'waiting' ? 'ESPERANDO YAPPY…' : 'PROCESANDO…')
+              : `INSCRIBIRME · $${price}${paymentMethod === 'yappy' ? ' (YAPPY)' : ' (WALLET)'}`}
           </Text>
         </TouchableOpacity>
 
+        {yappyStep === 'waiting' && (
+          <TouchableOpacity style={styles.cancelYappyBtn} onPress={cancelYappy}>
+            <Text style={styles.cancelYappyText}>Cancelar pago Yappy</Text>
+          </TouchableOpacity>
+        )}
+
         <Text style={styles.footnote}>
-          Pago con wallet credit. Yappy directo próximamente.
+          {paymentMethod === 'yappy'
+            ? 'Yappy V2 — vas a recibir notificación push para aprobar el cobro. Espera hasta 5 min.'
+            : 'Pago con tu saldo wallet de Birrea2Play.'}
         </Text>
       </ScrollView>
+
+      {/* Modal de espera Yappy */}
+      <Modal visible={yappyStep === 'waiting'} transparent animationType="fade">
+        <View style={styles.waitingBackdrop}>
+          <View style={styles.waitingCard}>
+            <ActivityIndicator size="large" color={COLORS.neon} />
+            <Text style={styles.waitingTitle}>Esperando confirmación</Text>
+            <Text style={styles.waitingText}>
+              Abrí tu app Yappy y aprobá el cobro de ${price}.{'\n\n'}
+              O entrá a tu banca en línea y elegí la opción de Yappy.
+            </Text>
+            <Text style={styles.waitingPhone}>Yappy: {yappyPhone}</Text>
+            <TouchableOpacity onPress={cancelYappy} style={styles.waitingCancelBtn}>
+              <Text style={styles.waitingCancelText}>Cancelar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={!!showTeamPicker}
@@ -364,6 +492,73 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.body, fontSize: 12, color: COLORS.red2,
     marginTop: 6,
   },
+
+  payMethodBlock: {
+    marginBottom: SPACING.lg,
+  },
+  payMethodTitle: {
+    fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gray2,
+    letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: SPACING.sm,
+  },
+  payMethodRow: { flexDirection: 'row', gap: SPACING.sm },
+  payMethodBtn: {
+    flex: 1, paddingVertical: SPACING.md, alignItems: 'center',
+    backgroundColor: COLORS.card2, borderColor: COLORS.line,
+    borderWidth: 1, borderRadius: RADIUS.md,
+  },
+  payMethodBtnActive: {
+    borderColor: COLORS.neon, backgroundColor: COLORS.neon + '14',
+  },
+  payMethodIcon: { fontSize: 28 },
+  payMethodLabel: {
+    fontFamily: FONTS.heading, fontSize: 18, color: COLORS.gray2,
+    letterSpacing: 1, marginTop: 4,
+  },
+  payMethodLabelActive: { color: COLORS.white },
+  payMethodSub: {
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2,
+  },
+  yappyInputBlock: { marginTop: SPACING.md },
+  yappyInputLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gray2,
+    letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 4,
+  },
+  yappyInput: {
+    backgroundColor: COLORS.bg, borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.sm, paddingHorizontal: SPACING.sm, paddingVertical: 12,
+    color: COLORS.white, fontFamily: FONTS.heading, fontSize: 22,
+    letterSpacing: 2, textAlign: 'center',
+  },
+  yappyHint: {
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray,
+    marginTop: 4, lineHeight: 16,
+  },
+  cancelYappyBtn: { marginTop: SPACING.sm, padding: 8, alignItems: 'center' },
+  cancelYappyText: { color: COLORS.gray2, fontFamily: FONTS.body, fontSize: 13 },
+
+  waitingBackdrop: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'center', alignItems: 'center', padding: SPACING.lg,
+  },
+  waitingCard: {
+    backgroundColor: COLORS.card, borderColor: COLORS.neon + '66', borderWidth: 1,
+    borderRadius: RADIUS.lg, padding: SPACING.lg, alignItems: 'center',
+    maxWidth: 380,
+  },
+  waitingTitle: {
+    fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white,
+    letterSpacing: 1, marginTop: SPACING.md,
+  },
+  waitingText: {
+    fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2,
+    textAlign: 'center', lineHeight: 20, marginTop: SPACING.sm,
+  },
+  waitingPhone: {
+    fontFamily: FONTS.bodyBold, fontSize: 16, color: COLORS.neon,
+    letterSpacing: 1, marginTop: SPACING.md,
+  },
+  waitingCancelBtn: { marginTop: SPACING.lg, padding: SPACING.sm },
+  waitingCancelText: { color: COLORS.gray2, fontFamily: FONTS.bodyBold, fontSize: 14 },
 
   bonusBlock: {
     backgroundColor: COLORS.card, borderColor: COLORS.magenta + '44',

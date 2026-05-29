@@ -154,7 +154,7 @@ serve(async (req) => {
     return jsonRes({ error: 'Perfil no encontrado' }, 403);
   }
 
-  let payload: { action?: string; amount?: number; phoneNumber?: string; tipo?: string; event_id?: string; guest_id?: string };
+  let payload: { action?: string; amount?: number; phoneNumber?: string; tipo?: string; event_id?: string; guest_id?: string; wc_enrollment_id?: string };
   try { payload = await req.json(); } catch { return jsonRes({ error: 'Body inválido' }, 400); }
 
   if (payload.action !== 'create-order') {
@@ -184,11 +184,17 @@ serve(async (req) => {
 
     console.log('YAPPY_CREATE_ORDER_SUCCESS', { orderId, transactionId: orderData.transactionId });
 
-    // Determine tipo — 'invitado' when guest_id provided, 'evento' for direct event reg, else 'recarga'
+    // Determine tipo — 'invitado' when guest_id provided, 'evento' for direct event reg,
+    // 'wc_enrollment' for Mundial 2026, else 'recarga'
     const rawTipo = payload.tipo ?? 'recarga';
-    const tipo    = ['evento', 'invitado', 'recarga', 'compra_tienda'].includes(rawTipo) ? rawTipo : 'recarga';
-    const event_id = tipo === 'evento' ? (payload.event_id ?? null) : null;
-    const guest_id = tipo === 'invitado' ? (payload.guest_id ?? null) : null;
+    const tipo    = ['evento', 'invitado', 'recarga', 'compra_tienda', 'wc_enrollment'].includes(rawTipo) ? rawTipo : 'recarga';
+    const event_id         = tipo === 'evento'        ? (payload.event_id ?? null) : null;
+    const guest_id         = tipo === 'invitado'      ? (payload.guest_id ?? null) : null;
+    const wc_enrollment_id = tipo === 'wc_enrollment' ? (payload.wc_enrollment_id ?? null) : null;
+
+    if (tipo === 'wc_enrollment' && !wc_enrollment_id) {
+      return jsonRes({ error: 'wc_enrollment_id requerido para tipo=wc_enrollment' }, 400);
+    }
 
     const { error: dbErr } = await supabaseAdmin.from('yappy_orders').upsert({
       order_id:       orderId,
@@ -199,6 +205,7 @@ serve(async (req) => {
       tipo,
       event_id,
       guest_id,
+      wc_enrollment_id,
     }, { onConflict: 'order_id' });
 
     if (dbErr) console.error('YAPPY_DB_SAVE_ERROR', { orderId, error: dbErr.message });

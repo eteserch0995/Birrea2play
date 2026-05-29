@@ -6,12 +6,14 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
+import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 
-const TABS = ['Pick', 'Historial', 'Ranking'];
+const TABS = ['Pick', 'Comunidad', 'Historial', 'Ranking'];
 
 export default function MundialSurvivorScreen({ navigation }) {
   const { user } = useAuthStore();
+  const { pool, loadPool } = useWcStore();
   const [enrollment, setEnrollment] = useState(null);
   const [nextDay, setNextDay] = useState(null);
   const [matchesOfDay, setMatchesOfDay] = useState([]);
@@ -20,6 +22,8 @@ export default function MundialSurvivorScreen({ navigation }) {
   const [currentPick, setCurrentPick] = useState(null);
   const [history, setHistory] = useState([]);
   const [ranking, setRanking] = useState([]);
+  const [communityPicks, setCommunityPicks] = useState([]);
+  const [livesDistribution, setLivesDistribution] = useState({ alive3: 0, alive2: 0, alive1: 0, dead: 0, total: 0 });
   const [tab, setTab] = useState('Pick');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -119,10 +123,46 @@ export default function MundialSurvivorScreen({ navigation }) {
         .order('lives_remaining', { ascending: false })
         .limit(30);
       setRanking(rnk ?? []);
+
+      // 9) Distribución de vidas (todos los survivor paid)
+      const { data: allLives } = await supabase
+        .from('wc_enrollments')
+        .select('lives_remaining')
+        .eq('mode', 'survivor')
+        .eq('payment_status', 'paid');
+      const dist = { alive3: 0, alive2: 0, alive1: 0, dead: 0, total: allLives?.length ?? 0 };
+      (allLives ?? []).forEach(x => {
+        if (x.lives_remaining === 3) dist.alive3++;
+        else if (x.lives_remaining === 2) dist.alive2++;
+        else if (x.lives_remaining === 1) dist.alive1++;
+        else dist.dead++;
+      });
+      setLivesDistribution(dist);
+
+      // 10) Picks de la comunidad para el día actual (conteo agregado por team)
+      if (day) {
+        const { data: dayPicks } = await supabase
+          .from('wc_picks')
+          .select('team_id, team:team_id (code, name_es)')
+          .eq('match_day_id', day.id);
+        const counts = {};
+        (dayPicks ?? []).forEach(p => {
+          const key = p.team_id;
+          if (!counts[key]) counts[key] = { team: p.team, count: 0 };
+          counts[key].count++;
+        });
+        const arr = Object.values(counts).sort((a, b) => b.count - a.count);
+        setCommunityPicks(arr);
+      } else {
+        setCommunityPicks([]);
+      }
+
+      // 11) Pool global
+      await loadPool();
     } finally {
       setLoading(false);
     }
-  }, [user.id]);
+  }, [user.id, loadPool]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -198,9 +238,29 @@ export default function MundialSurvivorScreen({ navigation }) {
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
-        {/* Header con vidas */}
+        {/* Pozo en vivo */}
+        <View style={styles.pozoCard}>
+          <View style={styles.pozoLeft}>
+            <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
+            <Text style={styles.pozoValue}>
+              ${((livesDistribution.total * (pool?.survivor_price ?? 10) * (1 - (pool?.fee_rate ?? 0.05))) || 0).toFixed(0)}
+            </Text>
+            <Text style={styles.pozoMeta}>
+              {livesDistribution.total} inscritos × ${pool?.survivor_price ?? 10}
+            </Text>
+          </View>
+          <View style={styles.pozoRight}>
+            <Text style={styles.pozoLabel}>VIVOS</Text>
+            <Text style={styles.pozoSurvivors}>
+              {livesDistribution.alive3 + livesDistribution.alive2 + livesDistribution.alive1}
+            </Text>
+            <Text style={styles.pozoMeta}>de {livesDistribution.total}</Text>
+          </View>
+        </View>
+
+        {/* Header con vidas propias */}
         <View style={styles.livesCard}>
-          <Text style={styles.livesLabel}>VIDAS RESTANTES</Text>
+          <Text style={styles.livesLabel}>TUS VIDAS</Text>
           <View style={styles.livesRow}>
             {[0, 1, 2].map((i) => (
               <Text key={i} style={[styles.heart, i < lives && styles.heartActive]}>
@@ -301,6 +361,66 @@ export default function MundialSurvivorScreen({ navigation }) {
           </View>
         )}
 
+        {tab === 'Comunidad' && (
+          <View>
+            <Text style={styles.sectionTitle}>Distribución de vidas</Text>
+            <View style={styles.distRow}>
+              <DistTile lives={3} count={livesDistribution.alive3} total={livesDistribution.total} color={COLORS.green} />
+              <DistTile lives={2} count={livesDistribution.alive2} total={livesDistribution.total} color={COLORS.gold} />
+              <DistTile lives={1} count={livesDistribution.alive1} total={livesDistribution.total} color={COLORS.orange} />
+              <DistTile lives={0} count={livesDistribution.dead}   total={livesDistribution.total} color={COLORS.red2} />
+            </View>
+
+            <Text style={styles.sectionTitle}>
+              Picks de la comunidad {nextDay && `· ${new Date(nextDay.date).toLocaleDateString('es-PA', { day:'2-digit', month:'short' })}`}
+            </Text>
+            <Text style={styles.communityHint}>
+              Cuántos users eligieron cada equipo en esta jornada. El más popular tiene más
+              riesgo si pierde (más users caen juntos).
+            </Text>
+            {communityPicks.length === 0 ? (
+              <Text style={styles.emptyText}>
+                Aún nadie hizo pick para esta jornada.
+              </Text>
+            ) : (
+              communityPicks.map((p) => {
+                const totalPicked = communityPicks.reduce((s, x) => s + x.count, 0);
+                const pct = totalPicked > 0 ? Math.round((p.count / totalPicked) * 100) : 0;
+                return (
+                  <View key={p.team?.code} style={styles.communityRow}>
+                    <Text style={styles.communityCode}>{p.team?.code}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.communityName}>{p.team?.name_es}</Text>
+                      <View style={styles.barTrack}>
+                        <View style={[styles.barFill, { width: `${pct}%` }]} />
+                      </View>
+                    </View>
+                    <View style={styles.communityStats}>
+                      <Text style={styles.communityPct}>{pct}%</Text>
+                      <Text style={styles.communityCount}>{p.count} picks</Text>
+                    </View>
+                  </View>
+                );
+              })
+            )}
+
+            <View style={styles.insightCard}>
+              <Text style={styles.insightTitle}>💡 Insight</Text>
+              <Text style={styles.insightText}>
+                {(() => {
+                  const totalPicked = communityPicks.reduce((s, x) => s + x.count, 0);
+                  const skipped = livesDistribution.total - totalPicked;
+                  if (livesDistribution.total === 0) return 'Aún no hay datos. Cuando los users se inscriban verás aquí las tendencias.';
+                  if (totalPicked === 0) return `${livesDistribution.total} inscritos vivos aún no hicieron pick. Si no pickean antes del deadline pierden vida.`;
+                  if (skipped > 0) return `${skipped} de ${livesDistribution.total} aún no hicieron pick. Recordatorio: si no eligen, pierden vida.`;
+                  const top = communityPicks[0];
+                  return `El ${Math.round(top.count / totalPicked * 100)}% eligió ${top.team?.name_es}. Si pierde, caen ${top.count} users juntos.`;
+                })()}
+              </Text>
+            </View>
+          </View>
+        )}
+
         {tab === 'Historial' && (
           <View>
             <Text style={styles.sectionTitle}>Mis picks resueltos</Text>
@@ -361,6 +481,19 @@ export default function MundialSurvivorScreen({ navigation }) {
   );
 }
 
+function DistTile({ lives, count, total, color }) {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  return (
+    <View style={[styles.distTile, { borderColor: color + '66' }]}>
+      <Text style={[styles.distLives, { color }]}>
+        {lives === 0 ? '✗' : '♥'.repeat(lives)}
+      </Text>
+      <Text style={styles.distCount}>{count}</Text>
+      <Text style={styles.distPct}>{pct}%</Text>
+    </View>
+  );
+}
+
 function TeamButton({ team, usage, selected, onPress, disabled }) {
   if (!team) return <View style={styles.teamBtn}><Text style={styles.teamBtnEmpty}>—</Text></View>;
   const capped = usage >= 2 && !selected;
@@ -408,6 +541,76 @@ const styles = StyleSheet.create({
   },
   enrollBtnText: {
     color: COLORS.white, fontFamily: FONTS.heading, fontSize: 16, letterSpacing: 2,
+  },
+
+  pozoCard: {
+    flexDirection: 'row', backgroundColor: COLORS.card,
+    borderColor: COLORS.neon + '66', borderWidth: 1,
+    borderRadius: RADIUS.lg, padding: SPACING.md,
+    marginBottom: SPACING.md, ...SHADOWS.card,
+  },
+  pozoLeft: {
+    flex: 1, alignItems: 'flex-start',
+    borderRightWidth: 1, borderRightColor: COLORS.line,
+    paddingRight: SPACING.md,
+  },
+  pozoRight: { flex: 1, alignItems: 'center', paddingLeft: SPACING.md },
+  pozoLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gray,
+    letterSpacing: 1.5, textTransform: 'uppercase',
+  },
+  pozoValue: {
+    fontFamily: FONTS.heading, fontSize: 36, color: COLORS.neon,
+    letterSpacing: 1, marginTop: 4,
+  },
+  pozoSurvivors: {
+    fontFamily: FONTS.heading, fontSize: 36, color: COLORS.green,
+    letterSpacing: 1, marginTop: 4,
+  },
+  pozoMeta: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 4 },
+
+  distRow: { flexDirection: 'row', gap: 6, marginBottom: SPACING.md },
+  distTile: {
+    flex: 1, paddingVertical: SPACING.sm,
+    backgroundColor: COLORS.card2, borderWidth: 1,
+    borderRadius: RADIUS.sm, alignItems: 'center',
+  },
+  distLives: {
+    fontFamily: FONTS.heading, fontSize: 16, letterSpacing: 0,
+  },
+  distCount: {
+    fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white, marginTop: 2,
+  },
+  distPct: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 },
+
+  communityHint: {
+    fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2,
+    marginBottom: SPACING.sm, lineHeight: 17,
+  },
+  communityRow: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
+    backgroundColor: COLORS.card, borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.sm, padding: SPACING.sm, marginBottom: 6,
+  },
+  communityCode: { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.neon, width: 50 },
+  communityName: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white },
+  barTrack: { height: 6, backgroundColor: COLORS.line, borderRadius: 3, marginTop: 4, overflow: 'hidden' },
+  barFill: { height: '100%', backgroundColor: COLORS.red, borderRadius: 3 },
+  communityStats: { alignItems: 'flex-end', minWidth: 64 },
+  communityPct: { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white },
+  communityCount: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray },
+
+  insightCard: {
+    backgroundColor: COLORS.gold + '14', borderColor: COLORS.gold + '66',
+    borderWidth: 1, borderRadius: RADIUS.md, padding: SPACING.md,
+    marginTop: SPACING.md,
+  },
+  insightTitle: {
+    fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gold,
+    letterSpacing: 1, textTransform: 'uppercase', marginBottom: 4,
+  },
+  insightText: {
+    fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, lineHeight: 18,
   },
 
   livesCard: {
