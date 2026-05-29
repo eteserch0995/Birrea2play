@@ -12,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
+import { supabase } from '../../../lib/supabase';
 
 function formatCountdown(targetIso) {
   if (!targetIso) return null;
@@ -25,11 +26,12 @@ function formatCountdown(targetIso) {
   return { closed: false, text: `${days}d ${hours}h ${mins}m` };
 }
 
-export default function MundialHomeScreen() {
+export default function MundialHomeScreen({ navigation }) {
   const { user } = useAuthStore();
   const { pool, loadPool, loading } = useWcStore();
   const [countdown, setCountdown] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [enrollments, setEnrollments] = useState({ survivor: null, polla: null });
 
   const role = user?.role ?? 'player';
   const isAdmin = role === 'admin';
@@ -37,6 +39,19 @@ export default function MundialHomeScreen() {
   useEffect(() => {
     if (!pool && !loading) loadPool();
   }, [pool, loading, loadPool]);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    (async () => {
+      const { data } = await supabase
+        .from('wc_enrollments')
+        .select('mode, payment_status, lives_remaining, total_points')
+        .eq('user_id', user.id);
+      const map = { survivor: null, polla: null };
+      (data ?? []).forEach((e) => { map[e.mode] = e; });
+      setEnrollments(map);
+    })();
+  }, [user?.id, refreshing]);
 
   useEffect(() => {
     if (!pool?.enrollment_deadline) return;
@@ -103,7 +118,16 @@ export default function MundialHomeScreen() {
         </View>
 
         <View style={styles.modesContainer}>
-          <View style={[styles.modeCard, styles.modeCardSurvivor]}>
+          <TouchableOpacity
+            style={[styles.modeCard, styles.modeCardSurvivor]}
+            onPress={() => {
+              if (enrollments.survivor?.payment_status === 'paid') {
+                navigation.navigate('MundialSurvivor');
+              } else {
+                navigation.navigate('MundialEnroll', { mode: 'survivor' });
+              }
+            }}
+          >
             <Text style={[styles.modePill, styles.pillSurvivor]}>SURVIVOR</Text>
             <Text style={styles.modeTitle}>3 Vidas</Text>
             <Text style={styles.modePrice}>${pool?.survivor_price ?? '10'}</Text>
@@ -112,11 +136,26 @@ export default function MundialHomeScreen() {
               equipo se puede usar máximo 2 veces. Sobreviví la fase de grupos.
             </Text>
             <View style={styles.modeFooter}>
-              <Text style={styles.modeStatus}>Próximamente</Text>
+              {enrollments.survivor?.payment_status === 'paid' ? (
+                <Text style={[styles.modeStatus, { color: COLORS.green }]}>
+                  ✓ Inscrito · {enrollments.survivor.lives_remaining}/3 vidas → JUGAR
+                </Text>
+              ) : (
+                <Text style={styles.modeStatus}>Tocá para inscribirte →</Text>
+              )}
             </View>
-          </View>
+          </TouchableOpacity>
 
-          <View style={[styles.modeCard, styles.modeCardPolla]}>
+          <TouchableOpacity
+            style={[styles.modeCard, styles.modeCardPolla]}
+            onPress={() => {
+              if (enrollments.polla?.payment_status === 'paid') {
+                navigation.navigate('MundialPolla');
+              } else {
+                navigation.navigate('MundialEnroll', { mode: 'polla' });
+              }
+            }}
+          >
             <Text style={[styles.modePill, styles.pillPolla]}>POLLA GANADORA</Text>
             <Text style={styles.modeTitle}>Predice marcadores</Text>
             <Text style={styles.modePrice}>${pool?.polla_price ?? '15'}</Text>
@@ -126,9 +165,15 @@ export default function MundialHomeScreen() {
               ganador.
             </Text>
             <View style={styles.modeFooter}>
-              <Text style={styles.modeStatus}>Próximamente</Text>
+              {enrollments.polla?.payment_status === 'paid' ? (
+                <Text style={[styles.modeStatus, { color: COLORS.green }]}>
+                  ✓ Inscrito · {enrollments.polla.total_points} pts → JUGAR
+                </Text>
+              ) : (
+                <Text style={styles.modeStatus}>Tocá para inscribirte →</Text>
+              )}
             </View>
-          </View>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.rulesCard}>

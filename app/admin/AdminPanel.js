@@ -26,6 +26,7 @@ import {
 } from '../../lib/eventHelpers';
 import CanchaCostoPicker from '../../components/CanchaCostoPicker';
 import GananciaCard      from '../../components/GananciaCard';
+import WCAdminPanel      from './WCAdminPanel';
 
 const Stack = createStackNavigator();
 
@@ -88,6 +89,7 @@ function AdminDashboard({ navigation }) {
     { label: 'Eventos',     icon: '📅', route: 'AdminEvents' },
     { label: 'Órdenes',     icon: '📦', route: 'AdminOrders',        badge: stats.orders },
     { label: 'Noticias',    icon: '📢', route: 'AdminNews' },
+    { label: 'Mundial 2026',icon: '🏆', route: 'AdminMundial' },
   ];
 
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
@@ -3112,6 +3114,7 @@ export default function AdminPanel() {
       <Stack.Screen name="AdminOrders"         component={AdminOrders} />
       <Stack.Screen name="AdminManageEvent"    component={AdminManageEvent} />
       <Stack.Screen name="AdminNews"           component={AdminNews} />
+      <Stack.Screen name="AdminMundial"        component={WCAdminPanel} />
     </Stack.Navigator>
   );
 }
