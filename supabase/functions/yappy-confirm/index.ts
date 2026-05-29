@@ -50,30 +50,50 @@ serve(async (req) => {
       return json({ error: 'Perfil no encontrado' }, 403);
     }
 
-    // 3. Parsear body
-    let body: { userId?: string; amount?: number | string; reference?: string };
+    // 3. Parsear body — SOLO confiamos en `reference` del cliente. El `amount`
+    //    se lee server-side desde `yappy_orders.amount` (no aceptar amount del cliente:
+    //    bypass de cobro encontrado por pentest 2026-05-21).
+    let body: { reference?: string };
     try { body = await req.json(); } catch { return json({ error: 'Body inválido' }, 400); }
 
-    const { userId, amount, reference } = body;
-    if (!userId || amount === undefined || !reference) {
-      return json({ error: 'Faltan campos requeridos' }, 400);
+    const { reference } = body;
+    if (!reference) {
+      return json({ error: 'Falta reference' }, 400);
     }
 
-    // 4. Verificar que el userId del body coincide con el perfil del JWT
-    if (userId !== profile.id) {
-      console.warn('[yappy-confirm] userId no coincide', { enviado: userId, perfil: profile.id });
-      return json({ error: 'userId no coincide con sesión' }, 403);
+    // 4. Buscar orden Yappy real (debe estar 'executed' y pertenecer al user del JWT)
+    //    yappy_orders.order_id es el reference que el cliente envía.
+    const { data: yappyOrder, error: ordErr } = await supabaseAdmin
+      .from('yappy_orders')
+      .select('user_id, amount, status')
+      .eq('order_id', reference)
+      .maybeSingle();
+
+    if (ordErr) {
+      console.error('[yappy-confirm] error buscando yappy_orders:', ordErr.message);
+      return json({ error: 'Error verificando orden' }, 500);
+    }
+    if (!yappyOrder) {
+      console.warn('[yappy-confirm] orden no encontrada:', reference);
+      return json({ error: 'Orden no encontrada' }, 404);
+    }
+    if (yappyOrder.user_id !== profile.id) {
+      console.warn('[yappy-confirm] orden no pertenece al user JWT', {
+        order_user: yappyOrder.user_id, jwt_user: profile.id,
+      });
+      return json({ error: 'Orden no pertenece a tu sesión' }, 403);
+    }
+    if (yappyOrder.status !== 'executed') {
+      return json({ error: `Orden en estado ${yappyOrder.status} (esperado 'executed')` }, 409);
     }
 
-    // 5. Validar monto
-    const amountNum = Number(amount);
-    if (!Number.isFinite(amountNum) || amountNum <= 0 || amountNum > 1000) {
-      return json({ error: 'Monto inválido' }, 400);
+    // 5. Monto desde DB (no del cliente). Redondear a 2 decimales.
+    const amountRounded = Math.round(Number(yappyOrder.amount) * 100) / 100;
+    if (!Number.isFinite(amountRounded) || amountRounded <= 0 || amountRounded > 1000) {
+      return json({ error: 'Monto inválido en orden' }, 400);
     }
-    // Redondear a 2 decimales para evitar acreditar $9.999999 como $10
-    const amountRounded = Math.round(amountNum * 100) / 100;
 
-    // 6. Idempotencia: verificar si ya se procesó esta referencia
+    // 6. Idempotencia: verificar si ya se acreditó esta referencia
     const descripcion = `yappy:${reference}`;
     const { data: existing, error: existErr } = await supabaseAdmin
       .from('wallet_transactions')
@@ -87,10 +107,9 @@ serve(async (req) => {
     }
     if (existing) return json({ success: true, duplicate: true });
 
-    // 7. Acreditar wallet — RPC firma: credit_wallet(p_user_id, p_monto, p_tipo, p_descripcion)
-    // FIX #10: usar amountRounded para evitar acreditar montos con diferencias de redondeo flotante
+    // 7. Acreditar wallet — RPC con service_role bypassa el caller check interno.
     const { error: rpcError } = await supabaseAdmin.rpc('credit_wallet', {
-      p_user_id:     userId,
+      p_user_id:     profile.id,
       p_monto:       amountRounded,
       p_tipo:        'recarga_yappy',
       p_descripcion: descripcion,
@@ -101,7 +120,7 @@ serve(async (req) => {
       return json({ error: 'Error acreditando wallet' }, 500);
     }
 
-    return json({ success: true });
+    return json({ success: true, amount: amountRounded });
   } catch (e) {
     console.error('[yappy-confirm] error no capturado:', (e as Error).message);
     return json({ error: 'Error interno' }, 500);

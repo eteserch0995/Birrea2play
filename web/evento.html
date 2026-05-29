@@ -179,6 +179,25 @@ const FASE_LABEL  = { grupos:'JORNADA', semis:'SEMIFINAL', cuartos:'CUARTOS', oc
 
 let STATE = { event:null, teams:[], players:{}, matches:[], activeTab:'fixture' };
 
+// ── XSS guard ──────────────────────────────────────────────────────────────
+// Escape de HTML para todo valor que venga del DB y se inserte en innerHTML.
+// Hallazgo pentest 2026-05-21: cualquier gestor podía guardar `<img src=x
+// onerror=...>` en evento.nombre / lugar / descripcion y robar sesión a cada
+// visitante del link compartido.
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+// Whitelist de URLs (solo https) para imágenes que vienen del DB. Bloquea
+// javascript: y data: que podrían ejecutar código.
+function safeUrl(u){
+  if (!u) return '';
+  const s = String(u).trim();
+  if (!/^https?:\/\//i.test(s)) return '';
+  return esc(s);
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function fmtDate(f,h){
@@ -255,8 +274,8 @@ function renderStandings(){
               </td>
               <td>
                 <div class="standings-team">
-                  <div class="team-dot" style="background:${r.team.color}"></div>
-                  <span style="font-size:13px;font-weight:600">${r.team.nombre}</span>
+                  <div class="team-dot" style="background:${esc(r.team.color)}"></div>
+                  <span style="font-size:13px;font-weight:600">${esc(r.team.nombre)}</span>
                 </div>
               </td>
               <td>${r.pj}</td>
@@ -288,16 +307,16 @@ function renderMatchCard(m){
   const aColor=matchColor(m,'away');
 
   const homeTeam=tbd
-    ?`<div class="match-tbd">${hName}</div>`
+    ?`<div class="match-tbd">${esc(hName)}</div>`
     :`<div class="match-team ${homeWin?'match-winner':fin?'match-loser':''}">
-        <div class="match-team-dot" style="background:${hColor}"></div>
-        <span class="match-team-name">${hName}</span>
+        <div class="match-team-dot" style="background:${esc(hColor)}"></div>
+        <span class="match-team-name">${esc(hName)}</span>
       </div>`;
   const awayTeam=tbd
-    ?`<div class="match-tbd away">${aName}</div>`
+    ?`<div class="match-tbd away">${esc(aName)}</div>`
     :`<div class="match-team away ${awayWin?'match-winner':fin?'match-loser':''}">
-        <div class="match-team-dot" style="background:${aColor}"></div>
-        <span class="match-team-name">${aName}</span>
+        <div class="match-team-dot" style="background:${esc(aColor)}"></div>
+        <span class="match-team-name">${esc(aName)}</span>
       </div>`;
 
   const scoreHtml=fin
@@ -357,19 +376,21 @@ function renderTeams(){
       const parts=raw.split('·').map(s=>s.trim());
       const dorsal=parts[0]||'';
       const pos=parts[1]||'';
+      // pos viene de un split de telefono — saneado a [A-Z]+ para que el className no se rompa.
+      const posSafe = /^[A-Z]+$/.test(pos) ? pos : '';
       return `
         <tr>
-          <td class="roster-num">${dorsal}</td>
-          <td class="roster-name">${p.nombre}</td>
-          <td class="roster-pos">${pos?`<span class="pos-badge pos-${pos}">${pos}</span>`:''}</td>
+          <td class="roster-num">${esc(dorsal)}</td>
+          <td class="roster-name">${esc(p.nombre)}</td>
+          <td class="roster-pos">${posSafe?`<span class="pos-badge pos-${posSafe}">${posSafe}</span>`:''}</td>
         </tr>`;
     }).join('');
     return `
       <div class="team-card">
         <div class="team-card-header">
-          <div class="team-color-bar" style="background:${team.color}"></div>
+          <div class="team-color-bar" style="background:${esc(team.color)}"></div>
           <div>
-            <div class="team-card-name">${team.nombre}</div>
+            <div class="team-card-name">${esc(team.nombre)}</div>
             <div class="team-card-sub">${players.length} jugadores</div>
           </div>
         </div>
@@ -384,13 +405,16 @@ function renderHero(){
   const emoji=SPORT_EMOJI[ev.deporte]||'🏅';
   const isActive=ev.status==='active';
 
+  // title y .content de meta tags NO son innerHTML, no necesitan esc, pero ev.cancha_foto_url
+  // (URL externa al merchant) sí debe validarse como https para no inyectar javascript:.
   document.title=`${ev.nombre} — Birrea2Play`;
   document.getElementById('og-title').content=`${ev.nombre} — Birrea2Play`;
   document.getElementById('og-desc').content=`${ev.deporte}·${ev.formato} | ${ev.lugar||'Panamá'} | ${fmtDate(ev.fecha,ev.hora)}`;
-  if(ev.cancha_foto_url) document.getElementById('og-img').content=ev.cancha_foto_url;
+  const safeFoto = safeUrl(ev.cancha_foto_url);
+  if (safeFoto) document.getElementById('og-img').content = safeFoto;
 
-  const heroHtml=ev.cancha_foto_url
-    ?`<img class="hero-img" src="${ev.cancha_foto_url}" alt="${ev.nombre}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="hero-placeholder" style="display:none">${emoji}</div>`
+  const heroHtml = safeFoto
+    ?`<img class="hero-img" src="${safeFoto}" alt="${esc(ev.nombre)}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'"/><div class="hero-placeholder" style="display:none">${emoji}</div>`
     :`<div class="hero-placeholder">${emoji}</div>`;
 
   return `
@@ -399,13 +423,13 @@ function renderHero(){
       <div class="hero-badges">
         <span class="badge" style="color:${status.color};border-color:${status.border};background:${status.border}22">${status.label}</span>
         ${isActive?'<span class="live-badge"><span class="live-dot"></span>EN VIVO</span>':''}
-        <span class="badge" style="color:var(--gray);border-color:var(--navy)">${emoji} ${ev.deporte||'Deporte'} · ${ev.formato}</span>
-        ${ev.genero&&ev.genero!=='Mixto'?`<span class="badge" style="color:var(--gray);border-color:var(--navy)">👤 ${ev.genero}</span>`:''}
+        <span class="badge" style="color:var(--gray);border-color:var(--navy)">${emoji} ${esc(ev.deporte)||'Deporte'} · ${esc(ev.formato)}</span>
+        ${ev.genero&&ev.genero!=='Mixto'?`<span class="badge" style="color:var(--gray);border-color:var(--navy)">👤 ${esc(ev.genero)}</span>`:''}
       </div>
-      <h1 class="hero-title">${ev.nombre}</h1>
+      <h1 class="hero-title">${esc(ev.nombre)}</h1>
       <div class="hero-meta">
-        <div class="hero-meta-row">📅 <strong>${fmtDate(ev.fecha,ev.hora)}</strong></div>
-        <div class="hero-meta-row">📍 <strong>${ev.lugar||'—'}${ev.direccion?` · ${ev.direccion}`:''}</strong></div>
+        <div class="hero-meta-row">📅 <strong>${esc(fmtDate(ev.fecha,ev.hora))}</strong></div>
+        <div class="hero-meta-row">📍 <strong>${esc(ev.lugar)||'—'}${ev.direccion?` · ${esc(ev.direccion)}`:''}</strong></div>
         ${ev.precio>0?`<div class="hero-meta-row">💵 <strong>$${parseFloat(ev.precio).toFixed(2)}</strong> por jugador</div>`:''}
         <div class="hero-meta-row">👥 <strong>${STATE.teams.length} equipos · ${STATE.event.cupos_total||0} jugadores</strong></div>
       </div>

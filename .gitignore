@@ -46,3 +46,6 @@ Skills/
 STORE_AUDIT_REPORT.md
 supabase/.temp/
 .vercel
+
+# Carpeta de build Expo prebuild (no debe commitearse)
+android/

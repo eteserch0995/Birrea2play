@@ -20,6 +20,7 @@ export default function MatchupCard({ match, teams }) {
       <Text style={styles.phaseLabel}>{phaseLabel}</Text>
       <View style={styles.row}>
         <View style={{ flex: 1 }}>
+          {match.seed_home ? <Text style={styles.seedLabel}>{match.seed_home}</Text> : null}
           <TeamBadge team={home} size={32} />
         </View>
         <View style={styles.score}>
@@ -35,6 +36,7 @@ export default function MatchupCard({ match, teams }) {
           )}
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
+          {match.seed_away ? <Text style={[styles.seedLabel, { textAlign: 'right' }]}>{match.seed_away}</Text> : null}
           <TeamBadge team={away} size={32} />
         </View>
       </View>
@@ -46,6 +48,7 @@ const styles = StyleSheet.create({
   card:        { backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.navy },
   phaseLabel:  { fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gold, letterSpacing: 1.5, marginBottom: 6, textTransform: 'uppercase' },
   row:         { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  seedLabel:   { fontFamily: FONTS.bodyBold, fontSize: 9, color: COLORS.gold, letterSpacing: 1, marginBottom: 4, opacity: 0.85 },
   score:       { alignItems: 'center', minWidth: 60 },
   scoreText:   { fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white, letterSpacing: 1 },
   vsText:      { fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gray, letterSpacing: 1 },

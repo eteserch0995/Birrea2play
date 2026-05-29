@@ -73,7 +73,12 @@ export default function EventCard({ event, onPress }) {
                 { width: `${Math.min(pct * 100, 100)}%`, backgroundColor: pct > 0.9 ? COLORS.red : COLORS.green },
               ]} />
             </View>
-            <Text style={styles.cuposText}>{inscritos}/{event.cupos_total}</Text>
+            <Text style={styles.cuposText}>
+              {inscritos}/{event.cupos_total}
+              {event.cupos_hombres != null && event.cupos_mujeres != null
+                ? `  · ♂${event.cupos_hombres} ♀${event.cupos_mujeres}`
+                : ''}
+            </Text>
           </View>
         )}
       </View>

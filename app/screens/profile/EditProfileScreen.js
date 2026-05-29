@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  StyleSheet, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Modal,
+  StyleSheet, Alert, ActivityIndicator, KeyboardAvoidingView, Platform, Modal, Image,
 } from 'react-native';
 import { supabase } from '../../../lib/supabase';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -11,6 +11,7 @@ import useAuthStore from '../../../store/authStore';
 import { updateUserProfile, uploadAvatar } from '../../../lib/auth';
 import SportChips from '../../../components/SportChips';
 import { getSportTerms } from '../../../lib/sportTerms';
+import AvatarCropModal from '../../../components/AvatarCropModal';
 
 const NIVELES  = ['Recreativo', 'Amateur', 'Semi-profesional', 'Profesional'];
 const GENEROS  = ['Masculino', 'Femenino'];
@@ -170,19 +171,36 @@ export default function EditProfileScreen({ navigation }) {
 
   const upd = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
+  // En web pasamos por AvatarCropModal (crop circular interactivo con zoom).
+  // En native usamos el cropper nativo de expo-image-picker (allowsEditing).
+  const [cropModalUri, setCropModalUri] = useState(null);
+
   const pickPhoto = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted') {
+      Alert.alert('Permiso requerido', 'Necesitamos acceso a tus fotos para cambiar el avatar.');
+      return;
+    }
+    const isWeb = Platform.OS === 'web';
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.7,
+      mediaTypes:    ['images'],
+      allowsEditing: !isWeb, // En web pondrá el cropper propio luego del pick
+      aspect:        [1, 1],
+      quality:       0.9,
     });
     if (result.canceled) return;
     const asset = result.assets[0];
-    setPhotoUri(Platform.OS === 'web' ? asset : asset.uri);
+    if (isWeb) {
+      // Abre nuestro cropper circular con la imagen original
+      setCropModalUri(asset.uri);
+    } else {
+      // Native ya recortó con el dialog del sistema
+      setPhotoUri(asset.uri);
+    }
   };
+
+  // URI para preview: en web es blob: (string) o asset.uri, en native es el string directo
+  const previewUri = typeof photoUri === 'string' ? photoUri : photoUri?.uri;
 
   const toggleDeporte = (label) => {
     const current = form.deportes;
@@ -202,7 +220,7 @@ export default function EditProfileScreen({ navigation }) {
     setSaving(true);
     try {
       if (photoUri) {
-        try { await updatePhoto(photoUri); } catch (_) {}
+        await updatePhoto(photoUri);
       }
       const patch = {
         nombre:              form.nombre.trim(),
@@ -238,10 +256,23 @@ export default function EditProfileScreen({ navigation }) {
             <Text style={styles.title}>EDITAR PERFIL</Text>
           </View>
 
-          {/* Photo */}
-          <TouchableOpacity style={styles.photoPicker} onPress={pickPhoto}>
-            <Text style={styles.photoText}>{photoUri ? '✓ Nueva foto seleccionada' : '📷 Cambiar foto de perfil'}</Text>
-          </TouchableOpacity>
+          {/* Photo: avatar circular con preview de la imagen seleccionada o la actual */}
+          <View style={styles.photoBlock}>
+            <TouchableOpacity onPress={pickPhoto} style={styles.avatarWrap} activeOpacity={0.8}>
+              {(previewUri || user?.foto_url)
+                ? <Image source={{ uri: previewUri ?? user.foto_url }} style={styles.avatar} />
+                : <View style={[styles.avatar, styles.avatarEmpty]}>
+                    <Text style={styles.avatarInitial}>{(form.nombre || 'B').trim().charAt(0).toUpperCase()}</Text>
+                  </View>
+              }
+              <View style={styles.avatarBadge}>
+                <Text style={styles.avatarBadgeText}>📷</Text>
+              </View>
+            </TouchableOpacity>
+            <Text style={styles.photoHint}>
+              {previewUri ? '✓ Lista — guardá para subirla' : 'Tocá la foto para cambiarla'}
+            </Text>
+          </View>
 
           <Field label="Nombre completo" value={form.nombre} onChangeText={(v) => upd('nombre', v)} />
           <Field label="Teléfono" value={form.telefono} onChangeText={(v) => upd('telefono', v)} keyboardType="phone-pad" />
@@ -345,6 +376,19 @@ export default function EditProfileScreen({ navigation }) {
             .then(({ data }) => setPendingGenderReq(data));
         }}
       />
+
+      {/* Cropper circular para web — solo aparece cuando cropModalUri tiene valor */}
+      <AvatarCropModal
+        visible={!!cropModalUri}
+        sourceUri={cropModalUri}
+        onCancel={() => setCropModalUri(null)}
+        onCropped={(blob) => {
+          // Generamos un blob URL para preview + guardamos el blob real para upload.
+          const blobUri = URL.createObjectURL(blob);
+          setPhotoUri({ uri: blobUri, file: blob });
+          setCropModalUri(null);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -366,16 +410,14 @@ const styles = StyleSheet.create({
   header:      { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, marginBottom: SPACING.md },
   back:        { fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white },
   title:       { fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white, letterSpacing: 3 },
-  photoPicker: {
-    backgroundColor: COLORS.card,
-    borderRadius: RADIUS.md,
-    padding: SPACING.md,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.navy,
-    borderStyle: 'dashed',
-  },
-  photoText:     { fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 15 },
+  photoBlock:    { alignItems: 'center', marginBottom: SPACING.md, gap: SPACING.sm },
+  avatarWrap:    { position: 'relative' },
+  avatar:        { width: 120, height: 120, borderRadius: 60, backgroundColor: COLORS.card, borderWidth: 2, borderColor: COLORS.navy },
+  avatarEmpty:   { alignItems: 'center', justifyContent: 'center' },
+  avatarInitial: { fontFamily: FONTS.heading, fontSize: 48, color: COLORS.gray2, letterSpacing: 2 },
+  avatarBadge:   { position: 'absolute', bottom: 0, right: 0, width: 36, height: 36, borderRadius: 18, backgroundColor: COLORS.gold, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: COLORS.bg },
+  avatarBadgeText:{ fontSize: 16 },
+  photoHint:     { fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 },
   input: {
     backgroundColor: COLORS.card,
     borderRadius: RADIUS.md,

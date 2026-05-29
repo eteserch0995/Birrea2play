@@ -282,27 +282,47 @@ function formatDate(fecha, hora) {
   return hora ? `${dateStr} · ${hora.slice(0, 5)}` : dateStr;
 }
 
+// XSS guard: escape de HTML y whitelist de URL https para datos del DB.
+// Hallazgo pentest 2026-05-21.
+function esc(s){
+  return String(s ?? '').replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[c]));
+}
+function safeUrl(u){
+  if (!u) return '';
+  const s = String(u).trim();
+  if (!/^https?:\/\//i.test(s)) return '';
+  return esc(s);
+}
+// UUID validator (id va como parámetro de URL → debe ser uuid estricto)
+function safeUuid(id){
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id||'')) ? id : '';
+}
+
 function renderCard(ev) {
   const status = STATUS_MAP[ev.status] || STATUS_MAP.open;
   const emoji = SPORT_EMOJI[ev.deporte] || '🏅';
   const precio = parseFloat(ev.precio || 0);
-  const img = ev.cancha_foto_url
-    ? `<img class="event-card-img" src="${ev.cancha_foto_url}" alt="${ev.nombre}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" /><div class="event-card-img-placeholder" style="display:none">${emoji}</div>`
+  const safeFoto = safeUrl(ev.cancha_foto_url);
+  const img = safeFoto
+    ? `<img class="event-card-img" src="${safeFoto}" alt="${esc(ev.nombre)}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'" /><div class="event-card-img-placeholder" style="display:none">${emoji}</div>`
     : `<div class="event-card-img-placeholder">${emoji}</div>`;
 
+  const idSafe = safeUuid(ev.id);
   return `
-    <div class="event-card" onclick="window.location.href='evento.html?id=${ev.id}'">
+    <div class="event-card" onclick="window.location.href='evento.html?id=${idSafe}'">
       ${img}
       <div class="event-card-body">
         <div class="event-card-top">
-          <div class="event-card-name">${ev.nombre}</div>
+          <div class="event-card-name">${esc(ev.nombre)}</div>
           <span class="status-badge" style="background:${status.bg};color:${status.color};border:1px solid ${status.border}">${status.label}</span>
         </div>
         <div class="event-card-meta">
-          <div class="meta-row">📅 <strong>${formatDate(ev.fecha, ev.hora)}</strong></div>
-          ${ev.lugar ? `<div class="meta-row">📍 ${ev.lugar}</div>` : ''}
-          <div class="meta-row">🏅 ${ev.deporte || 'Deporte'} · ${ev.formato}</div>
-          ${ev.genero && ev.genero !== 'Mixto' ? `<div class="meta-row">👤 ${ev.genero}</div>` : ''}
+          <div class="meta-row">📅 <strong>${esc(formatDate(ev.fecha, ev.hora))}</strong></div>
+          ${ev.lugar ? `<div class="meta-row">📍 ${esc(ev.lugar)}</div>` : ''}
+          <div class="meta-row">🏅 ${esc(ev.deporte) || 'Deporte'} · ${esc(ev.formato)}</div>
+          ${ev.genero && ev.genero !== 'Mixto' ? `<div class="meta-row">👤 ${esc(ev.genero)}</div>` : ''}
         </div>
         <div class="event-card-footer">
           <div class="event-price">

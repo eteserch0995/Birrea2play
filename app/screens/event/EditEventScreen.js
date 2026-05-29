@@ -12,6 +12,8 @@ import { sendPushNotificationsToEventPlayers } from '../../../lib/notifications'
 import { calcTeams } from '../../../lib/eventHelpers';
 import { DateField, TimeField } from '../../../components/DateTimeField';
 import { uploadImage } from '../../../lib/uploadImage';
+import { processEventImage } from '../../../lib/processEventImage';
+import CanchaCostoPicker from '../../../components/CanchaCostoPicker';
 
 export default function EditEventScreen({ route, navigation }) {
   const { eventId } = route.params ?? {};
@@ -41,12 +43,20 @@ export default function EditEventScreen({ route, navigation }) {
       maps_url:            data.maps_url ?? '',
       precio:              String(data.precio ?? '0'),
       cupos_total:         data.cupos_total != null ? String(data.cupos_total) : '',
+      cupos_hombres:       data.cupos_hombres != null ? String(data.cupos_hombres) : '',
+      cupos_mujeres:       data.cupos_mujeres != null ? String(data.cupos_mujeres) : '',
       cupos_ilimitado:     data.cupos_ilimitado ?? false,
+      cancha_costo:        data.cancha_costo ?? null,
+      cancha_tarifa_id:    data.cancha_tarifa_id ?? null,
+      duracion_horas:      data.duracion_horas ?? null,
       descripcion:         data.descripcion ?? '',
       jugadores_por_equipo: data.jugadores_por_equipo ?? null,
       genero:              data.genero ?? null,
       cancha_foto_url:     data.cancha_foto_url ?? null,
       vidas_por_equipo:    data.vidas_por_equipo ?? 3,
+      jornadas:            data.jornadas != null ? String(data.jornadas) : '1',
+      ida_y_vuelta:        data.ida_y_vuelta ?? false,
+      num_grupos:          data.num_grupos ?? 1,
     });
     setLoading(false);
   }
@@ -58,21 +68,26 @@ export default function EditEventScreen({ route, navigation }) {
 
   const pickPhoto = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted') {
+      Alert.alert('Permiso requerido', 'Habilitá el acceso a tus fotos para poder subir la imagen del evento.');
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true, aspect: [16, 9], quality: 0.75,
+      allowsEditing: Platform.OS !== 'web', aspect: [16, 9], quality: 0.85,
     });
     if (result.canceled) return;
     const asset = result.assets[0];
-    setNewImageUri(Platform.OS === 'web' ? asset : asset.uri);
+    try {
+      const processed = await processEventImage(Platform.OS === 'web' ? asset : asset.uri);
+      setNewImageUri(processed);
+    } catch (e) {
+      Alert.alert('No se pudo procesar la imagen', e.message || 'Probá con otra foto.');
+    }
   };
 
   const uploadPhoto = async (source) => {
-    const uri = typeof source === 'string' ? source : source?.uri ?? '';
-    const ext = (uri.split('.').pop() ?? '').toLowerCase().replace(/\?.*$/, '');
-    const safeExt = ['jpg','jpeg','png','webp','heic'].includes(ext) ? (ext === 'jpeg' ? 'jpg' : ext) : 'jpg';
-    const path = `events/${eventId}_${Date.now()}.${safeExt}`;
+    const path = `events/${eventId}_${Date.now()}.jpg`;
     return uploadImage('event-photos', path, source);
   };
 
@@ -88,6 +103,16 @@ export default function EditEventScreen({ route, navigation }) {
       const cuposVal = parseInt(form.cupos_total);
       if (!cuposVal || cuposVal <= 0) {
         Alert.alert('Cupos inválidos', 'Introduce un número válido de cupos o activa "Cupos ilimitados".'); return;
+      }
+      if (form.genero === 'Mixto' && (form.cupos_hombres !== '' || form.cupos_mujeres !== '')) {
+        const ch = parseInt(form.cupos_hombres);
+        const cm = parseInt(form.cupos_mujeres);
+        if (isNaN(ch) || isNaN(cm) || ch < 0 || cm < 0) {
+          Alert.alert('Cupos por género inválidos', 'Ingresá un número válido (0 o más) en cupos hombres y mujeres.'); return;
+        }
+        if (ch + cm !== cuposVal) {
+          Alert.alert('La suma no coincide', `Hombres (${ch}) + Mujeres (${cm}) = ${ch + cm}, pero los cupos totales son ${cuposVal}. Ajustá la división.`); return;
+        }
       }
     }
     if (teamCalc && !teamCalc.esExacto) {
@@ -115,12 +140,20 @@ export default function EditEventScreen({ route, navigation }) {
         maps_url:             form.maps_url.trim() || null,
         precio:               precioVal,
         cupos_total:          form.cupos_ilimitado ? null : (parseInt(form.cupos_total) || null),
+        cupos_hombres:        (form.genero === 'Mixto' && !form.cupos_ilimitado && form.cupos_hombres !== '') ? (parseInt(form.cupos_hombres) || 0) : null,
+        cupos_mujeres:        (form.genero === 'Mixto' && !form.cupos_ilimitado && form.cupos_mujeres !== '') ? (parseInt(form.cupos_mujeres) || 0) : null,
         cupos_ilimitado:      form.cupos_ilimitado,
+        cancha_costo:         form.cancha_costo != null ? Number(form.cancha_costo) : null,
+        cancha_tarifa_id:     form.cancha_tarifa_id ?? null,
+        duracion_horas:       form.duracion_horas ?? null,
         descripcion:          form.descripcion || null,
         jugadores_por_equipo: form.jugadores_por_equipo,
         genero:               form.genero || null,
         cancha_foto_url,
         vidas_por_equipo:     form.formato === '2 Vidas' ? (form.vidas_por_equipo ?? 3) : null,
+        jornadas:             form.formato === 'Liga' ? (parseInt(form.jornadas) || 1) : null,
+        ida_y_vuelta:         form.formato === 'Liga' ? !!form.ida_y_vuelta : false,
+        num_grupos:           form.formato === 'Torneo' ? (parseInt(form.num_grupos) || 1) : null,
       }).eq('id', eventId);
       if (error) throw error;
 
@@ -143,7 +176,9 @@ export default function EditEventScreen({ route, navigation }) {
     return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
   }
 
-  const photoUri = (typeof newImageUri === 'object' && newImageUri?.uri) ? newImageUri.uri : (newImageUri ?? form.cancha_foto_url);
+  const photoUri = (typeof newImageUri === 'object' && (newImageUri?.previewUrl || newImageUri?.uri))
+    ? (newImageUri.previewUrl || newImageUri.uri)
+    : (newImageUri ?? form.cancha_foto_url);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -195,6 +230,40 @@ export default function EditEventScreen({ route, navigation }) {
                 ))}
               </View>
             </View>
+          )}
+
+          {form.formato === 'Liga' && (
+            <>
+              <Text style={styles.label}>Jornadas (vueltas)</Text>
+              <View style={styles.chipRow}>
+                {['1','2','3'].map((j) => (
+                  <TouchableOpacity key={j} style={[styles.chip, String(form.jornadas) === j && styles.chipActive]} onPress={() => upd('jornadas', j)}>
+                    <Text style={[styles.chipText, String(form.jornadas) === j && { color: COLORS.white }]}>{j}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm }}>
+                <TouchableOpacity
+                  style={[styles.chip, form.ida_y_vuelta && styles.chipActive]}
+                  onPress={() => upd('ida_y_vuelta', !form.ida_y_vuelta)}
+                >
+                  <Text style={[styles.chipText, form.ida_y_vuelta && { color: COLORS.white }]}>Ida y vuelta</Text>
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
+
+          {form.formato === 'Torneo' && (
+            <>
+              <Text style={styles.label}>Número de grupos</Text>
+              <View style={styles.chipRow}>
+                {[1,2,3,4].map((g) => (
+                  <TouchableOpacity key={g} style={[styles.chip, form.num_grupos === g && styles.chipActive]} onPress={() => upd('num_grupos', g)}>
+                    <Text style={[styles.chipText, form.num_grupos === g && { color: COLORS.white }]}>{g}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
           )}
 
           <Text style={styles.label}>Género</Text>
@@ -256,8 +325,52 @@ export default function EditEventScreen({ route, navigation }) {
             <>
               <Text style={styles.label}>Cupos totales</Text>
               <TextInput style={styles.input} value={form.cupos_total} onChangeText={(v) => upd('cupos_total', v)} keyboardType="number-pad" placeholder="20" placeholderTextColor={COLORS.gray} />
+
+              {form.genero === 'Mixto' && (
+                <View style={{ backgroundColor: COLORS.card, padding: SPACING.md, borderRadius: RADIUS.md, marginTop: SPACING.sm, borderWidth: 1, borderColor: COLORS.navy }}>
+                  <Text style={[styles.label, { marginTop: 0, marginBottom: SPACING.sm }]}>Cupos por género (Mixto)</Text>
+                  <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.label, { marginTop: 0 }]}>♂ Hombres</Text>
+                      <TextInput style={styles.input} value={form.cupos_hombres} onChangeText={(v) => upd('cupos_hombres', v)} keyboardType="number-pad" placeholder="12" placeholderTextColor={COLORS.gray} />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.label, { marginTop: 0 }]}>♀ Mujeres</Text>
+                      <TextInput style={styles.input} value={form.cupos_mujeres} onChangeText={(v) => upd('cupos_mujeres', v)} keyboardType="number-pad" placeholder="8" placeholderTextColor={COLORS.gray} />
+                    </View>
+                  </View>
+                  {(form.cupos_hombres !== '' || form.cupos_mujeres !== '') && form.cupos_total !== '' && (() => {
+                    const ch = parseInt(form.cupos_hombres) || 0;
+                    const cm = parseInt(form.cupos_mujeres) || 0;
+                    const ct = parseInt(form.cupos_total) || 0;
+                    const ok = ch + cm === ct;
+                    return (
+                      <Text style={{ marginTop: SPACING.sm, fontSize: 12, color: ok ? COLORS.green : COLORS.red, fontFamily: FONTS.body }}>
+                        {ok ? `✓ Suma OK: ${ch} + ${cm} = ${ct}` : `⚠ Suma ${ch + cm}, esperaba ${ct}`}
+                      </Text>
+                    );
+                  })()}
+                  <Text style={{ marginTop: 4, fontSize: 11, color: COLORS.gray, fontFamily: FONTS.body }}>
+                    Opcional. Si lo dejás vacío, los cupos se asignan por orden de inscripción sin distinción de género.
+                  </Text>
+                </View>
+              )}
             </>
           )}
+
+          {/* Costo de la cancha — base para calcular la ganancia del gestor */}
+          <CanchaCostoPicker
+            deporte={form.deporte}
+            jugadoresPorEquipo={form.jugadores_por_equipo}
+            costoValue={form.cancha_costo}
+            tarifaIdValue={form.cancha_tarifa_id}
+            duracionValue={form.duracion_horas}
+            onChange={({ cancha_costo, cancha_tarifa_id, duracion_horas }) => {
+              upd('cancha_costo', cancha_costo);
+              upd('cancha_tarifa_id', cancha_tarifa_id);
+              upd('duracion_horas', duracion_horas);
+            }}
+          />
 
           <Text style={styles.label}>Jugadores por equipo</Text>
           <View style={styles.chipRow}>

@@ -7,8 +7,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
 import { supabase } from '../../../lib/supabase';
-import WalletHero from '../../../components/WalletHero';
-import StatBox from '../../../components/StatBox';
 import PlayerAvatar from '../../../components/PlayerAvatar';
 import EventCard from '../../../components/EventCard';
 import { useAppRefresh } from '../../../hooks/useAppRefresh';
@@ -20,11 +18,12 @@ export default function HomeScreen({ navigation }) {
   const [error,        setError]        = React.useState(null);
   const [mvpCount,     setMvpCount]     = React.useState(0);
   const [totalEvents,  setTotalEvents]  = React.useState(0);
+  const [myMvps,       setMyMvps]       = React.useState([]); // [{ id, event_id, votos_totales, evento, fecha }]
 
   const fetchData = useCallback(async () => {
     setError(null);
     try {
-      const [{ data: rawEvents, error: evErr }, { count: mvps }, { count: evTotal }] = await Promise.all([
+      const [{ data: rawEvents, error: evErr }, { count: mvps }, { count: evTotal }, { data: myMvpRows }] = await Promise.all([
         supabase.from('events').select('*').in('status', ['open', 'active']).eq('visible', true).order('fecha').limit(3),
         user?.id
           ? supabase.from('mvp_results').select('id', { count: 'exact', head: true }).eq('user_id', user.id)
@@ -32,6 +31,13 @@ export default function HomeScreen({ navigation }) {
         user?.id
           ? supabase.from('event_registrations').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('status', 'confirmed')
           : Promise.resolve({ count: 0 }),
+        user?.id
+          ? supabase.from('mvp_results')
+              .select('id, event_id, votos_totales, premio_wallet, created_at, event:events!event_id(nombre, fecha, deporte)')
+              .eq('user_id', user.id)
+              .order('created_at', { ascending: false })
+              .limit(5)
+          : Promise.resolve({ data: [] }),
       ]);
       if (evErr) throw new Error(evErr.message);
 
@@ -55,6 +61,7 @@ export default function HomeScreen({ navigation }) {
       setEvents(events);
       setMvpCount(mvps ?? 0);
       setTotalEvents(evTotal ?? 0);
+      setMyMvps(myMvpRows ?? []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -122,17 +129,7 @@ export default function HomeScreen({ navigation }) {
           );
         })()}
 
-        {/* ── Wallet hero ── */}
-        <WalletHero balance={walletBalance} onPress={() => navigation.navigate('Wallet')} />
-
-        {/* ── Stats ── */}
-        <View style={styles.statsRow}>
-          <StatBox icon="⚽" value={user?.actividades_completadas ?? 0} label="Actividades" />
-          <StatBox icon="📅" value={totalEvents} label="Eventos" />
-          <StatBox icon="🏆" value={mvpCount} label="MVPs" />
-        </View>
-
-        {/* ── Próximos eventos ── */}
+        {/* ── Próximos eventos: PRIMER bloque visible para foco en agenda ── */}
         <SectionHeader title="Próximos eventos" onPress={() => navigation.navigate('Eventos')} />
         {loading
           ? <ActivityIndicator color={COLORS.red} style={{ marginTop: SPACING.md }} />
@@ -166,6 +163,39 @@ export default function HomeScreen({ navigation }) {
                 ))
         }
 
+        {/* ── Barra compacta: Wallet + Stats en una sola fila scrollable ── */}
+        <View style={styles.statsBarWrap}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsBar}>
+            <MiniStat icon="💰" value={`$${Number(walletBalance ?? 0).toFixed(2)}`} label="Saldo" onPress={() => navigation.navigate('Wallet')} highlight />
+            <MiniStat icon="⚽" value={user?.actividades_completadas ?? 0} label="Actividades" />
+            <MiniStat icon="📅" value={totalEvents} label="Eventos" />
+            <MiniStat icon="🏆" value={mvpCount} label="MVPs" />
+          </ScrollView>
+        </View>
+
+        {/* ── Mis MVPs: carrusel con los últimos premios ganados ── */}
+        {myMvps.length > 0 && (
+          <>
+            <SectionHeader title="Mis MVPs" onPress={() => navigation.navigate('Profile')} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.mvpStrip}>
+              {myMvps.map((m) => (
+                <TouchableOpacity
+                  key={m.id}
+                  style={styles.mvpChip}
+                  onPress={() => navigation.navigate('Eventos', { screen: 'EventDetail', params: { eventId: m.event_id } })}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.mvpChipTrophy}>🏆</Text>
+                  <Text style={styles.mvpChipEvento} numberOfLines={1}>{m.event?.nombre ?? 'Evento'}</Text>
+                  <Text style={styles.mvpChipMeta}>
+                    {m.votos_totales ?? 0} voto{m.votos_totales === 1 ? '' : 's'}
+                    {m.premio_wallet ? ` · +$${Number(m.premio_wallet).toFixed(0)}` : ''}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </>
+        )}
 
         <View style={{ height: SPACING.xxl }} />
       </ScrollView>
@@ -181,6 +211,25 @@ function SectionHeader({ title, onPress }) {
         <Text style={secStyles.more}>Ver todo →</Text>
       </TouchableOpacity>
     </View>
+  );
+}
+
+// Chip compacto para la barra horizontal de stats. El saldo va con `highlight`
+// para que se vea como CTA tocable (sin robar el foco visual a los eventos).
+function MiniStat({ icon, value, label, onPress, highlight }) {
+  const Wrapper = onPress ? TouchableOpacity : View;
+  return (
+    <Wrapper
+      style={[styles.miniStat, highlight && styles.miniStatHighlight]}
+      onPress={onPress}
+      activeOpacity={0.85}
+    >
+      <Text style={styles.miniStatIcon}>{icon}</Text>
+      <View>
+        <Text style={[styles.miniStatValue, highlight && { color: COLORS.neon }]}>{value}</Text>
+        <Text style={styles.miniStatLabel}>{label}</Text>
+      </View>
+    </Wrapper>
   );
 }
 
@@ -209,6 +258,32 @@ const styles = StyleSheet.create({
   profileBannerArrow: { fontFamily: FONTS.heading, fontSize: 22, color: COLORS.gold },
   sub:      { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray, marginTop: 2 },
   statsRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.md },
+  statsBarWrap: { marginTop: SPACING.md },
+  statsBar: { paddingHorizontal: SPACING.md, gap: SPACING.sm, paddingVertical: 2 },
+  miniStat: {
+    flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.sm, paddingHorizontal: SPACING.md,
+    borderWidth: 1, borderColor: COLORS.navy,
+    minHeight: 52,
+  },
+  miniStatHighlight: { borderColor: COLORS.neon + '66', backgroundColor: COLORS.neon + '10' },
+  miniStatIcon:  { fontSize: 20 },
+  miniStatValue: { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 1 },
+  miniStatLabel: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: -2 },
+  mvpStrip:      { paddingHorizontal: SPACING.md, gap: SPACING.sm, paddingVertical: 2 },
+  mvpChip: {
+    minWidth: 160, maxWidth: 200,
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+    borderWidth: 1, borderColor: COLORS.gold + '60',
+    gap: 2,
+  },
+  mvpChipTrophy:{ fontSize: 22 },
+  mvpChipEvento:{ fontFamily: FONTS.bodySemiBold, fontSize: 13, color: COLORS.white },
+  mvpChipMeta:  { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gold },
   cardWrap: { paddingHorizontal: SPACING.md, marginBottom: SPACING.sm },
   emptyBox: { alignItems: 'center', padding: SPACING.xl },
   errorBox: { alignItems: 'center', padding: SPACING.xl, gap: SPACING.sm },

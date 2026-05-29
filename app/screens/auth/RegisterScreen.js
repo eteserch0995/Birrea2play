@@ -63,8 +63,8 @@ export default function RegisterScreen({ navigation }) {
 
   const goNext = () => {
     if (step === 1) {
-      if (!form.nombre.trim()) {
-        Alert.alert('Falta el nombre', 'Por favor ingresa tu nombre completo.');
+      if (!form.nombre.trim() || form.nombre.trim().length < 3) {
+        Alert.alert('Falta el nombre', 'Ingresa tu nombre y apellido (mínimo 3 caracteres).');
         return;
       }
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -97,6 +97,34 @@ export default function RegisterScreen({ navigation }) {
       }
       if (form.password !== form.confirmPassword) {
         Alert.alert('No coinciden', 'La contraseña y su confirmación no son iguales.');
+        return;
+      }
+    }
+    // Step 3 (residencia y contacto de emergencia) — opcionales por ahora.
+    if (step === 4) {
+      if (form.deportes.length === 0) {
+        Alert.alert('Falta seleccionar deporte', 'Marcá al menos un deporte que practiques.');
+        return;
+      }
+      if (form.deportes.includes('Otro') && !form.otroDeporte.trim()) {
+        Alert.alert('Especificá el otro deporte', 'Marcaste "Otro" pero no escribiste cuál.');
+        return;
+      }
+      if (!form.nivel) {
+        Alert.alert('Falta el nivel', 'Seleccioná tu nivel de juego.');
+        return;
+      }
+      if (!form.posicion) {
+        Alert.alert('Falta la posición', 'Seleccioná tu posición favorita.');
+        return;
+      }
+      // Defensa: si concatenado supera el largo de la columna (255 después
+      // de la migración) avisamos al usuario en vez de fallar con 22001.
+      const deporteText = form.deportes.includes('Otro')
+        ? [...form.deportes.filter(d => d !== 'Otro'), form.otroDeporte].filter(Boolean).join(', ')
+        : form.deportes.join(', ');
+      if (deporteText.length > 250) {
+        Alert.alert('Demasiados deportes', 'Reducí la selección — la lista combinada es muy larga.');
         return;
       }
     }
@@ -171,8 +199,10 @@ export default function RegisterScreen({ navigation }) {
         signOut().catch(() => {});
       }
 
-      const msg = (e?.message ?? '').toString();
-      const lower = msg.toLowerCase();
+      const msg     = (e?.message ?? '').toString();
+      const lower   = msg.toLowerCase();
+      const pgCode  = e?.code ?? '';
+      const details = (e?.details ?? '').toString().toLowerCase();
 
       if (lower.includes('rate limit') || lower.includes('too many')) {
         Alert.alert(
@@ -186,17 +216,30 @@ export default function RegisterScreen({ navigation }) {
           'Correo sin confirmar',
           'Ya tienes una cuenta pero no has confirmado tu correo. Revisa tu bandeja de entrada y haz clic en el enlace de confirmación.',
         );
+      } else if (pgCode === '23505' || lower.includes('duplicate key')) {
+        // UNIQUE violation: correo / cedula / auth_id. Mensaje según constraint.
+        if (details.includes('correo') || lower.includes('correo')) {
+          Alert.alert('Correo ya en uso', 'Este correo ya está registrado. Iniciá sesión.');
+        } else if (details.includes('cedula') || lower.includes('cedula')) {
+          Alert.alert('Cédula ya registrada', 'Esta cédula ya tiene un perfil asociado.');
+        } else {
+          Alert.alert('Cuenta ya existe', 'Detectamos un perfil parcial con estos datos. Probá iniciar sesión o usá otro correo.');
+        }
+      } else if (pgCode === '22001' || lower.includes('value too long')) {
+        Alert.alert('Datos demasiado largos', 'Alguno de los campos (probable: deportes seleccionados) supera el largo permitido. Reducí la selección o acortá el texto.');
       } else if (lower.includes('password')) {
-        Alert.alert('Contraseña inválida', 'La contraseña no cumple los requisitos. Usa al menos 8 caracteres e incluye un número.');
+        Alert.alert('Contraseña inválida', 'La contraseña no cumple los requisitos. Usá al menos 8 caracteres e incluí un número.');
       } else if (lower.includes('invalid') && lower.includes('email')) {
         Alert.alert('Correo inválido', 'El correo electrónico no tiene un formato válido.');
       } else if (lower.includes('network') || lower.includes('fetch')) {
-        Alert.alert('Sin conexión', 'No pudimos conectar con el servidor. Revisa tu internet e intenta de nuevo.');
+        Alert.alert('Sin conexión', 'No pudimos conectar con el servidor. Revisá tu internet e intentá de nuevo.');
       } else {
-        // Mensaje seguro al usuario; el detalle técnico ya quedó en console.error.
+        // Mostrar SIEMPRE algo útil al usuario: code real + mensaje técnico
+        // truncado (sin secrets/SQL). El detalle completo queda en client_logs.
+        const safeDetail = (msg || details || 'sin detalle disponible').slice(0, 240);
         Alert.alert(
           'No pudimos crear tu cuenta',
-          'Ocurrió un error inesperado. Intenta nuevamente en unos minutos. Si el problema continúa, contáctanos.',
+          `${safeDetail}${pgCode ? `\n\nCódigo: ${pgCode}` : ''}\n\nSi el problema continúa, mostrale este texto al organizador.`,
         );
       }
     } finally {

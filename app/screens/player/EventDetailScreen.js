@@ -15,6 +15,7 @@ import EventDetailSkeleton from '../../../components/EventDetailSkeleton';
 import { shareEvent } from '../../../lib/shareEvent';
 import { logWarn, logInfo, logError } from '../../../lib/logger';
 import { remoteLog } from '../../../lib/remoteLogger';
+import { notifyGestorOfNewRegistration } from '../../../lib/notifications';
 import { cancelRegistration } from '../../../lib/cancelRegistration';
 import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 import PaymentModal from '../../../components/PaymentModal';
@@ -22,7 +23,7 @@ import CancelRegistrationModal from '../../../components/CancelRegistrationModal
 import GuestModal from '../../../components/GuestModal';
 import PlayerAvatar from '../../../components/PlayerAvatar';
 import TimerBadge from '../../../components/TimerBadge';
-import { filterActiveEventGuests, getActiveRegistrationUserIds, isActiveEventGuest } from '../../../lib/eventGuests';
+import { filterActiveEventGuests, getActiveRegistrationUserIds, isActiveEventGuest, computeEventCapacity, checkSpotAvailable } from '../../../lib/eventGuests';
 
 export default function EventDetailScreen({ route, navigation }) {
   // Defensa: en deep links el param puede llegar bajo `id` (path legacy) o
@@ -60,13 +61,22 @@ export default function EventDetailScreen({ route, navigation }) {
 
   const checkCapacity = async () => {
     if (event?.cupos_ilimitado) return true;
+    // Traemos regs CON genero del user para validar cupos por género en Mixto.
     const [{ data: regs }, { data: guestRows }] = await Promise.all([
-      supabase.from('event_registrations').select('user_id, status').eq('event_id', event.id).in('status', ['confirmed', 'pending']),
-      supabase.from('event_guests').select('id, invited_by, status').eq('event_id', event.id).in('status', ['confirmed', 'pending_payment']),
+      supabase.from('event_registrations')
+        .select('user_id, status, users:user_id(genero)')
+        .eq('event_id', event.id)
+        .in('status', ['confirmed', 'pending']),
+      supabase.from('event_guests')
+        .select('id, invited_by, status, genero')
+        .eq('event_id', event.id)
+        .in('status', ['confirmed', 'pending_payment']),
     ]);
-    const activeGuestCount = filterActiveEventGuests(guestRows ?? [], regs ?? []).length;
-    if ((regs?.length ?? 0) + activeGuestCount >= event.cupos_total) {
-      Alert.alert('Evento lleno', `Este evento ya alcanzó el límite de ${event.cupos_total} jugadores.`);
+    const activeGuests = filterActiveEventGuests(guestRows ?? [], regs ?? []);
+    const capacity     = computeEventCapacity(event, regs ?? [], activeGuests);
+    const check        = checkSpotAvailable(capacity, user?.genero ?? null, event?.genero);
+    if (!check.allowed) {
+      Alert.alert('No podemos inscribirte', check.reason);
       return false;
     }
     return true;
@@ -112,7 +122,7 @@ export default function EventDetailScreen({ route, navigation }) {
         supabase.from('events').select('*').eq('id', eventId).single(),
         // Fetch confirmed AND pending registrations so cash-pending users see their status
         supabase.from('event_registrations')
-          .select('*, users(id, nombre, foto_url)')
+          .select('*, users(id, nombre, foto_url, genero)')
           .eq('event_id', eventId)
           .in('status', ['confirmed', 'pending']),
         // Only show confirmed/pending_payment guests (not cancelled)
@@ -139,7 +149,7 @@ export default function EventDetailScreen({ route, navigation }) {
       // Matches del evento (para ganador final / penales)
       const matchesPromise = supabase
         .from('matches')
-        .select('id, fase, status, team_home_id, team_away_id, goles_home, goles_away, goles_pen_home, goles_pen_away, fue_a_penales')
+        .select('id, fase, status, team_home_id, team_away_id, goles_home, goles_away, goles_pen_home, goles_pen_away, fue_a_penales, seed_home, seed_away')
         .eq('event_id', eventId);
       const matchesTimeout = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('timeout: matches')), 8000)
@@ -348,6 +358,9 @@ export default function EventDetailScreen({ route, navigation }) {
       }
 
       setPayModal(false);
+      // Si el evento ya tiene equipos creados, avisar al gestor para que lo asigne.
+      // Fire-and-forget; no bloquea el flujo de inscripción.
+      notifyGestorOfNewRegistration(event.id, user?.nombre).catch(() => {});
       Alert.alert('¡Inscrito!', 'Te has inscrito exitosamente.', [{ text: 'OK', onPress: fetchEvent }]);
     } catch (e) {
       Alert.alert('Error', e.message);
@@ -403,6 +416,8 @@ export default function EventDetailScreen({ route, navigation }) {
         // El IPN ya inscribió al jugador vía inscribir_yappy_evento RPC
         yappyCancelRef.current = null;
         setYappyStep('idle');
+        // Avisar al gestor si el evento ya tiene equipos creados.
+        notifyGestorOfNewRegistration(event.id, user?.nombre).catch(() => {});
         Alert.alert('¡Inscrito!', `Pago de $${precio.toFixed(2)} con Yappy confirmado. ¡Estás inscrito!`, [
           { text: 'OK', onPress: fetchEvent },
         ]);
@@ -598,7 +613,17 @@ export default function EventDetailScreen({ route, navigation }) {
   );
 
   const inscritos  = registrations.length + guests.length;
-  const cuposFull  = !event.cupos_ilimitado && inscritos >= event.cupos_total;
+  const jugadoresInscritos = [
+    ...registrations.filter(r => r.status === 'confirmed' && r.users?.nombre).map(r => ({ nombre: r.users.nombre, genero: r.users.genero })),
+    ...guests.filter(g => g.status === 'confirmed' && g.nombre).map(g => ({ nombre: g.nombre, genero: null })),
+  ];
+  // Capacity con desglose por género (si el evento Mixto lo tiene definido)
+  const capacityInfo = computeEventCapacity(event, participantRegs ?? [], guests);
+  const cuposFull  = !event.cupos_ilimitado && (
+    capacityInfo.hasGenderQuota
+      ? (capacityInfo.hombres.lleno && capacityInfo.mujeres.lleno)
+      : inscritos >= event.cupos_total
+  );
   const { label: statusLabel, color: statusColor } = getEventStatusInfo(event.status);
   const refundInfo = myReg ? getRefundStatus(event.fecha, event.hora) : null;
 
@@ -626,7 +651,7 @@ export default function EventDetailScreen({ route, navigation }) {
           </TouchableOpacity>
           <Text style={styles.headerTitle} numberOfLines={1}>{event.nombre}</Text>
           <TouchableOpacity
-            onPress={() => shareEvent(event, { inscritos })}
+            onPress={() => shareEvent(event, { inscritos, jugadores: jugadoresInscritos })}
             style={{ paddingHorizontal: SPACING.sm, paddingVertical: 4 }}
             accessibilityLabel="Compartir evento"
           >
@@ -644,6 +669,18 @@ export default function EventDetailScreen({ route, navigation }) {
           )}
         </View>
 
+        {/* CTA "VER EVENTO EN CURSO" — primer bloque interactivo cuando el evento ya arrancó */}
+        {event.status === 'active' && (
+          <TouchableOpacity
+            style={styles.activeBtn}
+            onPress={() => navigation.navigate('ActiveEvent', { eventId: event.id })}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.activeBtnText}>⚡ VER EVENTO EN CURSO</Text>
+            <Text style={styles.activeBtnSub}>Resultados, MVP, tabla y jugadores en vivo</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Foto de cancha */}
         {event.cancha_foto_url && (
           <Image
@@ -659,7 +696,11 @@ export default function EventDetailScreen({ route, navigation }) {
           <InfoRow icon="📍" label={event.lugar} />
           {event.direccion ? <InfoRow icon="🏠" label={event.direccion} /> : null}
           <InfoRow icon="👤" label={event.genero} />
-          {!event.cupos_ilimitado && <InfoRow icon="👥" label={`${inscritos}/${event.cupos_total} jugadores`} />}
+          {!event.cupos_ilimitado && (
+            capacityInfo.hasGenderQuota
+              ? <InfoRow icon="👥" label={`♂ ${capacityInfo.hombres.ocupados}/${capacityInfo.hombres.cupo}   ·   ♀ ${capacityInfo.mujeres.ocupados}/${capacityInfo.mujeres.cupo}`} />
+              : <InfoRow icon="👥" label={`${inscritos}/${event.cupos_total} jugadores`} />
+          )}
           {(event.precio ?? 0) > 0 && <InfoRow icon="💵" label={`$${(event.precio).toFixed(2)} por jugador`} />}
           {event.descripcion ? <Text style={styles.desc}>{event.descripcion}</Text> : null}
           {event.maps_url && (
@@ -676,6 +717,27 @@ export default function EventDetailScreen({ route, navigation }) {
         {(() => {
           const winner = getTournamentWinner(matches, teams);
           return winner ? <WinnerBanner winner={winner} /> : null;
+        })()}
+
+        {/* Aviso al jugador inscrito que aún no tiene equipo asignado.
+            Aplica cuando: tiene reg confirmed/pending + el evento ya armó equipos +
+            el user NO aparece en ningún team_players de los equipos cargados. */}
+        {(() => {
+          if (!myReg || !user?.id) return null;
+          if (!['confirmed', 'pending'].includes(myReg.status)) return null;
+          if (teams.length === 0) return null;
+          const isAssigned = teams.some((t) =>
+            (t.team_players ?? []).some((tp) => tp.user_id === user.id)
+          );
+          if (isAssigned) return null;
+          return (
+            <View style={styles.unassignedBanner}>
+              <Text style={styles.unassignedTitle}>⏳ Esperando asignación de equipo</Text>
+              <Text style={styles.unassignedText}>
+                Estás inscrito. El gestor te asignará a un equipo antes del partido.
+              </Text>
+            </View>
+          );
         })()}
 
         {/* Teams (cuando el gestor ya armó equipos) */}
@@ -708,7 +770,7 @@ export default function EventDetailScreen({ route, navigation }) {
                     {players.length === 0 ? (
                       <Text style={styles.teamEmpty}>Sin jugadores asignados</Text>
                     ) : (
-                      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.teamPlayersRow}>
+                      <View style={styles.teamPlayersGrid}>
                         {players.map((p) => {
                           const isMe = !p.isGuest && p.id === user?.id;
                           const onPress = p.isGuest ? undefined : () => navigation.navigate('PlayerProfile', { userId: p.id });
@@ -721,21 +783,24 @@ export default function EventDetailScreen({ route, navigation }) {
                               disabled={p.isGuest}
                             >
                               {p.isGuest ? (
-                                <View style={[styles.teamPlayerChip, { width: 42, height: 42, borderRadius: 21, backgroundColor: color, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: color }]}>
-                                  <Text style={{ fontFamily: FONTS.heading, fontSize: 16, color: COLORS.white }}>
+                                <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: color, alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: color }}>
+                                  <Text style={{ fontFamily: FONTS.heading, fontSize: 14, color: COLORS.white }}>
                                     {(p.nombre ?? '?').charAt(0).toUpperCase()}
                                   </Text>
                                 </View>
                               ) : (
-                                <PlayerAvatar user={p} size={42} borderColor={color} />
+                                <PlayerAvatar user={p} size={36} borderColor={color} />
                               )}
-                              <Text style={[styles.teamPlayerName, isMe && { color: COLORS.gold, fontFamily: FONTS.bodyBold }]}>
-                                {isMe ? 'Tú' : p.nombre?.split(' ')[0]}
+                              <Text
+                                style={[styles.teamPlayerName, isMe && { color: COLORS.gold, fontFamily: FONTS.bodyBold }]}
+                                numberOfLines={1}
+                              >
+                                {isMe ? 'Tú' : p.nombre}
                               </Text>
                             </TouchableOpacity>
                           );
                         })}
-                      </ScrollView>
+                      </View>
                     )}
                   </View>
                 );
@@ -765,16 +830,6 @@ export default function EventDetailScreen({ route, navigation }) {
             </View>
           ))}
         </ScrollView>
-
-        {/* Active event CTA */}
-        {event.status === 'active' && (
-          <TouchableOpacity
-            style={styles.activeBtn}
-            onPress={() => navigation.navigate('ActiveEvent', { eventId: event.id })}
-          >
-            <Text style={styles.activeBtnText}>⚡ VER EVENTO EN CURSO</Text>
-          </TouchableOpacity>
-        )}
 
         {/* Payment / inscription */}
         {/* Si no hay usuario logueado: CTA Login con returnTo al evento */}
@@ -875,6 +930,9 @@ export default function EventDetailScreen({ route, navigation }) {
         onSuccess={fetchEvent}
         eventCuposTotal={event.cupos_total}
         eventCuposIlimitado={event.cupos_ilimitado}
+        eventGenero={event.genero}
+        eventCuposHombres={event.cupos_hombres}
+        eventCuposMujeres={event.cupos_mujeres}
       />
 
       {/* Yappy Botón — phone input + polling (same UI as WalletScreen) */}
@@ -989,17 +1047,56 @@ const styles = StyleSheet.create({
   teamSwatch:       { width: 22, height: 22, borderRadius: 4, borderWidth: 1, borderColor: COLORS.navy },
   teamName:         { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 1, flex: 1 },
   teamGroup:        { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gold, letterSpacing: 1, textTransform: 'uppercase' },
-  teamPlayersRow:   { marginTop: SPACING.xs },
-  teamPlayerChip:   { alignItems: 'center', gap: 4, marginRight: SPACING.md, minWidth: 56 },
-  teamPlayerName:   { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, textAlign: 'center' },
+  // Banner amarillo "esperando asignación de equipo"
+  unassignedBanner: {
+    marginHorizontal: SPACING.md,
+    marginBottom:     SPACING.md,
+    padding:          SPACING.md,
+    backgroundColor:  (COLORS.gold ?? '#F0A500') + '18',
+    borderLeftWidth:  4,
+    borderLeftColor:  COLORS.gold ?? '#F0A500',
+    borderRadius:     RADIUS.sm ?? 8,
+  },
+  unassignedTitle:  { fontFamily: FONTS.bodyBold, color: COLORS.gold ?? '#F0A500', fontSize: 13, letterSpacing: 0.5, marginBottom: 4 },
+  unassignedText:   { fontFamily: FONTS.body, color: COLORS.white, fontSize: 12, lineHeight: 17 },
+  teamPlayersRow:   { marginTop: SPACING.xs }, // legacy, conservado por si otra pantalla lo usa
+  // Grid 2 columnas: cada chip ocupa ~48% del ancho del card; flexWrap envuelve a la siguiente fila
+  // automáticamente. Sin scroll lateral. Avatar 36px + nombre completo al lado.
+  teamPlayersGrid:  { marginTop: SPACING.sm, flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs ?? 4, rowGap: SPACING.xs ?? 4 },
+  teamPlayerChip:   {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '48%',
+    paddingVertical: 4,
+    paddingRight: 4,
+    minHeight: 44, // tappable target (HIG)
+  },
+  teamPlayerName:   { fontFamily: FONTS.body, fontSize: 13, color: COLORS.white, flex: 1 },
   teamEmpty:        { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, fontStyle: 'italic' },
   playersRow:   { paddingHorizontal: SPACING.md, marginBottom: SPACING.md },
   playerChip:   { alignItems: 'center', gap: 4, marginRight: SPACING.md },
   playerName:   { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2 },
   guestAvatar:  { width: 48, height: 48, borderRadius: 24, backgroundColor: COLORS.navy, alignItems: 'center', justifyContent: 'center' },
   guestIcon:    { fontSize: 22 },
-  activeBtn:    { backgroundColor: COLORS.magenta, margin: SPACING.md, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center' },
-  activeBtnText:{ fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 2 },
+  activeBtn:    {
+    backgroundColor: COLORS.magenta,
+    marginHorizontal: SPACING.md,
+    marginBottom: SPACING.sm,
+    borderRadius: RADIUS.md,
+    paddingVertical: SPACING.md,
+    paddingHorizontal: SPACING.md,
+    alignItems: 'center',
+    shadowColor: COLORS.magenta,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 12,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: COLORS.magenta,
+  },
+  activeBtnText:{ fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white, letterSpacing: 2 },
+  activeBtnSub: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.white + 'CC', marginTop: 2 },
   paySection:   { margin: SPACING.md },
   payTitle:     { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 2, marginBottom: SPACING.sm },
   btnPay:       { backgroundColor: COLORS.red, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center' },

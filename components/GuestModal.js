@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase';
 import { iniciarBotonYappy, pollBotonOrder } from '../lib/yappy';
 import { COLORS, FONTS, SPACING, RADIUS } from '../constants/theme';
 import useAuthStore from '../store/authStore';
-import { filterActiveEventGuests } from '../lib/eventGuests';
+import { filterActiveEventGuests, computeEventCapacity, checkSpotAvailable } from '../lib/eventGuests';
 
 /**
  * GuestModal — invite a guest to an event (with optional payment).
@@ -18,6 +18,7 @@ export default function GuestModal({
   visible, onClose, eventId, eventNombre, eventPrecio = 0,
   userId, walletBalance = 0, onSuccess,
   eventCuposTotal = null, eventCuposIlimitado = false,
+  eventGenero = null, eventCuposHombres = null, eventCuposMujeres = null,
 }) {
   const { setWalletBalance } = useAuthStore();
   const [step,      setStep]      = useState('info');   // 'info' | 'payment' | 'yappy'
@@ -42,12 +43,26 @@ export default function GuestModal({
   async function checkCapacity() {
     if (eventCuposIlimitado || eventCuposTotal == null) return true;
     const [{ data: regs }, { data: guests }] = await Promise.all([
-      supabase.from('event_registrations').select('user_id, status').eq('event_id', eventId).in('status', ['confirmed', 'pending']),
-      supabase.from('event_guests').select('id, invited_by, status').eq('event_id', eventId).in('status', ['confirmed', 'pending_payment']),
+      supabase.from('event_registrations')
+        .select('user_id, status, users:user_id(genero)')
+        .eq('event_id', eventId)
+        .in('status', ['confirmed', 'pending']),
+      supabase.from('event_guests')
+        .select('id, invited_by, status, genero')
+        .eq('event_id', eventId)
+        .in('status', ['confirmed', 'pending_payment']),
     ]);
-    const activeGuestCount = filterActiveEventGuests(guests ?? [], regs ?? []).length;
-    if ((regs?.length ?? 0) + activeGuestCount >= eventCuposTotal) {
-      Alert.alert('Evento lleno', `Este evento ya tiene ${eventCuposTotal} inscritos. No hay cupos disponibles.`);
+    const activeGuests = filterActiveEventGuests(guests ?? [], regs ?? []);
+    const eventLike = {
+      cupos_total:   eventCuposTotal,
+      genero:        eventGenero,
+      cupos_hombres: eventCuposHombres,
+      cupos_mujeres: eventCuposMujeres,
+    };
+    const capacity = computeEventCapacity(eventLike, regs ?? [], activeGuests);
+    const check    = checkSpotAvailable(capacity, genero, eventGenero);
+    if (!check.allowed) {
+      Alert.alert('No podemos inscribir al invitado', check.reason);
       return false;
     }
     return true;
@@ -241,6 +256,17 @@ export default function GuestModal({
         throw gErr;
       }
 
+      // Solicitud formal de pago en efectivo al gestor/admin: alimenta el badge
+      // de "Efectivo pendiente" + lista de aprobaciones. Sin esto el admin no
+      // se entera del invitado pendiente de cobrar.
+      const { error: cashErr } = await supabase.from('cash_payment_requests').insert({
+        user_id:  userId,
+        event_id: eventId,
+        amount:   precio,
+        notas:    `Invitado: ${nombre.trim()}`,
+      });
+      if (cashErr) console.warn('cash_payment_requests insert (invitado) falló:', cashErr.message);
+
       const { data: event } = await supabase
         .from('events').select('created_by, users!created_by(nombre, telefono, correo)')
         .eq('id', eventId).maybeSingle();
@@ -252,7 +278,7 @@ export default function GuestModal({
       reset();
       Alert.alert(
         '⏳ Invitado pendiente de pago',
-        `${added} quedó como invitado pendiente. Contacta al gestor para pagar $${precio.toFixed(2)}.${gestor ? `\n\n👤 ${gestor.nombre}${contacto ? `\n📱 ${contacto}` : ''}` : ''}`,
+        `${added} quedó como invitado pendiente. Se notificó al gestor para que apruebe el pago de $${precio.toFixed(2)}.${gestor ? `\n\n👤 ${gestor.nombre}${contacto ? `\n📱 ${contacto}` : ''}` : ''}`,
         [
           { text: 'Cerrar', onPress: onClose },
           { text: 'Agregar otro', style: 'default' },

@@ -21,7 +21,11 @@ import { filterActiveEventGuests } from '../../lib/eventGuests';
 import {
   TEAM_COLORS, generateLigaFixture, generateGroupStageFixture,
   generateKnockoutBracket, calcTeams, generateRoundRobin,
+  isGroupStageComplete, computeStandingsFromMatches, detectGroupTiesNeedingDecision,
+  getQualifiedTeams, populateKnockoutFromGroups, populateNextKnockoutPhase,
 } from '../../lib/eventHelpers';
+import CanchaCostoPicker from '../../components/CanchaCostoPicker';
+import GananciaCard      from '../../components/GananciaCard';
 
 const Stack = createStackNavigator();
 
@@ -38,6 +42,11 @@ function AdminDashboard({ navigation }) {
   useEffect(() => {
     async function load() {
       try {
+        // Expirar pendientes vencidas antes de contar (fire-and-forget)
+        Promise.resolve(supabase.rpc('expire_pending_cash_requests')).catch(() => {});
+        Promise.resolve(supabase.rpc('expire_pending_guests')).catch(() => {});
+
+        const nowIso = new Date().toISOString();
         const [
           { count: users },
           { count: events },
@@ -54,7 +63,7 @@ function AdminDashboard({ navigation }) {
           supabase.from('wallets').select('balance'),
           supabase.from('orders').select('*', { count: 'exact', head: true }).eq('status', 'paid'),
           supabase.from('pending_recargas').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-          supabase.from('cash_payment_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
+          supabase.from('cash_payment_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending').gt('expires_at', nowIso),
           supabase.from('gender_change_requests').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
         ]);
         const walletTotal = wallets?.reduce((s, w) => s + (w.balance ?? 0), 0) ?? 0;
@@ -1042,8 +1051,10 @@ function AdminEvents({ navigation }) {
   const [form, setForm] = useState({
     nombre: '', formato: 'Liga', deporte: 'Fútbol 7', fecha: '', hora: '',
     lugar: '', direccion: '', maps_url: '', precio: '0', cupos_total: '',
+    cupos_hombres: '', cupos_mujeres: '',
     cupos_ilimitado: false, genero: 'Mixto', descripcion: '',
     jugadores_por_equipo: null, jornadas: '1',
+    cancha_costo: null, cancha_tarifa_id: null, duracion_horas: null,
     num_grupos: '2', equipos_por_grupo: '3',
     tiene_octavos: false, tiene_cuartos: false,
     tiene_semis: true, tiene_tercer_lugar: true, tiene_final: true,
@@ -1111,6 +1122,17 @@ function AdminEvents({ navigation }) {
       if (!cuposVal || cuposVal <= 0) {
         Alert.alert('Cupos inválidos', 'Los cupos deben ser un número mayor a 0, o activa "Cupos ilimitados".'); return;
       }
+      // Mixto con desglose H/M: ambos deben estar y sumar cupos_total
+      if (form.genero === 'Mixto' && (form.cupos_hombres !== '' || form.cupos_mujeres !== '')) {
+        const ch = parseInt(form.cupos_hombres);
+        const cm = parseInt(form.cupos_mujeres);
+        if (isNaN(ch) || isNaN(cm) || ch < 0 || cm < 0) {
+          Alert.alert('Cupos por género inválidos', 'Ingresá un número válido (0 o más) en cupos hombres y mujeres.'); return;
+        }
+        if (ch + cm !== cuposVal) {
+          Alert.alert('La suma no coincide', `Hombres (${ch}) + Mujeres (${cm}) = ${ch + cm}, pero los cupos totales son ${cuposVal}. Ajustá la división.`); return;
+        }
+      }
     }
     // Cupos must be exact multiple of jugadores_por_equipo — HARD BLOCK
     if (teamCalc && !teamCalc.esExacto) {
@@ -1136,7 +1158,12 @@ function AdminEvents({ navigation }) {
         maps_url:            form.maps_url.trim() || null,
         precio:              parseFloat(form.precio) || 0,
         cupos_total:         form.cupos_ilimitado ? null : (parseInt(form.cupos_total) || null),
+        cupos_hombres:       (form.genero === 'Mixto' && !form.cupos_ilimitado && form.cupos_hombres !== '') ? (parseInt(form.cupos_hombres) || 0) : null,
+        cupos_mujeres:       (form.genero === 'Mixto' && !form.cupos_ilimitado && form.cupos_mujeres !== '') ? (parseInt(form.cupos_mujeres) || 0) : null,
         cupos_ilimitado:     form.cupos_ilimitado,
+        cancha_costo:        form.cancha_costo != null ? Number(form.cancha_costo) : null,
+        cancha_tarifa_id:    form.cancha_tarifa_id ?? null,
+        duracion_horas:      form.duracion_horas ?? null,
         genero:              form.genero,
         descripcion:         form.descripcion || null,
         status:              'draft',
@@ -1156,7 +1183,7 @@ function AdminEvents({ navigation }) {
       if (error) throw error;
       Alert.alert('¡Evento creado!', 'Aparece como borrador.');
       setShowForm(false);
-      setForm({ nombre:'', formato:'Liga', deporte:'Fútbol 7', fecha:'', hora:'', lugar:'', direccion:'', maps_url:'', precio:'0', cupos_total:'', cupos_ilimitado:false, genero:'Mixto', descripcion:'', jugadores_por_equipo:null, jornadas:'1', num_grupos:'2', equipos_por_grupo:'3', tiene_octavos:false, tiene_cuartos:false, tiene_semis:true, tiene_tercer_lugar:true, tiene_final:true, ida_y_vuelta:false, vidas_por_equipo: 3 });
+      setForm({ nombre:'', formato:'Liga', deporte:'Fútbol 7', fecha:'', hora:'', lugar:'', direccion:'', maps_url:'', precio:'0', cupos_total:'', cupos_hombres:'', cupos_mujeres:'', cupos_ilimitado:false, genero:'Mixto', descripcion:'', jugadores_por_equipo:null, jornadas:'1', cancha_costo:null, cancha_tarifa_id:null, duracion_horas:null, num_grupos:'2', equipos_por_grupo:'3', tiene_octavos:false, tiene_cuartos:false, tiene_semis:true, tiene_tercer_lugar:true, tiene_final:true, ida_y_vuelta:false, vidas_por_equipo: 3 });
       fetchEvents();
     } catch (e) {
       Alert.alert('Error', e.message);
@@ -1274,8 +1301,53 @@ function AdminEvents({ navigation }) {
               <>
                 <Text style={styles.fieldLabel}>Cupos totales</Text>
                 <TextInput style={styles.input} placeholder="20" placeholderTextColor={COLORS.gray} keyboardType="number-pad" value={form.cupos_total} onChangeText={(v) => upd('cupos_total', v)} />
+
+                {/* Desglose por género: solo Mixto. La suma debe igualar cupos_total. */}
+                {form.genero === 'Mixto' && (
+                  <View style={{ backgroundColor: COLORS.card, padding: SPACING.md, borderRadius: RADIUS.md, marginTop: SPACING.sm, borderWidth: 1, borderColor: COLORS.navy }}>
+                    <Text style={[styles.fieldLabel, { marginTop: 0, marginBottom: SPACING.sm }]}>Cupos por género (Mixto)</Text>
+                    <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.fieldLabel, { marginTop: 0 }]}>♂ Hombres</Text>
+                        <TextInput style={styles.input} placeholder="12" placeholderTextColor={COLORS.gray} keyboardType="number-pad" value={form.cupos_hombres} onChangeText={(v) => upd('cupos_hombres', v)} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.fieldLabel, { marginTop: 0 }]}>♀ Mujeres</Text>
+                        <TextInput style={styles.input} placeholder="8" placeholderTextColor={COLORS.gray} keyboardType="number-pad" value={form.cupos_mujeres} onChangeText={(v) => upd('cupos_mujeres', v)} />
+                      </View>
+                    </View>
+                    {(form.cupos_hombres !== '' || form.cupos_mujeres !== '') && form.cupos_total !== '' && (() => {
+                      const ch = parseInt(form.cupos_hombres) || 0;
+                      const cm = parseInt(form.cupos_mujeres) || 0;
+                      const ct = parseInt(form.cupos_total) || 0;
+                      const ok = ch + cm === ct;
+                      return (
+                        <Text style={[styles.cardSub, { marginTop: SPACING.sm, color: ok ? COLORS.green : COLORS.red }]}>
+                          {ok ? `✓ Suma OK: ${ch} + ${cm} = ${ct}` : `⚠ Suma ${ch + cm}, esperaba ${ct}`}
+                        </Text>
+                      );
+                    })()}
+                    <Text style={[styles.cardSub, { marginTop: 4, color: COLORS.gray }]}>
+                      Opcional. Si lo dejás vacío, los cupos se asignan por orden de inscripción sin distinción de género.
+                    </Text>
+                  </View>
+                )}
               </>
             )}
+
+            {/* Costo de la cancha — base de la ganancia del gestor */}
+            <CanchaCostoPicker
+              deporte={form.deporte}
+              jugadoresPorEquipo={form.jugadores_por_equipo}
+              costoValue={form.cancha_costo}
+              tarifaIdValue={form.cancha_tarifa_id}
+              duracionValue={form.duracion_horas}
+              onChange={({ cancha_costo, cancha_tarifa_id, duracion_horas }) => {
+                upd('cancha_costo', cancha_costo);
+                upd('cancha_tarifa_id', cancha_tarifa_id);
+                upd('duracion_horas', duracion_horas);
+              }}
+            />
 
             {/* Liga: jornadas */}
             {(form.formato === 'Liga') && (
@@ -1405,7 +1477,7 @@ function AdminEvents({ navigation }) {
 // ═══════════════════════════════════════════════════════════════════
 function AdminManageEvent({ route, navigation }) {
   const { eventId, eventNombre, formato } = route.params ?? {};
-  const TABS     = ['Equipos', 'Partidos', 'Resultados', 'MVP', 'Config'];
+  const TABS     = ['Equipos', 'Partidos', 'Resultados', 'Ganancia', 'MVP', 'Config'];
   const [tab,        setTab]        = useState('Equipos');
   const [teams,      setTeams]      = useState([]);
   const [players,    setPlayers]    = useState([]);
@@ -1480,8 +1552,15 @@ function AdminManageEvent({ route, navigation }) {
     const nombre = addGuestName.trim();
     if (!nombre) { Alert.alert('Error', 'El nombre es requerido'); return; }
     if (!addGuestGenero) { Alert.alert('Error', 'El género es requerido'); return; }
-    const { error } = await supabase.from('event_guests').insert({ event_id: eventId, nombre, genero: addGuestGenero });
+    const { data, error } = await supabase
+      .from('event_guests')
+      .insert({ event_id: eventId, nombre, genero: addGuestGenero, status: 'confirmed', metodo_pago: 'gratis' })
+      .select('id');
     if (error) { Alert.alert('Error', error.message); return; }
+    if (!data || data.length === 0) {
+      Alert.alert('Sin cambios', 'No se pudo agregar el invitado (RLS/permisos). Recarga e intenta.');
+      return;
+    }
     setAddGuestModal(false);
     setAddGuestName('');
     setAddGuestGenero(null);
@@ -1495,8 +1574,26 @@ function AdminManageEvent({ route, navigation }) {
       [
         { text: 'Cancelar', style: 'cancel' },
         { text: 'Eliminar', style: 'destructive', onPress: async () => {
-          const { error } = await supabase.from('event_guests').delete().eq('id', guestId);
+          // Marcamos como cancelled (preserva historial; el cliente cuenta solo
+          // status in ('confirmed','pending_payment') así que liberar el cupo).
+          // `.select()` fuerza que data traiga las filas afectadas — sin esto, un
+          // RLS o constraint que bloquee silenciosamente devuelve error=null y
+          // el cliente pensaría que funcionó (bug detectado 2026-05-21).
+          const { data, error } = await supabase
+            .from('event_guests')
+            .update({ status: 'cancelled' })
+            .eq('id', guestId)
+            .select('id');
           if (error) { Alert.alert('Error', error.message); return; }
+          if (!data || data.length === 0) {
+            Alert.alert(
+              'Sin cambios',
+              'No se eliminó el invitado. Puede haber un problema de permisos — recarga la pantalla e intenta de nuevo.'
+            );
+            return;
+          }
+          // Limpiar también del team_players si estaba asignado a un equipo.
+          await supabase.from('team_players').delete().eq('guest_id', guestId);
           loadAll();
         }},
       ]
@@ -1791,20 +1888,92 @@ function AdminManageEvent({ route, navigation }) {
     if (isNaN(gh) || isNaN(ga) || gh < 0 || ga < 0) {
       Alert.alert('Error', 'Ingresa un número válido (0 o más) para cada equipo.'); return;
     }
+
+    const phase      = match.fase ?? 'grupos';
+    const isKnockout = ['octavos','cuartos','semis','tercer_lugar','final'].includes(phase);
+
+    // Guard: no permitir guardar resultados sobre placeholders KO sin teams asignados —
+    // dejaría el evento sin trazabilidad de ganador (caso del evento 21-may).
+    if (isKnockout && (!match.team_home_id || !match.team_away_id)) {
+      Alert.alert(
+        'Falta poblar la fase',
+        'Este partido aún no tiene equipos asignados. Cargá primero los resultados de la fase anterior; el sistema avanza a los ganadores automáticamente.',
+      ); return;
+    }
+
+    // Empate en KO requiere penales
+    const isTie         = gh === ga;
+    const needsPenalties = isTie && isKnockout;
+    let penH = null, penA = null, fuePenales = false;
+    if (needsPenalties) {
+      const { penHome, penAway } = scores[match.id] ?? {};
+      const ph = parseInt(penHome, 10);
+      const pa = parseInt(penAway, 10);
+      if (isNaN(ph) || isNaN(pa) || ph < 0 || pa < 0) {
+        Alert.alert('Penales requeridos', 'Empate en knockout. Ingresá el marcador de penales.'); return;
+      }
+      if (ph === pa) {
+        Alert.alert('Penales empatados', 'No puede empatar en penales — debe haber un ganador.'); return;
+      }
+      penH = ph; penA = pa; fuePenales = true;
+    }
+
     setSavingMatch(match.id);
     try {
       const now = new Date().toISOString();
       const { error } = await supabase.from('matches').update({
-        goles_home: gh, goles_away: ga,
-        goles_local: gh, goles_visitante: ga,
-        status: 'finished', jugado: true,
-        finished_at: now,
+        goles_home:     gh,
+        goles_away:     ga,
+        goles_local:    gh,
+        goles_visitante:ga,
+        goles_pen_home: penH,
+        goles_pen_away: penA,
+        fue_a_penales:  fuePenales,
+        status:         'finished',
+        jugado:         true,
+        finished_at:    now,
       }).eq('id', match.id);
       if (error) { Alert.alert('Error', error.message); return; }
 
+      const updatedMatch = {
+        ...match,
+        status: 'finished',
+        goles_home: gh, goles_away: ga,
+        goles_pen_home: penH, goles_pen_away: penA, fue_a_penales: fuePenales,
+      };
+      const allMatchesUpdated = matches.map((m) => m.id === match.id ? updatedMatch : m);
+
+      // Auto-propagar siguiente fase KO (winners → next + losers de semis → 3er lugar)
+      if (isKnockout && phase !== 'final') {
+        await populateNextKnockoutPhase({ supabase, eventId, matches: allMatchesUpdated });
+      }
+
+      // Auto-poblar la 1ª ronda KO cuando se cierra la fase de grupos
+      if (event?.formato === 'Torneo' && phase === 'grupos' && isGroupStageComplete(allMatchesUpdated)) {
+        const koAlreadyPopulated = allMatchesUpdated.some((m) =>
+          ['octavos','cuartos','semis'].includes(m.fase) && (m.team_home_id || m.team_away_id)
+        );
+        if (!koAlreadyPopulated) {
+          const standings = computeStandingsFromMatches(allMatchesUpdated, teams);
+          const numGrupos = parseInt(event?.num_grupos ?? '2', 10) || 2;
+          const avanzan = numGrupos === 1 ? teams.length : 2;
+          const conflicts = detectGroupTiesNeedingDecision(standings, avanzan);
+          if (conflicts.length === 0) {
+            const qualified = getQualifiedTeams(standings, avanzan);
+            await populateKnockoutFromGroups({ supabase, eventId, qualifiedByGroup: qualified });
+          } else {
+            Alert.alert(
+              'Empate exacto entre equipos',
+              'Hay empate exacto en pts/dg/gf en la plaza de corte. Resolvé el orden desde el panel de Gestor → Resultados.',
+            );
+          }
+        }
+      }
+
+      const penTxt = fuePenales ? ` (pen ${penH}-${penA})` : '';
       setScores((s) => { const n = { ...s }; delete n[match.id]; return n; });
       loadAll();
-      Alert.alert('✓ Guardado', `${match.home?.nombre ?? match.equipo_local} ${gh} - ${ga} ${match.away?.nombre ?? match.equipo_visitante}`);
+      Alert.alert('✓ Guardado', `${match.home?.nombre ?? match.equipo_local} ${gh} - ${ga} ${match.away?.nombre ?? match.equipo_visitante}${penTxt}`);
     } finally {
       setSavingMatch(null);
     }
@@ -1829,44 +1998,31 @@ function AdminManageEvent({ route, navigation }) {
     const empatados = sorted.filter(([, v]) => v === maxVotos);
     const [winnerId, winnerVotes] = empatados[Math.floor(Math.random() * empatados.length)];
 
-    // Insert with event_id — unique index prevents double-award
-    const { error: mvpErr } = await supabase.from('mvp_results').insert({
-      event_id:      eventId,
-      user_id:       winnerId,
-      votos_totales: winnerVotes,
-      premio_wallet: 1.00,
-      premio_pagado: true,
+    // RPC atómico: inserta mvp_results + acredita +$1 + idempotente. Reemplaza
+    // el patrón anterior (insert + credit_wallet) que fallaba por caller validation.
+    const { data: declareData, error: declareErr } = await supabase.rpc('declare_mvp', {
+      p_event_id:      eventId,
+      p_user_id:       winnerId,
+      p_votos_totales: winnerVotes,
     });
-    if (mvpErr) {
-      if (mvpErr.code === '23505') {
-        Alert.alert('Ya declarado', 'El MVP de este evento ya fue registrado.');
-      } else {
-        Alert.alert('Error', mvpErr.message);
-      }
+    if (declareErr) {
+      Alert.alert('Error al declarar MVP', declareErr.message);
       loadAll();
       return;
     }
 
-    // Close voting on event
+    // Cerrar votación
     const { error: closeErr } = await supabase.from('events').update({ mvp_voting_open: false }).eq('id', eventId);
     if (closeErr) console.warn('closeMvp: could not close voting flag:', closeErr.message);
-
-    // Atomic wallet credit via RPC
-    try {
-      await supabase.rpc('credit_wallet', {
-        p_user_id:     winnerId,
-        p_monto:       1.00,
-        p_tipo:        'mvp_premio',
-        p_descripcion: 'Premio MVP del evento',
-      });
-    } catch (e) {
-      console.warn('credit_wallet error (MVP insertado):', e.message);
-    }
 
     const winnerInfo = playerMap.get(winnerId);
     const winnerNombre = winnerInfo?.nombre ?? 'Jugador';
     loadAll();
-    Alert.alert('🏆 MVP Declarado', `${winnerNombre} — ${winnerVotes} votos. +$1.00 acreditado.`);
+    if (declareData?.already_paid) {
+      Alert.alert('🏆 MVP ya pagado', `${winnerNombre} — ${winnerVotes} votos. El premio ya había sido acreditado.`);
+    } else {
+      Alert.alert('🏆 MVP Declarado', `${winnerNombre} — ${winnerVotes} votos. +$1.00 acreditado.`);
+    }
   }
 
   async function toggleStatus(field, value) {
@@ -2132,10 +2288,19 @@ function AdminManageEvent({ route, navigation }) {
             {/* ═══ RESULTADOS ═══ */}
             {tab === 'Resultados' && (() => {
               const eventLocked = event?.status === 'finished';
-              const renderMatchCard = (m, isEditable) => (
+              const renderMatchCard = (m, isEditable) => {
+                const sc = scores[m.id] ?? {};
+                const hG = parseInt(sc.home, 10);
+                const aG = parseInt(sc.away, 10);
+                const tieEntered = !isNaN(hG) && !isNaN(aG) && hG === aG;
+                const phaseLbl   = m.fase ?? 'grupos';
+                const isKO       = ['octavos','cuartos','semis','tercer_lugar','final'].includes(phaseLbl);
+                const showPen    = isEditable && tieEntered && isKO;
+                const koMissingTeams = isKO && (!m.team_home_id || !m.team_away_id);
+                return (
                 <View key={m.id} style={[styles.card, !isEditable && { borderColor: COLORS.green + '40' }]}>
                   <Text style={[styles.cardSub, { marginBottom: SPACING.sm }]}>
-                    {m.fase === 'final' ? '🏆 FINAL' : m.fase === 'semis' ? '🥊 SEMI' : `Jornada ${m.jornada}`}
+                    {m.fase === 'final' ? '🏆 FINAL' : m.fase === 'semis' ? '🥊 SEMI' : m.fase === 'tercer_lugar' ? '🥉 3er LUGAR' : `Jornada ${m.jornada}`}
                     {m.grupo ? ` · Grp ${m.grupo}` : ''}
                     {!isEditable && <Text style={{ color: COLORS.green }}> ✓</Text>}
                   </Text>
@@ -2143,19 +2308,35 @@ function AdminManageEvent({ route, navigation }) {
                     <Text style={[styles.cardName, { flex: 1, textAlign:'center', fontSize: 13 }]}>{m.home?.nombre ?? m.equipo_local}</Text>
                     {isEditable
                       ? <>
-                          <TextInput style={[styles.input, { width: 52, textAlign:'center', fontFamily: FONTS.heading, fontSize: 24, padding: 4 }]} keyboardType="number-pad" maxLength={2} placeholder={m.status === 'finished' ? String(m.goles_home) : '0'} placeholderTextColor={COLORS.gray} value={scores[m.id]?.home ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], home: v } }))} />
+                          <TextInput style={[styles.input, { width: 52, textAlign:'center', fontFamily: FONTS.heading, fontSize: 24, padding: 4 }]} keyboardType="number-pad" maxLength={2} placeholder={m.status === 'finished' ? String(m.goles_home) : '0'} placeholderTextColor={COLORS.gray} value={sc.home ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], home: v } }))} />
                           <Text style={[styles.cardName, { color: COLORS.gray }]}>:</Text>
-                          <TextInput style={[styles.input, { width: 52, textAlign:'center', fontFamily: FONTS.heading, fontSize: 24, padding: 4 }]} keyboardType="number-pad" maxLength={2} placeholder={m.status === 'finished' ? String(m.goles_away) : '0'} placeholderTextColor={COLORS.gray} value={scores[m.id]?.away ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], away: v } }))} />
+                          <TextInput style={[styles.input, { width: 52, textAlign:'center', fontFamily: FONTS.heading, fontSize: 24, padding: 4 }]} keyboardType="number-pad" maxLength={2} placeholder={m.status === 'finished' ? String(m.goles_away) : '0'} placeholderTextColor={COLORS.gray} value={sc.away ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], away: v } }))} />
                         </>
-                      : <Text style={[styles.cardName, { color: COLORS.gold, marginHorizontal: 8 }]}>{m.goles_home} - {m.goles_away}</Text>
+                      : <Text style={[styles.cardName, { color: COLORS.gold, marginHorizontal: 8 }]}>
+                          {m.goles_home} - {m.goles_away}{m.fue_a_penales ? `  (pen ${m.goles_pen_home}-${m.goles_pen_away})` : ''}
+                        </Text>
                     }
                     <Text style={[styles.cardName, { flex: 1, textAlign:'center', fontSize: 13 }]}>{m.away?.nombre ?? m.equipo_visitante}</Text>
                   </View>
+                  {showPen && (
+                    <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'center', gap: SPACING.sm, marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.navy }}>
+                      <Text style={[styles.cardSub, { flex: 1, color: COLORS.gold }]}>🎯 Penales</Text>
+                      <TextInput style={[styles.input, { width: 52, textAlign:'center', fontFamily: FONTS.heading, fontSize: 20, padding: 4 }]} keyboardType="number-pad" maxLength={2} placeholder="0" placeholderTextColor={COLORS.gray} value={sc.penHome ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], penHome: v } }))} />
+                      <Text style={[styles.cardName, { color: COLORS.gray }]}>:</Text>
+                      <TextInput style={[styles.input, { width: 52, textAlign:'center', fontFamily: FONTS.heading, fontSize: 20, padding: 4 }]} keyboardType="number-pad" maxLength={2} placeholder="0" placeholderTextColor={COLORS.gray} value={sc.penAway ?? ''} onChangeText={(v) => setScores((s) => ({ ...s, [m.id]: { ...s[m.id], penAway: v } }))} />
+                      <Text style={[styles.cardSub, { flex: 1, textAlign:'right', color: COLORS.gold }]}>muerte súbita</Text>
+                    </View>
+                  )}
+                  {isEditable && koMissingTeams && (
+                    <Text style={[styles.cardSub, { color: COLORS.gold, marginTop: SPACING.sm, textAlign:'center' }]}>
+                      ⏳ Esperando ganadores de la fase anterior
+                    </Text>
+                  )}
                   {isEditable && (
                     <TouchableOpacity
-                      style={[styles.btn, { backgroundColor: m.status === 'finished' ? COLORS.blue + 'CC' : COLORS.green + 'CC', marginTop: SPACING.sm, opacity: savingMatch === m.id ? 0.6 : 1 }]}
+                      style={[styles.btn, { backgroundColor: m.status === 'finished' ? COLORS.blue + 'CC' : COLORS.green + 'CC', marginTop: SPACING.sm, opacity: (savingMatch === m.id || koMissingTeams) ? 0.5 : 1 }]}
                       onPress={() => saveResult(m)}
-                      disabled={savingMatch === m.id}
+                      disabled={savingMatch === m.id || koMissingTeams}
                     >
                       {savingMatch === m.id
                         ? <ActivityIndicator color={COLORS.white} size="small" />
@@ -2164,7 +2345,8 @@ function AdminManageEvent({ route, navigation }) {
                     </TouchableOpacity>
                   )}
                 </View>
-              );
+                );
+              };
               return (
                 <>
                   {eventLocked && <Text style={[styles.cardSub, { color: COLORS.gold, marginBottom: SPACING.sm, textAlign:'center' }]}>🔒 Evento finalizado — resultados bloqueados</Text>}
@@ -2252,6 +2434,31 @@ function AdminManageEvent({ route, navigation }) {
                 </View>
               );
             })()}
+
+            {/* ═══ GANANCIA ═══ */}
+            {tab === 'Ganancia' && event && (
+              <>
+                <View style={styles.card}>
+                  <Text style={styles.cardName}>{event.nombre}</Text>
+                  <Text style={styles.cardSub}>{event.deporte} · {event.formato} · {event.genero}</Text>
+                  <Text style={styles.cardSub}>
+                    Cancha: {event.cancha_costo != null
+                      ? <Text style={{ color: COLORS.gold }}>${Number(event.cancha_costo).toFixed(2)}</Text>
+                      : <Text style={{ color: COLORS.red }}>sin definir</Text>}
+                  </Text>
+                  {event.cancha_costo == null && (
+                    <Text style={[styles.cardSub, { color: COLORS.red, marginTop: 4 }]}>
+                      ⚠ Definí el costo de la cancha desde "Editar evento" (Config) para que el cálculo sea real.
+                    </Text>
+                  )}
+                </View>
+                <GananciaCard
+                  event={event}
+                  inscritosConfirmados={players.length}
+                  gestorEnEvento={players.some((p) => p._key === event.created_by)}
+                />
+              </>
+            )}
 
             {/* ═══ CONFIG ═══ */}
             {tab === 'Config' && event && (
@@ -2778,10 +2985,14 @@ function AdminCashApprovals({ navigation }) {
 
   async function fetchRequests() {
     setLoading(true);
+    // Marcar como 'expired' las que pasaron el plazo antes de listar.
+    Promise.resolve(supabase.rpc('expire_pending_cash_requests')).catch(() => {});
+
     const { data } = await supabase
       .from('cash_payment_requests')
       .select('*, user:users!user_id(nombre, correo), event:events!event_id(nombre, precio, created_by, gestor:users!created_by(nombre))')
       .eq('status', 'pending')
+      .gt('expires_at', new Date().toISOString())
       .order('created_at', { ascending: true });
     setRequests(data ?? []);
     setLoading(false);

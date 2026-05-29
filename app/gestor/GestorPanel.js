@@ -18,8 +18,10 @@ import { sendLocalNotification, sendPushNotificationsToEventPlayers } from '../.
 import useAuthStore from '../../store/authStore';
 import { DateField, TimeField } from '../../components/DateTimeField';
 import { uploadImage } from '../../lib/uploadImage';
+import { processEventImage } from '../../lib/processEventImage';
 import { shareEvent } from '../../lib/shareEvent';
 import { filterActiveEventGuests } from '../../lib/eventGuests';
+import GananciaCard from '../../components/GananciaCard';
 import {
   generateLigaFixture,
   generateGroupStageFixture,
@@ -69,17 +71,25 @@ function GestorDashboard({ navigation }) {
   async function fetchCashPending() {
     if (!user?.id) return;
     try {
+      // Limpiar expirados antes de contar — fire-and-forget, no bloquea la UI
+      Promise.resolve(supabase.rpc('expire_pending_cash_requests')).catch(() => {});
+      Promise.resolve(supabase.rpc('expire_pending_guests')).catch(() => {});
+
       const { data: evs } = await supabase
         .from('events')
         .select('id')
         .eq('created_by', user.id);
       if (!evs?.length) { setCashPending(0); return; }
       const eventIds = evs.map((e) => e.id);
+      const nowIso       = new Date().toISOString();
+      const guestCutoff  = new Date(Date.now() - 24 * 3600_000).toISOString();
       const [{ count: regs }, { count: guests }] = await Promise.all([
         supabase.from('cash_payment_requests').select('id', { count: 'exact', head: true })
-          .in('event_id', eventIds).eq('status', 'pending'),
+          .in('event_id', eventIds).eq('status', 'pending')
+          .gt('expires_at', nowIso),
         supabase.from('event_guests').select('id', { count: 'exact', head: true })
-          .in('event_id', eventIds).eq('status', 'pending_payment').eq('metodo_pago', 'efectivo'),
+          .in('event_id', eventIds).eq('status', 'pending_payment').eq('metodo_pago', 'efectivo')
+          .gt('created_at', guestCutoff),
       ]);
       setCashPending((regs ?? 0) + (guests ?? 0));
     } catch { /* non-critical */ }
@@ -175,7 +185,17 @@ function GestorDashboard({ navigation }) {
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: SPACING.md }}>
               <Text style={[styles.selectedEvent, { paddingHorizontal: 0, flex: 1 }]}>{selectedEvent.nombre}</Text>
               <TouchableOpacity
-                onPress={() => shareEvent(selectedEvent)}
+                onPress={async () => {
+                  const [{ data: regs }, { data: gs }] = await Promise.all([
+                    supabase.from('event_registrations').select('users(nombre, genero)').eq('event_id', selectedEvent.id).eq('status', 'confirmed'),
+                    supabase.from('event_guests').select('nombre').eq('event_id', selectedEvent.id).eq('status', 'confirmed'),
+                  ]);
+                  const jugadores = [
+                    ...(regs ?? []).filter(r => r.users?.nombre).map(r => ({ nombre: r.users.nombre, genero: r.users.genero })),
+                    ...(gs ?? []).filter(g => g.nombre).map(g => ({ nombre: g.nombre, genero: null })),
+                  ];
+                  shareEvent(selectedEvent, { inscritos: jugadores.length, jugadores });
+                }}
                 style={{ paddingHorizontal: SPACING.sm, paddingVertical: 4, backgroundColor: COLORS.card, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: COLORS.navy, flexDirection: 'row', alignItems: 'center', gap: 4 }}
                 accessibilityLabel="Compartir evento"
               >
@@ -237,23 +257,26 @@ function GestorCreateEvent({ navigation }) {
 
   const pickCanchaPhoto = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') return;
+    if (status !== 'granted') {
+      Alert.alert('Permiso requerido', 'Habilitá el acceso a tus fotos para poder subir la imagen del evento.');
+      return;
+    }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
-      allowsEditing: true, aspect: [16, 9], quality: 0.75,
+      allowsEditing: Platform.OS !== 'web', aspect: [16, 9], quality: 0.85,
     });
     if (result.canceled) return;
     const asset = result.assets[0];
-    // En web guardamos el asset entero (incluye .file → File real, evita blob: URL expiring).
-    // En native guardamos sólo el uri (string) para mantener compat con el patrón existente.
-    setCanchaUri(Platform.OS === 'web' ? asset : asset.uri);
+    try {
+      const processed = await processEventImage(Platform.OS === 'web' ? asset : asset.uri);
+      setCanchaUri(processed);
+    } catch (e) {
+      Alert.alert('No se pudo procesar la imagen', e.message || 'Probá con otra foto.');
+    }
   };
 
   const uploadCanchaPhoto = async (source, eventId) => {
-    const uri = typeof source === 'string' ? source : source?.uri ?? '';
-    const ext = (uri.split('.').pop() ?? '').toLowerCase().replace(/\?.*$/, '');
-    const safeExt = ['jpg','jpeg','png','webp','heic'].includes(ext) ? (ext === 'jpeg' ? 'jpg' : ext) : 'jpg';
-    const path = `events/${eventId}_${Date.now()}.${safeExt}`;
+    const path = `events/${eventId}_${Date.now()}.jpg`;
     return uploadImage('event-photos', path, source);
   };
   const teamCalc = form.jugadores_por_equipo && cuposNum
@@ -420,7 +443,7 @@ function GestorCreateEvent({ navigation }) {
         <Text style={styles.fieldLabel}>Foto de la cancha (opcional)</Text>
         <TouchableOpacity style={[styles.input, { alignItems: 'center', justifyContent: 'center', minHeight: 80 }]} onPress={pickCanchaPhoto}>
           {canchaImageUri
-            ? <Image source={{ uri: typeof canchaImageUri === 'string' ? canchaImageUri : canchaImageUri.uri }} style={{ width: '100%', height: 120, borderRadius: RADIUS.sm }} resizeMode="cover" />
+            ? <Image source={{ uri: typeof canchaImageUri === 'string' ? canchaImageUri : (canchaImageUri.previewUrl || canchaImageUri.uri) }} style={{ width: '100%', height: 120, borderRadius: RADIUS.sm }} resizeMode="cover" />
             : <Text style={{ color: COLORS.gray, fontFamily: FONTS.body }}>📷 Agregar foto de cancha</Text>
           }
         </TouchableOpacity>
@@ -1235,11 +1258,13 @@ function GestorResults({ route }) {
   const [teams,   setTeams]   = useState([]);
   const [scores,  setScores]  = useState({});
   const [saving,  setSaving]  = useState(null);
+  const [inscritosCount, setInscritosCount] = useState(0);
+  const [gestorEnEvento, setGestorEnEvento] = useState(true);
 
   const fetchData = useCallback(() => {
     if (!eventId) return;
     Promise.all([
-      supabase.from('events').select('status, formato, vidas_por_equipo').eq('id', eventId).single(),
+      supabase.from('events').select('id, status, formato, vidas_por_equipo, num_grupos, precio, cupos_total, cupos_ilimitado, cancha_costo, tarifa_app_por_jugador, gestor_juega, created_by').eq('id', eventId).single(),
       supabase.from('matches')
         .select('*, home:team_home_id(nombre,color), away:team_away_id(nombre,color)')
         .eq('event_id', eventId)
@@ -1248,10 +1273,23 @@ function GestorResults({ route }) {
       supabase.from('teams')
         .select('id, nombre, color, vidas_iniciales, vidas_actuales')
         .eq('event_id', eventId),
-    ]).then(([{ data: ev }, { data: m }, { data: t }]) => {
+      supabase.from('event_registrations').select('user_id', { count: 'exact', head: true })
+        .eq('event_id', eventId).eq('status', 'confirmed'),
+      supabase.from('event_guests').select('id, invited_by, status')
+        .eq('event_id', eventId).in('status', ['confirmed','pending_payment']),
+    ]).then(([{ data: ev }, { data: m }, { data: t }, { count: regsCount }, { data: gs }]) => {
       setEvent(ev ?? null);
       setMatches(m ?? []);
       setTeams(t ?? []);
+      const activeGuests = filterActiveEventGuests(gs ?? [], []);
+      setInscritosCount((regsCount ?? 0) + activeGuests.length);
+      // ¿El gestor está inscrito en su propio evento?
+      if (ev?.created_by) {
+        supabase.from('event_registrations')
+          .select('id').eq('event_id', eventId).eq('user_id', ev.created_by)
+          .in('status', ['confirmed','pending']).maybeSingle()
+          .then(({ data: reg }) => setGestorEnEvento(!!reg));
+      }
     });
   }, [eventId]);
 
@@ -1340,6 +1378,42 @@ function GestorResults({ route }) {
         if (result?.ok) {
           Alert.alert('⚡ Avance automático', `Los ganadores pasaron a ${result.populated.toUpperCase()}.`);
           fetchData();
+        }
+      }
+
+      // Torneo: cuando se cierra la fase de grupos, auto-poblar la primera ronda de
+      // knockout (semis/cuartos/octavos) con los clasificados.
+      //   - 1 grupo  → todos los equipos avanzan; pairing 1°vs4°, 2°vs3°
+      //   - 2+ grupos → top 2 por grupo; pairing cruzado 1°A vs 2°B, 1°B vs 2°A
+      // Si hay empates exactos en pts/dg/gf en la plaza de corte, abrir modal de override.
+      if (event?.formato === 'Torneo' && phase === 'grupos') {
+        const allMatchesUpdated = matches.map((m) => m.id === match.id ? updatedMatch : m);
+        if (isGroupStageComplete(allMatchesUpdated)) {
+          const koAlreadyPopulated = allMatchesUpdated.some((m) =>
+            ['octavos','cuartos','semis'].includes(m.fase) && (m.team_home_id || m.team_away_id)
+          );
+          if (!koAlreadyPopulated) {
+            const standings = computeStandingsFromMatches(allMatchesUpdated, teams);
+            const numGrupos = parseInt(event?.num_grupos ?? '2', 10) || 2;
+            const avanzan = numGrupos === 1 ? teams.length : 2;
+            const conflicts = detectGroupTiesNeedingDecision(standings, avanzan);
+            if (conflicts.length > 0) {
+              const initial = {};
+              const byGroup = standings.reduce((acc, s) => { (acc[s.grupo] ??= []).push(s); return acc; }, {});
+              Object.entries(byGroup).forEach(([g, list]) => {
+                initial[g] = list.slice(0, avanzan).map((s) => s.team_id);
+              });
+              setTieOverrides(initial);
+              setTieModal({ conflicts, standings, avanzan });
+            } else {
+              const qualified = getQualifiedTeams(standings, avanzan);
+              const result = await populateKnockoutFromGroups({ supabase, eventId, qualifiedByGroup: qualified });
+              if (result?.ok) {
+                Alert.alert('⚡ Avance automático', `${result.count} llaves de ${result.phase.toUpperCase()} pobladas con los clasificados.`);
+                fetchData();
+              }
+            }
+          }
         }
       }
 
@@ -1435,6 +1509,11 @@ function GestorResults({ route }) {
         </View>
       )}
       <ScrollView contentContainerStyle={styles.list}>
+        {event && (
+          <View style={{ paddingHorizontal: SPACING.md }}>
+            <GananciaCard event={event} inscritosConfirmados={inscritosCount} gestorEnEvento={gestorEnEvento} />
+          </View>
+        )}
         {matches.length === 0 && <Text style={styles.empty}>Sin partidos. Genera el fixture primero.</Text>}
         {pendingMatches.map((m) => {
           const sc = scores[m.id] ?? {};
@@ -1709,33 +1788,22 @@ function GestorMvp({ route }) {
       setSelectedMvp(null);
       Alert.alert('🏆 MVP Declarado', `${nombreLimpio} es el MVP del evento.`);
     } else {
-      // Registered user MVP: insert into mvp_results as usual
-      const { error } = await supabase.from('mvp_results').insert({
-        event_id:      eventId,
-        user_id:       candidate.user_id,
-        votos_totales: mvpVotesByPlayer[candidate.user_id] ?? 0,
-        premio_wallet: 1.00,
-        premio_pagado: true,
+      // Registered user MVP: usa RPC declare_mvp (atómico, valida caller=gestor/admin,
+      // acredita +$1 al wallet en la misma transacción). Idempotente: si el mvp_results
+      // ya existe sin pagar, solo acredita; si ya está pagado, no doble-paga.
+      const { data, error } = await supabase.rpc('declare_mvp', {
+        p_event_id:      eventId,
+        p_user_id:       candidate.user_id,
+        p_votos_totales: mvpVotesByPlayer[candidate.user_id] ?? 0,
       });
-      if (error?.code === '23505') {
-        Alert.alert('Ya declarado', 'El MVP ya fue registrado.');
-      } else if (error) {
-        Alert.alert('Error', error.message);
+      if (error) {
+        Alert.alert('Error al declarar MVP', error.message ?? 'Intentá nuevamente.');
+      } else if (data?.already_paid) {
+        Alert.alert('🏆 MVP ya declarado', `${candidate.nombre} ya tenía el premio acreditado.`);
+      } else if (data?.credit_added) {
+        Alert.alert('🏆 MVP Declarado', `${candidate.nombre} es el MVP. +$1 acreditado.`);
       } else {
-        // Acreditar $1 al wallet del MVP. Antes el Alert decía "+$1 acreditado"
-        // pero nunca se llamaba a credit_wallet — el premio quedaba en cero.
-        const { error: cwErr } = await supabase.rpc('credit_wallet', {
-          p_user_id:     candidate.user_id,
-          p_monto:       1.00,
-          p_tipo:        'mvp_premio',
-          p_descripcion: `Premio MVP — ${event?.nombre ?? 'Evento'}`,
-        });
-        if (cwErr) {
-          console.warn('[declareMvp] credit_wallet error:', cwErr.message);
-          Alert.alert('🏆 MVP Declarado', `${candidate.nombre} es el MVP. (Premio pendiente de acreditar — contacta al admin.)`);
-        } else {
-          Alert.alert('🏆 MVP Declarado', `${candidate.nombre} es el MVP. +$1 acreditado.`);
-        }
+        Alert.alert('🏆 MVP Declarado', `${candidate.nombre} es el MVP.`);
       }
       fetchData();
     }
@@ -2217,6 +2285,12 @@ function GestorCashApprovals({ route, navigation }) {
 
   async function fetchRequests() {
     setLoading(true);
+    // Expirar antes de leer: el RPC marca como 'expired' las que pasaron el plazo.
+    // Fire-and-forget para no bloquear (Promise.resolve(...) porque rpc retorna
+    // PostgrestBuilder Thenable y .catch directo tira TypeError).
+    Promise.resolve(supabase.rpc('expire_pending_cash_requests')).catch(() => {});
+    Promise.resolve(supabase.rpc('expire_pending_guests')).catch(() => {});
+
     // PERMISOS: el gestor SOLO debe ver requests de SUS eventos. Antes la
     // query traía todas las pendientes de la plataforma (bug de permisos).
     // Sacamos los event_ids del gestor primero y luego filtramos por esos.
@@ -2233,21 +2307,28 @@ function GestorCashApprovals({ route, navigation }) {
       setRequests([]); setGuestReqs([]); setLoading(false); return;
     }
 
+    const nowIso      = new Date().toISOString();
+    const guestCutoff = new Date(Date.now() - 24 * 3600_000).toISOString();
+
     // 1. Solicitudes de usuarios registrados (cash_payment_requests)
+    //    Filtro por expires_at>now para que las expiradas no aparezcan aunque
+    //    el RPC todavía no las haya marcado (defensa en profundidad).
     const q1 = supabase
       .from('cash_payment_requests')
       .select('*, user:users!user_id(nombre, correo), event:events!event_id(nombre, precio)')
       .eq('status', 'pending')
       .in('event_id', targetIds)
+      .gt('expires_at', nowIso)
       .order('created_at', { ascending: true });
 
-    // 2. Invitados pendientes de pago en efectivo (event_guests con status='pending_payment')
+    // 2. Invitados pendientes de pago en efectivo: 24h desde created_at.
     const q2 = supabase
       .from('event_guests')
       .select('id, event_id, nombre, telefono, monto_pagado, invited_by, created_at, event:events!event_id(nombre, precio), inviter:users!invited_by(nombre, correo)')
       .eq('status', 'pending_payment')
       .eq('metodo_pago', 'efectivo')
       .in('event_id', targetIds)
+      .gt('created_at', guestCutoff)
       .order('created_at', { ascending: true });
 
     const [{ data: regs }, { data: gs }] = await Promise.all([q1, q2]);

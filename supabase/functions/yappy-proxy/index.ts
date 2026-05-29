@@ -152,7 +152,7 @@ async function getYappyToken(forceRefresh = false): Promise<string> {
 }
 
 // ─── Auth: validar JWT del usuario ────────────────────────────────────────────
-async function requireUser(req: Request): Promise<{ ok: true } | { ok: false; res: Response }> {
+async function requireUser(req: Request): Promise<{ ok: true; authId: string } | { ok: false; res: Response }> {
   const authHeader = req.headers.get('Authorization') ?? '';
   if (!authHeader.startsWith('Bearer ')) {
     return { ok: false, res: json({ error: 'No autorizado' }, 401) };
@@ -162,7 +162,19 @@ async function requireUser(req: Request): Promise<{ ok: true } | { ok: false; re
   if (error || !data?.user) {
     return { ok: false, res: json({ error: 'No autorizado' }, 401) };
   }
-  return { ok: true };
+  return { ok: true, authId: data.user.id };
+}
+
+// Validar que el caller sea admin o gestor (para acciones sensibles como ver
+// historial completo de cobros del merchant).
+async function requireAdminOrGestor(authId: string): Promise<boolean> {
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('role')
+    .eq('auth_id', authId)
+    .maybeSingle();
+  if (error || !data) return false;
+  return data.role === 'admin' || data.role === 'gestor';
 }
 
 // ─── Handlers por acción ──────────────────────────────────────────────────────
@@ -277,6 +289,16 @@ serve(async (req) => {
 
   const action = payload.action;
   if (!action) return json({ error: 'Falta `action`' }, 400);
+
+  // movement-history expone TODAS las transacciones Yappy del merchant del día.
+  // Es info sensible (alias, montos, IDs de pagadores). Solo admin/gestor.
+  // Hallazgo de pentest 2026-05-21.
+  if (action === 'movement-history') {
+    const allowed = await requireAdminOrGestor(auth.authId);
+    if (!allowed) {
+      return json({ error: 'Solo admin/gestor puede consultar el historial' }, 403);
+    }
+  }
 
   try {
     switch (action) {
