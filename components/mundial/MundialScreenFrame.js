@@ -12,8 +12,6 @@ export default function MundialScreenFrame({ children, style }) {
         style={StyleSheet.absoluteFill}
         imageStyle={styles.image}
       >
-        <View style={styles.tint} />
-        <View style={styles.bottomShade} />
       </ImageBackground>
       {children}
     </View>
@@ -26,14 +24,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECFFB9',
   },
   image: {
-    opacity: 0.96,
-  },
-  tint: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(5, 8, 10, 0.50)',
-  },
-  bottomShade: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.22)',
+    opacity: 1,
   },
 });
