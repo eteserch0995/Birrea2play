@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Text, Platform, View, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, FONTS } from '../../constants/theme';
 import useAuthStore from '../../store/authStore';
+import useWcStore from '../../store/wcStore';
 
 // ── Main screens ─────────────────────────────────────────────────────────────
 import HomeScreen           from '../screens/player/HomeScreen';
@@ -26,6 +27,7 @@ import TermsScreen             from '../screens/legal/TermsScreen';
 import AssistantScreen         from '../screens/assistant/AssistantScreen';
 import EditEventScreen         from '../screens/event/EditEventScreen';
 import SlotsDisponiblesScreen  from '../screens/gestor/SlotsDisponiblesScreen';
+import MundialNavigator        from './MundialNavigator';
 
 const Tab   = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -37,6 +39,7 @@ const TAB_ICONS = {
   Tienda:    '🛍',
   Asistente: 'IA',
   Noticias:  '📰',
+  Mundial:   '🏆',
   Panel:     '⚙',
   Cancha:    '🏟',
   Slots:     '🕒',
@@ -49,6 +52,7 @@ const TAB_LABELS = {
   Tienda:    'Tienda',
   Asistente: 'IA',
   Noticias:  'Noticias',
+  Mundial:   'Mundial',
   Slots:     'Slots',
   Panel:     'Panel',
   Cancha:    'Cancha',
@@ -68,18 +72,23 @@ function EventsStack() {
 // ── Bottom tabs ───────────────────────────────────────────────────────────────
 function MainTabs() {
   const { user } = useAuthStore();
+  const { pool, loadPool } = useWcStore();
   const insets = useSafeAreaInsets();
   const role = user?.role ?? 'player';
   const isPrivileged    = role === 'admin' || role === 'gestor' || role === 'cancha_admin';
   const isGestorOrAdmin = role === 'gestor' || role === 'admin';
   const isCanchaAdmin   = role === 'cancha_admin';
 
+  // Mundial 2026: admin siempre lo ve; resto solo si is_visible=true en wc_pools
+  useEffect(() => { loadPool(); }, [loadPool]);
+  const showMundial = role === 'admin' || pool?.is_visible === true;
+
   // bottomInset = espacio reservado para la barra de gestos del sistema (debajo de los iconos)
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 16 : 0);
 
   return (
     <Tab.Navigator
-      key={role}
+      key={`${role}-${showMundial ? 'wc' : 'news'}`}
       safeAreaInsets={{ bottom: 0 }}
       screenOptions={({ route }) => ({
         headerShown: false,
@@ -141,7 +150,11 @@ function MainTabs() {
       <Tab.Screen name="Wallet" component={WalletScreen} />
       <Tab.Screen name="Tienda"    component={StoreScreen} />
       <Tab.Screen name="Asistente" component={AssistantScreen} />
-      <Tab.Screen name="Noticias"  component={NewsScreen} />
+      {showMundial ? (
+        <Tab.Screen name="Mundial" component={MundialNavigator} />
+      ) : (
+        <Tab.Screen name="Noticias" component={NewsScreen} />
+      )}
 
       {isGestorOrAdmin && (
         <Tab.Screen name="Slots" component={SlotsDisponiblesScreen} />
