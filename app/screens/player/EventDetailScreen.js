@@ -615,7 +615,7 @@ export default function EventDetailScreen({ route, navigation }) {
   const inscritos  = registrations.length + guests.length;
   const jugadoresInscritos = [
     ...registrations.filter(r => r.status === 'confirmed' && r.users?.nombre).map(r => ({ nombre: r.users.nombre, genero: r.users.genero })),
-    ...guests.filter(g => g.status === 'confirmed' && g.nombre).map(g => ({ nombre: g.nombre, genero: null })),
+    ...guests.filter(g => g.status === 'confirmed' && g.nombre).map(g => ({ nombre: g.nombre, genero: g.genero ?? null })),
   ];
   // Capacity con desglose por género (si el evento Mixto lo tiene definido)
   const capacityInfo = computeEventCapacity(event, participantRegs ?? [], guests);

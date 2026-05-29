@@ -192,7 +192,7 @@ function GestorDashboard({ navigation }) {
                   ]);
                   const jugadores = [
                     ...(regs ?? []).filter(r => r.users?.nombre).map(r => ({ nombre: r.users.nombre, genero: r.users.genero })),
-                    ...(gs ?? []).filter(g => g.nombre).map(g => ({ nombre: g.nombre, genero: null })),
+                    ...(gs ?? []).filter(g => g.nombre).map(g => ({ nombre: g.nombre, genero: g.genero ?? null })),
                   ];
                   shareEvent(selectedEvent, { inscritos: jugadores.length, jugadores });
                 }}
