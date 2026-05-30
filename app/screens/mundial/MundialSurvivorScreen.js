@@ -9,6 +9,7 @@ import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
+import { WCTabBar, WCButton, WCBadge, WCEmptyState, WC_ALPHA } from '../../../components/mundial/WCComponents';
 
 const TABS = ['Pick', 'Jornadas', 'Equipos', 'Comunidad', 'Ranking'];
 
@@ -355,18 +356,8 @@ export default function MundialSurvivorScreen({ navigation }) {
           )}
         </View>
 
-        {/* Tabs */}
-        <View style={styles.tabRow}>
-          {TABS.map((t) => (
-            <TouchableOpacity
-              key={t}
-              style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
-              onPress={() => setTab(t)}
-            >
-              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {/* Tabs scrolleables horizontalmente — soporta los 5 tabs sin truncar */}
+        <WCTabBar tabs={TABS} active={tab} onChange={setTab} accent="red" />
 
         {tab === 'Pick' && (
           <View>

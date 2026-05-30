@@ -9,6 +9,7 @@ import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
+import { WCTabBar, WCButton, WCBadge, WC_ALPHA } from '../../../components/mundial/WCComponents';
 
 const TABS = ['Grupos', 'Bracket', 'Ranking', 'Bonus'];
 
@@ -375,18 +376,8 @@ export default function MundialPollaScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Tabs */}
-        <View style={styles.tabRow}>
-          {TABS.map((t) => (
-            <TouchableOpacity
-              key={t}
-              style={[styles.tabBtn, tab === t && styles.tabBtnActive]}
-              onPress={() => setTab(t)}
-            >
-              <Text style={[styles.tabText, tab === t && styles.tabTextActive]}>{t}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {/* Tabs scrolleables — Grupos / Bracket / Ranking / Bonus */}
+        <WCTabBar tabs={TABS} active={tab} onChange={setTab} accent="magenta" />
 
         {tab === 'Grupos' && (
           <View>
@@ -1125,10 +1116,10 @@ const styles = StyleSheet.create({
   predTeamName: { flex: 1, fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white },
   predScoreBlock: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   predInput: {
-    width: 38, height: 36, borderRadius: RADIUS.sm,
+    width: 46, height: 46, borderRadius: RADIUS.sm,
     borderColor: COLORS.line, borderWidth: 1,
     textAlign: 'center', color: COLORS.white,
-    fontFamily: FONTS.heading, fontSize: 18,
+    fontFamily: FONTS.heading, fontSize: 22,
     backgroundColor: 'rgba(0, 0, 0, 0.70)',
   },
   predInputClosed: { backgroundColor: 'rgba(10, 14, 20, 0.92)', color: COLORS.gray },
