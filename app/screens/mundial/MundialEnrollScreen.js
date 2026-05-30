@@ -165,14 +165,10 @@ export default function MundialEnrollScreen({ route, navigation }) {
           phone: cleanPhone,
           amount: price,
           tipo: 'wc_enrollment',
-          event_id: null,
-          guest_id: null,
+          wc_enrollment_id: enrollId,
         });
-        // Asociar el enrollment_id al order recién creado
-        await supabase
-          .from('yappy_orders')
-          .update({ wc_enrollment_id: enrollId })
-          .eq('order_id', orderId);
+        // El enrollment_id se persiste en yappy_orders al CREAR la orden (server-side, en yappy-boton).
+        // El UPDATE posterior del cliente estaba bloqueado por RLS (yappy_orders no tiene policy UPDATE) — removido.
 
         // Poll hasta executed o timeout
         const poll = pollBotonOrder({ orderId });
