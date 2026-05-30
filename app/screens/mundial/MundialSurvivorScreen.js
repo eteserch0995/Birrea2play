@@ -10,7 +10,7 @@ import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 
-const TABS = ['Pick', 'Comunidad', 'Historial', 'Ranking'];
+const TABS = ['Pick', 'Jornadas', 'Comunidad', 'Ranking'];
 
 export default function MundialSurvivorScreen({ navigation }) {
   const { user } = useAuthStore();
@@ -25,6 +25,11 @@ export default function MundialSurvivorScreen({ navigation }) {
   const [ranking, setRanking] = useState([]);
   const [communityPicks, setCommunityPicks] = useState([]);
   const [livesDistribution, setLivesDistribution] = useState({ alive3: 0, alive2: 0, alive1: 0, dead: 0, total: 0 });
+  const [allDays, setAllDays] = useState([]);
+  const [picksByDay, setPicksByDay] = useState({});
+  const [matchesByDay, setMatchesByDay] = useState({});
+  const [allTeams, setAllTeams] = useState([]);
+  const [expandedDay, setExpandedDay] = useState(null);
   const [tab, setTab] = useState('Pick');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -158,7 +163,52 @@ export default function MundialSurvivorScreen({ navigation }) {
         setCommunityPicks([]);
       }
 
-      // 11) Pool global
+      // 11) TODAS las jornadas de grupos (para tab "Jornadas")
+      const { data: allDaysData } = await supabase
+        .from('wc_match_days')
+        .select('*')
+        .eq('phase', 'group')
+        .order('date');
+      setAllDays(allDaysData ?? []);
+
+      // 12) Matches de TODAS las jornadas (agrupados por match_day_id)
+      const { data: allM } = await supabase
+        .from('wc_matches')
+        .select(`
+          id, match_number, scheduled_at, group_letter, match_day_id,
+          status, score_home, score_away,
+          team_home:team_home_id ( id, code, name_es ),
+          team_away:team_away_id ( id, code, name_es )
+        `)
+        .eq('phase', 'group')
+        .order('scheduled_at');
+      const mMap = {};
+      (allM ?? []).forEach(mt => {
+        if (!mMap[mt.match_day_id]) mMap[mt.match_day_id] = [];
+        mMap[mt.match_day_id].push(mt);
+      });
+      setMatchesByDay(mMap);
+
+      // 13) Picks del user agrupados por match_day_id (con resultado)
+      const { data: allPicks } = await supabase
+        .from('wc_picks')
+        .select(`
+          id, match_day_id, result, life_lost, resolved_at,
+          team:team_id (id, code, name_es)
+        `)
+        .eq('enrollment_id', e.id);
+      const pMap = {};
+      (allPicks ?? []).forEach(p => { pMap[p.match_day_id] = p; });
+      setPicksByDay(pMap);
+
+      // 14) Lista de 48 teams (para vista "Mis equipos")
+      const { data: tAll } = await supabase
+        .from('wc_teams')
+        .select('id, code, name_es, group_letter')
+        .order('group_letter').order('name_es');
+      setAllTeams(tAll ?? []);
+
+      // 15) Pool global
       await loadPool();
     } finally {
       setLoading(false);
@@ -171,6 +221,32 @@ export default function MundialSurvivorScreen({ navigation }) {
     setRefreshing(true);
     await load();
     setRefreshing(false);
+  };
+
+  const submitPickFor = async (dayId, teamId) => {
+    if (saving || !dayId) return;
+    const uses = teamUsage[teamId] ?? 0;
+    // Verificar si es cambio (el pick existente para ese día usa el mismo team)
+    const existingPick = picksByDay[dayId];
+    const isChange = existingPick?.team?.id === teamId;
+    if (!isChange && uses >= 2) {
+      Alert.alert('Equipo agotado', 'Ya usaste este equipo 2 veces (máximo).');
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase.rpc('wc_submit_survivor_pick', {
+        p_user_id: user.id,
+        p_match_day_id: dayId,
+        p_team_id: teamId,
+      });
+      if (error) throw error;
+      await load();
+    } catch (err) {
+      Alert.alert('Error', err.message || 'No se pudo guardar el pick.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const submitPick = async (teamId) => {
@@ -427,40 +503,124 @@ export default function MundialSurvivorScreen({ navigation }) {
           </View>
         )}
 
-        {tab === 'Historial' && (
+        {tab === 'Jornadas' && (
           <View>
-            <Text style={styles.sectionTitle}>Mis picks resueltos</Text>
-            {history.length === 0 && (
-              <Text style={styles.emptyText}>Todavía no hay picks resueltos.</Text>
-            )}
-            {history.map((h) => (
-              <View key={h.id} style={[
-                styles.historyRow,
-                h.result === 'won' && { borderLeftColor: COLORS.green },
-                h.result === 'draw' && { borderLeftColor: COLORS.gold },
-                (h.result === 'lost' || h.result === 'no_pick') && { borderLeftColor: COLORS.red },
-              ]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.historyTeam}>
-                    {h.team?.name_es ?? '—'}
-                  </Text>
-                  <Text style={styles.historyDate}>
-                    {new Date(h.day?.date).toLocaleDateString('es-PA')}
-                  </Text>
+            <Text style={styles.communityHint}>
+              Todas las jornadas del Mundial. Las cerradas son solo consulta;
+              la actual y las futuras son editables.
+            </Text>
+            {allDays.map((d) => {
+              const now = Date.now();
+              const kickoffMs = new Date(d.first_kickoff_at).getTime();
+              const deadlineMs = new Date(d.pick_deadline).getTime();
+              const status = d.is_settled || kickoffMs <= now
+                ? 'closed'
+                : deadlineMs <= now
+                ? 'locked'
+                : 'open';
+              const pick = picksByDay[d.id];
+              const dayMatches = matchesByDay[d.id] ?? [];
+              const isOpen = expandedDay === d.id;
+
+              return (
+                <View key={d.id} style={styles.groupBlock}>
+                  <TouchableOpacity
+                    style={[
+                      styles.dayHeader,
+                      status === 'open' && styles.dayHeaderOpen,
+                      status === 'closed' && styles.dayHeaderClosed,
+                    ]}
+                    onPress={() => setExpandedDay(isOpen ? null : d.id)}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.dayHeaderDate}>
+                        {new Date(d.date).toLocaleDateString('es-PA', {
+                          weekday: 'short', day: '2-digit', month: 'short',
+                        }).toUpperCase()}
+                      </Text>
+                      <Text style={styles.dayHeaderMeta}>
+                        {dayMatches.length} partidos ·{' '}
+                        {status === 'open' ? '🟢 Abierta' : status === 'locked' ? '🟡 En curso' : '🔒 Cerrada'}
+                        {pick && ` · Tu pick: ${pick.team?.name_es}`}
+                      </Text>
+                    </View>
+                    <Text style={styles.dayHeaderArrow}>{isOpen ? '▲' : '▼'}</Text>
+                  </TouchableOpacity>
+                  {isOpen && (
+                    <View style={styles.daySection}>
+                      {pick && (
+                        <View style={[
+                          styles.currentPickCard,
+                          pick.result === 'won' && { borderColor: COLORS.green },
+                          pick.result === 'lost' && { borderColor: COLORS.red2 },
+                          pick.result === 'draw' && { borderColor: COLORS.gold },
+                        ]}>
+                          <Text style={styles.currentPickLabel}>Tu pick</Text>
+                          <Text style={styles.currentPickTeam}>{pick.team?.name_es ?? '—'}</Text>
+                          {pick.resolved_at && (
+                            <Text style={[
+                              styles.historyResult,
+                              pick.result === 'won' && { color: COLORS.green },
+                              pick.result === 'draw' && { color: COLORS.gold },
+                              (pick.result === 'lost' || pick.result === 'no_pick') && { color: COLORS.red2 },
+                            ]}>
+                              {pick.result === 'won' ? 'GANÓ' : pick.result === 'draw' ? 'EMPATE' : pick.result === 'lost' ? 'PERDIÓ' : pick.result === 'no_pick' ? 'NO PICK' : '—'}
+                            </Text>
+                          )}
+                        </View>
+                      )}
+                      {dayMatches.map((mt) => (
+                        <View key={mt.id} style={styles.matchCard}>
+                          <Text style={styles.matchPhase}>
+                            Grupo {mt.group_letter} · {new Date(mt.scheduled_at).toLocaleTimeString('es-PA', { hour: '2-digit', minute: '2-digit' })}
+                            {mt.status === 'finished' && ` · ${mt.score_home}–${mt.score_away}`}
+                          </Text>
+                          <View style={styles.matchTeams}>
+                            <TeamButton
+                              team={mt.team_home}
+                              usage={teamUsage[mt.team_home?.id] ?? 0}
+                              selected={pick?.team?.id === mt.team_home?.id}
+                              onPress={() => {
+                                if (status === 'open') submitPickFor(d.id, mt.team_home.id);
+                              }}
+                              disabled={status !== 'open' || saving || eliminated}
+                            />
+                            <Text style={styles.vsLabel}>VS</Text>
+                            <TeamButton
+                              team={mt.team_away}
+                              usage={teamUsage[mt.team_away?.id] ?? 0}
+                              selected={pick?.team?.id === mt.team_away?.id}
+                              onPress={() => {
+                                if (status === 'open') submitPickFor(d.id, mt.team_away.id);
+                              }}
+                              disabled={status !== 'open' || saving || eliminated}
+                            />
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  )}
                 </View>
-                <Text style={[
-                  styles.historyResult,
-                  h.result === 'won'  && { color: COLORS.green },
-                  h.result === 'draw' && { color: COLORS.gold },
-                  (h.result === 'lost' || h.result === 'no_pick') && { color: COLORS.red2 },
-                ]}>
-                  {h.result === 'won' ? 'GANÓ' :
-                   h.result === 'draw' ? 'EMPATE' :
-                   h.result === 'lost' ? 'PERDIÓ' :
-                   h.result === 'no_pick' ? 'NO PICK' : '—'}
-                </Text>
-              </View>
-            ))}
+              );
+            })}
+
+            <Text style={styles.sectionTitle}>Mis equipos usados</Text>
+            <Text style={styles.communityHint}>
+              Cada equipo se puede usar máximo 2 veces en grupos. Los agotados
+              no aparecen en futuras jornadas.
+            </Text>
+            {allTeams.map((t) => {
+              const uses = teamUsage[t.id] ?? 0;
+              const color = uses === 0 ? COLORS.gray : uses === 1 ? COLORS.gold : COLORS.red2;
+              return (
+                <View key={t.id} style={styles.usageRow}>
+                  <Text style={styles.usageCode}>{t.code}</Text>
+                  <Text style={styles.usageName} numberOfLines={1}>{t.name_es}</Text>
+                  <Text style={styles.usageGroup}>{t.group_letter}</Text>
+                  <Text style={[styles.usageBadge, { color }]}>{uses}/2</Text>
+                </View>
+              );
+            })}
           </View>
         )}
 
@@ -528,18 +688,31 @@ function TeamButton({ team, usage, selected, onPress, disabled }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
-  back: { paddingVertical: 4, marginBottom: SPACING.sm },
-  backLink: { color: COLORS.gray2, fontFamily: FONTS.body, fontSize: 14 },
+  back: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.18)',
+    borderWidth: 1,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: SPACING.sm,
+  },
+  backLink: { color: COLORS.bg, fontFamily: FONTS.bodyBold, fontSize: 14 },
 
   notEnrolled: {
     padding: SPACING.lg, marginTop: 40, alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.16)',
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
   },
   notEnrolledTitle: {
-    fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white,
+    fontFamily: FONTS.heading, fontSize: 24, color: COLORS.bg,
     letterSpacing: 1, textAlign: 'center',
   },
   notEnrolledText: {
-    fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2,
+    fontFamily: FONTS.body, fontSize: 14, color: COLORS.bg,
     textAlign: 'center', marginTop: 8, marginBottom: SPACING.lg,
   },
   enrollBtn: {
@@ -591,8 +764,14 @@ const styles = StyleSheet.create({
   distPct: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 },
 
   communityHint: {
-    fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2,
+    fontFamily: FONTS.body, fontSize: 12, color: COLORS.bg,
+    backgroundColor: 'rgba(255,255,255,0.90)',
+    borderColor: 'rgba(10,14,20,0.14)',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
     marginBottom: SPACING.sm, lineHeight: 17,
+    overflow: 'hidden',
   },
   communityRow: {
     flexDirection: 'row', alignItems: 'center', gap: SPACING.sm,
@@ -658,13 +837,20 @@ const styles = StyleSheet.create({
     textAlign: 'center', lineHeight: 20,
   },
 
-  dayInfo: { alignItems: 'center', marginBottom: SPACING.md },
+  dayInfo: {
+    alignItems: 'center', marginBottom: SPACING.md,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.16)',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+  },
   dayDate: {
-    fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white,
+    fontFamily: FONTS.heading, fontSize: 18, color: COLORS.bg,
     letterSpacing: 1.5,
   },
   deadline: {
-    fontFamily: FONTS.body, fontSize: 12, color: COLORS.gold, marginTop: 4,
+    fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.bg, marginTop: 4,
   },
 
   currentPickCard: {
@@ -684,6 +870,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontFamily: FONTS.heading, fontSize: 16, color: COLORS.white,
     letterSpacing: 1, marginVertical: SPACING.sm,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(10,14,20,0.92)',
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    overflow: 'hidden',
   },
   matchCard: {
     backgroundColor: 'rgba(10, 14, 20, 0.92)', borderRadius: RADIUS.md,
@@ -719,8 +913,14 @@ const styles = StyleSheet.create({
   },
 
   ruleNote: {
-    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gold,
+    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.bg,
+    backgroundColor: 'rgba(255,255,255,0.90)',
+    borderColor: 'rgba(10,14,20,0.14)',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
     textAlign: 'center', marginTop: SPACING.md, lineHeight: 16,
+    overflow: 'hidden',
   },
 
   historyRow: {
@@ -736,6 +936,30 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
 
+  groupBlock: { marginBottom: SPACING.sm },
+  dayHeader: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: COLORS.card2, borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.md, padding: SPACING.md,
+  },
+  dayHeaderOpen:   { borderColor: COLORS.green },
+  dayHeaderClosed: { opacity: 0.6 },
+  dayHeaderDate: {
+    fontFamily: FONTS.heading, fontSize: 14, color: COLORS.white, letterSpacing: 1,
+  },
+  dayHeaderMeta: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 2 },
+  dayHeaderArrow: { color: COLORS.gray2, fontSize: 16, marginLeft: 8 },
+  daySection: { marginTop: 6 },
+
+  usageRow: {
+    flexDirection: 'row', alignItems: 'center', paddingVertical: 8,
+    borderBottomWidth: 1, borderBottomColor: COLORS.line,
+  },
+  usageCode: { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.neon, width: 50 },
+  usageName: { flex: 1, fontFamily: FONTS.body, fontSize: 13, color: COLORS.white },
+  usageGroup: { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gray2, width: 24 },
+  usageBadge: { fontFamily: FONTS.heading, fontSize: 14, width: 40, textAlign: 'right' },
+
   rankRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
     borderBottomWidth: 1, borderBottomColor: COLORS.line,
@@ -745,7 +969,13 @@ const styles = StyleSheet.create({
   rankLives: { flexDirection: 'row', gap: 4 },
   heartSmall: { fontSize: 14, color: COLORS.line },
   emptyText: {
-    fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray,
+    fontFamily: FONTS.body, fontSize: 13, color: COLORS.bg,
+    backgroundColor: 'rgba(255,255,255,0.90)',
+    borderColor: 'rgba(10,14,20,0.14)',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
     textAlign: 'center', marginTop: SPACING.lg,
+    overflow: 'hidden',
   },
 });
