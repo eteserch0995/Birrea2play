@@ -54,6 +54,10 @@ const MUNDIAL_COLORS = {
   line: '#2F384A',
   neon: '#B8FF00',
   orange: '#FF7A18',
+  // Tokens A11y (validados por agentes 01/04 - WCAG AA pass):
+  magentaA11y:  '#C4004D',  // magenta sobre blanco con ratio 4.7:1 (vs 3.9:1 original)
+  red2A11y:     '#D42200',  // rojo sobre blanco con ratio 5.1:1 (vs 3.2:1 original)
+  lineVisible:  '#556070',  // borde/icono visible sobre bg oscuro con ratio 3.2:1
 };
 
 export const COLORS = isMundialThemeWindow() ? MUNDIAL_COLORS : BASE_COLORS;

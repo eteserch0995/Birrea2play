@@ -346,7 +346,7 @@ export default function MundialSurvivorScreen({ navigation }) {
           <View style={styles.livesRow}>
             {[0, 1, 2].map((i) => (
               <Text key={i} style={[styles.heart, i < lives && styles.heartActive]}>
-                ♥
+                {i < lives ? '♥' : '♡'}
               </Text>
             ))}
           </View>
@@ -645,7 +645,9 @@ export default function MundialSurvivorScreen({ navigation }) {
                 </Text>
                 <View style={styles.rankLives}>
                   {[0, 1, 2].map((j) => (
-                    <Text key={j} style={[styles.heartSmall, j < r.lives_remaining && styles.heartActive]}>♥</Text>
+                    <Text key={j} style={[styles.heartSmall, j < r.lives_remaining && styles.heartActive]}>
+                      {j < r.lives_remaining ? '♥' : '♡'}
+                    </Text>
                   ))}
                 </View>
               </View>
@@ -971,7 +973,7 @@ const styles = StyleSheet.create({
   usageHearts: { flexDirection: 'row', gap: 4, width: 50, justifyContent: 'flex-end' },
   usageHeart: { fontSize: 16 },
   usageHeartOn: { color: COLORS.red2 },
-  usageHeartOff: { color: COLORS.line },
+  usageHeartOff: { color: COLORS.lineVisible ?? '#556070' },
 
   rankRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 10,

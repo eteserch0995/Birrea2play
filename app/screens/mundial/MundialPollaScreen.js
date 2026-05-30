@@ -390,8 +390,29 @@ export default function MundialPollaScreen({ navigation }) {
 
         {tab === 'Grupos' && (
           <View>
+            {(() => {
+              const totalGroupMatches = matches.length;
+              const filledGroupMatches = matches.filter(mt => predictions[mt.id]).length;
+              const totalKoMatches = koMatches.length;
+              const filledKoMatches = koMatches.filter(mt => predictions[mt.id]?.pred_winner_team_id).length;
+              const pctTotal = totalGroupMatches + totalKoMatches > 0
+                ? Math.round(((filledGroupMatches + filledKoMatches) / (totalGroupMatches + totalKoMatches)) * 100)
+                : 0;
+              return (
+                <View style={styles.progressCard}>
+                  <Text style={styles.progressLabel}>TU PROGRESO</Text>
+                  <View style={styles.progressTrack}>
+                    <View style={[styles.progressFill, { width: `${pctTotal}%` }]} />
+                  </View>
+                  <Text style={styles.progressText}>
+                    Grupos: {filledGroupMatches}/{totalGroupMatches} · Bracket: {filledKoMatches}/{totalKoMatches} · Total: {pctTotal}%
+                  </Text>
+                </View>
+              );
+            })()}
             <Text style={styles.helpText}>
               Predicí el marcador de los 72 partidos de fase de grupos. Tocá un grupo para abrirlo.
+              Botón "Llenar grupo 1-0" llena rápido y vos editás los que querés.
             </Text>
             {['A','B','C','D','E','F','G','H','I','J','K','L'].map((letter) => {
               const groupMatches = matches.filter(m => m.group_letter === letter);
@@ -408,15 +429,40 @@ export default function MundialPollaScreen({ navigation }) {
                       {filled}/{groupMatches.length} · {isOpen ? '▲' : '▼'}
                     </Text>
                   </TouchableOpacity>
-                  {isOpen && groupMatches.map((m) => (
-                    <PredictionRow
-                      key={m.id}
-                      match={m}
-                      prediction={predictions[m.id]}
-                      userId={user.id}
-                      onSaved={load}
-                    />
-                  ))}
+                  {isOpen && (
+                    <>
+                      <TouchableOpacity
+                        style={styles.quickFillBtn}
+                        onPress={async () => {
+                          for (const m of groupMatches) {
+                            if (!predictions[m.id]) {
+                              try {
+                                await supabase.rpc('wc_submit_polla_prediction', {
+                                  p_user_id: user.id,
+                                  p_match_id: m.id,
+                                  p_pred_score_home: 1,
+                                  p_pred_score_away: 0,
+                                  p_pred_winner_team_id: null,
+                                });
+                              } catch (_) {}
+                            }
+                          }
+                          await load();
+                        }}
+                      >
+                        <Text style={styles.quickFillText}>⚡ Llenar grupo con 1-0 (después editás)</Text>
+                      </TouchableOpacity>
+                      {groupMatches.map((m) => (
+                        <PredictionRow
+                          key={m.id}
+                          match={m}
+                          prediction={predictions[m.id]}
+                          userId={user.id}
+                          onSaved={load}
+                        />
+                      ))}
+                    </>
+                  )}
                 </View>
               );
             })}
@@ -947,6 +993,32 @@ const styles = StyleSheet.create({
     padding: SPACING.sm,
     marginBottom: SPACING.sm, lineHeight: 17,
     overflow: 'hidden',
+  },
+  progressCard: {
+    backgroundColor: COLORS.card, borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.sm,
+  },
+  progressLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gray,
+    letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 6,
+  },
+  progressTrack: {
+    height: 8, backgroundColor: COLORS.line, borderRadius: 4, overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%', backgroundColor: COLORS.neon, borderRadius: 4,
+  },
+  progressText: {
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 6,
+  },
+  quickFillBtn: {
+    backgroundColor: COLORS.magenta + '22', borderColor: COLORS.magenta + '88',
+    borderWidth: 1, borderRadius: RADIUS.sm, padding: 10,
+    alignItems: 'center', marginBottom: 8, marginTop: 4,
+  },
+  quickFillText: {
+    fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.magenta,
+    letterSpacing: 0.5,
   },
   groupBlock: { marginBottom: SPACING.sm },
   groupHeader: {
