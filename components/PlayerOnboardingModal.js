@@ -11,7 +11,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
-const SALIX_AVATAR = require('../assets/Salix.png');
+// Avatar de IA (Salix) removido — la IA ya no existe en la app.
 
 const STEPS = [
   {
@@ -39,10 +39,10 @@ const STEPS = [
     bullets: ['Tienda → elegir producto', 'Selecciona talla cuando aplique', 'Carrito → confirma tu pedido'],
   },
   {
-    icon: '🤖',
-    title: 'IA y ayuda',
-    body: 'La pestaña IA te ayuda con dudas sobre inscripciones, pagos, créditos, tienda y reglas de uso. También puedes revisar Noticias para resultados, MVPs y comunicados.',
-    bullets: ['IA para preguntas rápidas', 'Noticias para novedades', 'Perfil para configuración'],
+    icon: '🏆',
+    title: 'Mundial 2026',
+    body: 'Durante el Mundial activamos dos juegos en la pestaña Mundial. Survivor: elegí 1 equipo por jornada; si empata o pierde, perdés una vida; sobreviví la fase de grupos. Polla: predecí los 104 partidos y el bracket, y sumá puntos por cada acierto. Inscribite, competí y ganá del pozo acumulado.',
+    bullets: ['Survivor: 3 vidas, 1 equipo por jornada', 'Polla: predicciones + puntos por acierto', 'Pestaña Mundial → elegí tu modo'],
   },
 ];
 
@@ -69,7 +69,7 @@ export default function PlayerOnboardingModal({ visible, userName, onFinish }) {
       <SafeAreaView style={styles.safe}>
         <View style={styles.header}>
           <View style={styles.brandRow}>
-            <Image source={SALIX_AVATAR} style={styles.avatar} />
+            <View style={styles.avatar}><Text style={styles.avatarMark}>⚽</Text></View>
             <View>
               <Text style={styles.kicker}>PRIMER RECORRIDO</Text>
               <Text style={styles.brand}>Birrea2Play</Text>
@@ -135,7 +135,8 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.line,
   },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  avatar: { width: 42, height: 42, borderRadius: 21, borderWidth: 2, borderColor: COLORS.neon },
+  avatar: { width: 42, height: 42, borderRadius: 21, borderWidth: 2, borderColor: COLORS.neon, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.neon + '18' },
+  avatarMark: { fontSize: 22 },
   kicker: { fontFamily: FONTS.bodyBold, color: COLORS.neon, fontSize: 10, letterSpacing: 1.4 },
   brand: { fontFamily: FONTS.heading, color: COLORS.white, fontSize: 24, letterSpacing: 2 },
   skip: { fontFamily: FONTS.bodyBold, color: COLORS.gray2, fontSize: 13 },
