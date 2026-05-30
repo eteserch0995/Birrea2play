@@ -17,6 +17,7 @@ import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import useWcStore from '../../store/wcStore';
 import { WCButton, WCBadge, WCCard, WC_ALPHA } from '../../components/mundial/WCComponents';
+import { broadcastNotification } from '../../lib/notifications';
 
 const PHASE_LABEL = {
   group: 'Grupos',
@@ -245,6 +246,20 @@ export default function WCAdminPanel({ navigation }) {
       const { error } = await supabase.rpc('wc_admin_set_pool_visibility', args);
       if (error) throw error;
       await loadPool();
+      // Al ACTIVAR la visibilidad (false→true) avisamos a todos por push, una sola vez.
+      if (flag === 'is_visible' && !current) {
+        const res = await broadcastNotification(
+          '🏆 ¡Mundial 2026 disponible!',
+          'Ya podés inscribirte al Survivor y la Polla. Jugá por el pozo.',
+          { url: '/mundial' }
+        );
+        const a = res?.result?.audience ?? 0;
+        if (res?.ok) {
+          Alert.alert('📣 Aviso enviado', `Notificamos a ${a} ${a === 1 ? 'usuario' : 'usuarios'} con notificaciones activas.`);
+        } else {
+          Alert.alert('Visibilidad activada', `El módulo ya es visible, pero el aviso push no salió: ${res?.error ?? 'error'}. Podés reintentarlo apagando y volviendo a encender.`);
+        }
+      }
     } catch (e) {
       Alert.alert('Error', e.message || 'No se pudo actualizar el flag');
     } finally {

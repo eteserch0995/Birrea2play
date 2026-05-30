@@ -8,7 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
-import { sendPushNotificationsToEventPlayers } from '../../../lib/notifications';
+import { sendPushNotificationsToEventPlayers, broadcastNotification } from '../../../lib/notifications';
 import { calcTeams } from '../../../lib/eventHelpers';
 import { DateField, TimeField } from '../../../components/DateTimeField';
 import { uploadImage } from '../../../lib/uploadImage';
@@ -19,6 +19,7 @@ export default function EditEventScreen({ route, navigation }) {
   const { eventId } = route.params ?? {};
   const [loading,   setLoading]   = useState(true);
   const [saving,    setSaving]    = useState(false);
+  const [notifying, setNotifying] = useState(false);
   const [newImageUri, setNewImageUri] = useState(null);
   const [form, setForm] = useState(null);
 
@@ -171,6 +172,40 @@ export default function EditEventScreen({ route, navigation }) {
       setSaving(false);
     }
   }
+
+  // Broadcast a TODOS los usuarios (no solo inscritos) para atraer nuevas inscripciones.
+  // El edge function valida rol admin/gestor del lado servidor.
+  const notifyEventAvailable = () => {
+    const nombre  = (form?.nombre || '').trim() || 'el evento';
+    const cuando  = [form?.fecha, form?.hora].filter(Boolean).join(' ');
+    const lugar   = (form?.lugar || '').trim();
+    const detalle = [cuando, lugar].filter(Boolean).join(' · ');
+    Alert.alert(
+      'Notificar a todos',
+      `Se enviará una alerta a TODOS los usuarios con notificaciones activas anunciando "${nombre}". ¿Continuar?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Enviar', onPress: async () => {
+          setNotifying(true);
+          try {
+            const res = await broadcastNotification(
+              `⚽ Nuevo evento: ${nombre}`,
+              detalle ? `${detalle}. ¡Inscribite ya!` : '¡Ya está disponible! Inscribite ya.',
+              { url: `/evento/${eventId}` }
+            );
+            const a = res?.result?.audience ?? 0;
+            if (res?.ok) {
+              Alert.alert('📣 Aviso enviado', `Notificamos a ${a} ${a === 1 ? 'usuario' : 'usuarios'} con notificaciones activas.`);
+            } else {
+              Alert.alert('No se pudo enviar', res?.error ?? 'Error desconocido. Verificá que tu cuenta sea admin/gestor.');
+            }
+          } finally {
+            setNotifying(false);
+          }
+        }},
+      ]
+    );
+  };
 
   if (loading || !form) {
     return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
@@ -413,6 +448,16 @@ export default function EditEventScreen({ route, navigation }) {
             }
           </TouchableOpacity>
 
+          <TouchableOpacity style={[styles.notifyAllBtn, (notifying || saving) && { opacity: 0.6 }]} onPress={notifyEventAvailable} disabled={notifying || saving}>
+            {notifying
+              ? <ActivityIndicator color={COLORS.white} size="small" />
+              : <Text style={styles.notifyAllText}>📣 Notificar a todos: evento disponible</Text>
+            }
+          </TouchableOpacity>
+          <Text style={styles.notifyAllHint}>
+            Envía una alerta a TODOS los usuarios (no solo inscritos) para atraer nuevas inscripciones. Usalo cuando el evento esté listo.
+          </Text>
+
           <View style={{ height: SPACING.xxl }} />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -441,4 +486,7 @@ const styles = StyleSheet.create({
   notifHintText: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, textAlign: 'center' },
   btn:        { backgroundColor: COLORS.red, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center', marginTop: SPACING.sm },
   btnText:    { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.white, letterSpacing: 1 },
+  notifyAllBtn:  { backgroundColor: COLORS.blue, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center', marginTop: SPACING.md },
+  notifyAllText: { fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.white },
+  notifyAllHint: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, textAlign: 'center', marginTop: 6 },
 });
