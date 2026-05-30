@@ -19,7 +19,8 @@ export default function MundialRulesScreen({ navigation }) {
           <WCBlock title="🏆 Cómo funciona el pozo" accent="gold">
             <Text style={styles.text}>
               • Tu inscripción va al pozo del modo elegido (Survivor $10 / Polla $15).{'\n'}
-              • El premio = 95% del total recaudado (5% cubre fees Yappy).{'\n'}
+              • El pozo = 95% de lo recaudado (5% cubre fees Yappy).{'\n'}
+              • <Text style={styles.bold}>Polla:</Text> el pozo se reparte entre los 3 primeros — 1.º 60% · 2.º 25% · 3.º 15%.{'\n'}
               • Entrega manual por <Text style={styles.payAccent}>Yappy o transferencia bancaria</Text>.{'\n'}
               • Cierre de inscripciones: 11-jun-2026 11:00 AM Panamá.
             </Text>
@@ -124,7 +125,7 @@ export default function MundialRulesScreen({ navigation }) {
 
           <WCBlock title="💰 Cómo se entrega el premio" variant="light">
             <Text style={[styles.text, { color: COLORS.bg }]}>
-              Al cerrar el torneo, el admin contacta al ganador para coordinar el pago
+              Al cerrar el torneo, el admin contacta a los ganadores (1.º, 2.º y 3.º de la Polla) para coordinar el pago
               por <Text style={[styles.bold, styles.payAccentDark]}>Yappy o transferencia bancaria</Text>. Tenés
               que tener tu wallet o número Yappy listo. El admin valida tu identidad
               antes de transferir.

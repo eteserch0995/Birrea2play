@@ -15,14 +15,14 @@ const SLIDES = [
   {
     kicker: 'BIENVENIDO A',
     title: 'MUNDIAL 2026',
-    body: 'Pronósticos del FIFA World Cup en USA · México · Canadá. Inscribite a Survivor o Polla, gana puntos por aciertos y llevate el pozo.',
+    body: 'Pronósticos del Mundial 2026 en USA · México · Canadá. Inscribite a Survivor o Polla, gana puntos por aciertos y llevate el pozo.',
     icon: '🏆',
     accent: 'gold',
   },
   {
     kicker: '2 MODOS DE JUEGO',
     title: 'ELEGÍ TU ESTILO',
-    body: 'Survivor: $10, 3 vidas, pick 1 equipo por día durante fase de grupos. Polla: $15, predice todos los marcadores + bracket completo, gana el de más puntos.',
+    body: 'Survivor: $10, 3 vidas, pick 1 equipo por día durante fase de grupos. Polla: $15, predice todos los marcadores + bracket completo; el pozo se reparte entre los 3 primeros (60/25/15).',
     icon: '⚽',
     accent: 'magenta',
   },

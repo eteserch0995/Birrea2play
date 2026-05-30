@@ -119,7 +119,7 @@ export default function WCAdminPanel({ navigation }) {
     }
     Alert.alert(
       'Finalizar Polla',
-      '¿Confirmar? Se calcula el ganador con los bonus picks y se crea el pago. No se puede deshacer.',
+      '¿Confirmar? Se rankea con los bonus picks, se reparte el pozo al top 3 (60/25/15) y se crean los pagos. No se puede deshacer.',
       [
         { text: 'Cancelar', style: 'cancel' },
         {
@@ -139,8 +139,11 @@ export default function WCAdminPanel({ navigation }) {
               });
               if (error) throw error;
               await loadPayouts();
-              const row = Array.isArray(data) && data[0];
-              Alert.alert('Polla finalizada', row ? `Ganador calculado. Premio: $${row.prize}` : 'Polla finalizada correctamente.');
+              const rows = Array.isArray(data) ? data : [];
+              const resumen = rows.length
+                ? rows.map(r => `${r.rank_position}º $${Number(r.prize).toFixed(2)} (${r.prize_pct}%)`).join('  ·  ')
+                : 'sin ganadores';
+              Alert.alert('Polla finalizada', `${rows.length} ganador(es): ${resumen}. Revisá el panel de Pagos.`);
             } catch (e) {
               Alert.alert('Error al finalizar Polla', e.message || 'Error desconocido');
             } finally {
@@ -362,7 +365,7 @@ export default function WCAdminPanel({ navigation }) {
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Asignar mejores terceros</Text>
           <Text style={styles.cardSubtitle}>
-            Al cerrar la fase de grupos, asigná el 3° clasificado a cada slot de octavos según la tabla oficial FIFA de la combinación real. Sin esto, esos partidos no se pueden resolver.
+            Al cerrar la fase de grupos, asigná el 3° clasificado a cada slot de octavos según la tabla oficial del torneo de la combinación real. Sin esto, esos partidos no se pueden resolver.
           </Text>
           {matches.filter(m => (m.away_placeholder || '').startsWith('Mejor 3')).map(m => (
             <View key={m.id} style={styles.thirdRow}>

@@ -120,7 +120,7 @@ export default function MundialHomeScreen({ navigation }) {
 
         <View style={styles.headerCard}>
           <Image source={mundialLogo} style={styles.logo} resizeMode="contain" />
-          <Text style={styles.kicker}>FIFA WORLD CUP</Text>
+          <Text style={styles.kicker}>BIRREA2PLAY</Text>
           <Text style={styles.title}>MUNDIAL 2026</Text>
           <Text style={styles.subtitle}>USA · México · Canadá · 48 equipos</Text>
         </View>
