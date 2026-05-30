@@ -108,7 +108,7 @@ export default function MundialHomeScreen({ navigation }) {
           </View>
         )}
 
-        <View style={styles.header}>
+        <View style={styles.headerCard}>
           <Image source={mundialLogo} style={styles.logo} resizeMode="contain" />
           <Text style={styles.kicker}>FIFA WORLD CUP</Text>
           <Text style={styles.title}>MUNDIAL 2026</Text>
@@ -232,8 +232,8 @@ const styles = StyleSheet.create({
   },
 
   adminBanner: {
-    backgroundColor: COLORS.gold + '18',
-    borderColor: COLORS.gold + '66',
+    backgroundColor: 'rgba(255, 255, 255, 0.90)',
+    borderColor: 'rgba(10, 14, 20, 0.18)',
     borderWidth: 1,
     borderRadius: RADIUS.md,
     padding: SPACING.md,
@@ -242,20 +242,26 @@ const styles = StyleSheet.create({
   adminBannerLabel: {
     fontFamily: FONTS.heading,
     fontSize: 13,
-    color: COLORS.gold,
+    color: COLORS.bg,
     letterSpacing: 1.5,
     marginBottom: 4,
   },
   adminBannerText: {
     fontFamily: FONTS.body,
     fontSize: 13,
-    color: COLORS.gray2,
+    color: COLORS.bg,
     lineHeight: 18,
   },
 
-  header: {
+  headerCard: {
     alignItems: 'center',
     paddingVertical: SPACING.lg,
+    paddingHorizontal: SPACING.md,
+    marginBottom: SPACING.md,
+    borderRadius: RADIUS.lg,
+    backgroundColor: 'rgba(255, 255, 255, 0.88)',
+    borderWidth: 1,
+    borderColor: 'rgba(10, 14, 20, 0.12)',
   },
   logo: {
     width: 132,
@@ -269,20 +275,20 @@ const styles = StyleSheet.create({
   kicker: {
     fontFamily: FONTS.bodyBold,
     fontSize: 11,
-    color: COLORS.magenta,
+    color: COLORS.primary ?? COLORS.magenta,
     letterSpacing: 3,
     marginBottom: 4,
   },
   title: {
     fontFamily: FONTS.heading,
     fontSize: 44,
-    color: COLORS.white,
+    color: COLORS.bg,
     letterSpacing: 2,
   },
   subtitle: {
     fontFamily: FONTS.body,
     fontSize: 13,
-    color: COLORS.gray2,
+    color: COLORS.bg,
     marginTop: 4,
   },
 
