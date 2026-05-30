@@ -394,14 +394,10 @@ export default function MundialPollaScreen({ navigation }) {
                 <Text style={styles.pozoValue}>
                   ${(pozo || 0).toFixed(0)}
                 </Text>
-                <Text style={styles.pozoMeta}>
-                  {paidCount} inscritos × ${pool?.polla_price ?? 15}
-                </Text>
               </View>
               <View style={styles.pozoRight}>
                 <Text style={styles.pozoLabel}>POSICIÓN</Text>
                 <Text style={styles.pozoRank}>{myRank ? `#${myRank}` : '—'}</Text>
-                <Text style={styles.pozoMeta}>de {paidCount}</Text>
               </View>
             </View>
           );

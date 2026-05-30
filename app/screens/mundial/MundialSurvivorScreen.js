@@ -392,14 +392,10 @@ export default function MundialSurvivorScreen({ navigation }) {
                 <Text style={styles.pozoValue}>
                   ${(pozo || 0).toFixed(0)}
                 </Text>
-                <Text style={styles.pozoMeta}>
-                  {livesDistribution.total} inscritos × ${pool?.survivor_price ?? 10}
-                </Text>
               </View>
               <View style={styles.pozoRight}>
                 <Text style={styles.pozoLabel}>VIVOS</Text>
                 <Text style={styles.pozoSurvivors}>{alive}</Text>
-                <Text style={styles.pozoMeta}>de {livesDistribution.total}</Text>
               </View>
             </View>
           );
@@ -548,7 +544,6 @@ export default function MundialSurvivorScreen({ navigation }) {
                     </View>
                     <View style={styles.communityStats}>
                       <Text style={styles.communityPct}>{pct}%</Text>
-                      <Text style={styles.communityCount}>{p.count} picks</Text>
                     </View>
                   </View>
                 );
@@ -560,12 +555,10 @@ export default function MundialSurvivorScreen({ navigation }) {
               <Text style={styles.insightText}>
                 {(() => {
                   const totalPicked = communityPicks.reduce((s, x) => s + x.count, 0);
-                  const skipped = livesDistribution.total - totalPicked;
-                  if (livesDistribution.total === 0) return 'Aún no hay datos. Cuando los users se inscriban verás aquí las tendencias.';
-                  if (totalPicked === 0) return `${livesDistribution.total} inscritos vivos aún no hicieron pick. Si no pickean antes del deadline pierden vida.`;
-                  if (skipped > 0) return `${skipped} de ${livesDistribution.total} aún no hicieron pick. Recordatorio: si no eligen, pierden vida.`;
+                  if (livesDistribution.total === 0) return 'Aún no hay datos. Cuando se inscriban verás aquí las tendencias.';
+                  if (totalPicked === 0) return 'Los participantes vivos aún no hicieron pick. Si no pickean antes del deadline, pierden vida.';
                   const top = communityPicks[0];
-                  return `El ${Math.round(top.count / totalPicked * 100)}% eligió ${top.team?.name_es}. Si pierde, caen ${top.count} users juntos.`;
+                  return `El ${Math.round(top.count / totalPicked * 100)}% eligió ${top.team?.name_es}. Si pierde, es el equipo de mayor riesgo de la jornada.`;
                 })()}
               </Text>
             </View>
@@ -747,7 +740,6 @@ function DistTile({ lives, count, total, color }) {
       <Text style={[styles.distLives, { color }]}>
         {lives === 0 ? '✗' : '♥'.repeat(lives)}
       </Text>
-      <Text style={styles.distCount}>{count}</Text>
       <Text style={styles.distPct}>{pct}%</Text>
     </View>
   );
