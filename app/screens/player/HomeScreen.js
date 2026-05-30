@@ -6,13 +6,18 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
+import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import PlayerAvatar from '../../../components/PlayerAvatar';
 import EventCard from '../../../components/EventCard';
 import { useAppRefresh } from '../../../hooks/useAppRefresh';
 
+const mundialLogo = require('../../../assets/mundial/mundial-logo.png');
+
 export default function HomeScreen({ navigation }) {
   const { user, walletBalance, subscribeToWallet } = useAuthStore();
+  const { pool: wcPool, loadPool: loadWcPool, isVisibleTo } = useWcStore();
+  const mundialOn = isVisibleTo(user?.role ?? 'player');
   const [events,       setEvents]       = React.useState([]);
   const [loading,      setLoading]      = React.useState(true);
   const [error,        setError]        = React.useState(null);
@@ -77,6 +82,8 @@ export default function HomeScreen({ navigation }) {
     return () => { unsub(); };
   }, [fetchData]);
 
+  useEffect(() => { loadWcPool(); }, [loadWcPool]);
+
   const { refreshing, onRefresh } = useAppRefresh(fetchData);
 
   return (
@@ -128,6 +135,23 @@ export default function HomeScreen({ navigation }) {
             </TouchableOpacity>
           );
         })()}
+
+        {/* ── Banner Mundial ── */}
+        {mundialOn && (
+          <TouchableOpacity
+            style={styles.mundialBanner}
+            activeOpacity={0.9}
+            onPress={() => navigation.navigate('Mundial')}
+          >
+            <Image source={mundialLogo} style={styles.mundialBannerLogo} resizeMode="contain" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.mundialBannerKicker}>MUNDIAL 2026 · USA · MÉXICO · CANADÁ</Text>
+              <Text style={styles.mundialBannerTitle}>JUGÁ EL MUNDIAL</Text>
+              <Text style={styles.mundialBannerSub}>Survivor 3 Vidas · Polla Ganadora — competí por el pozo</Text>
+            </View>
+            <Text style={styles.mundialBannerArrow}>→</Text>
+          </TouchableOpacity>
+        )}
 
         {/* ── Próximos eventos: PRIMER bloque visible para foco en agenda ── */}
         <SectionHeader title="Próximos eventos" onPress={() => navigation.navigate('Eventos')} />
@@ -306,4 +330,50 @@ const styles = StyleSheet.create({
   mvpName:  { fontFamily: FONTS.bodySemiBold, fontSize: 15, color: COLORS.white },
   mvpSub:   { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray },
   empty:    { fontFamily: FONTS.body, color: COLORS.gray, textAlign: 'center', padding: SPACING.xl },
+
+  // ── Mundial Banner ──
+  mundialBanner: {
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.sm,
+    marginBottom: SPACING.sm,
+    backgroundColor: COLORS.bg2 ?? '#0A0E14',
+    borderWidth: 1.5,
+    borderColor: COLORS.magenta,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    ...SHADOWS.glow,
+  },
+  mundialBannerLogo: {
+    width: 50,
+    height: 50,
+  },
+  mundialBannerKicker: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 10,
+    color: COLORS.neon,
+    letterSpacing: 1.4,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  mundialBannerTitle: {
+    fontFamily: FONTS.heading,
+    fontSize: 28,
+    color: COLORS.white,
+    letterSpacing: 1.5,
+    lineHeight: 30,
+  },
+  mundialBannerSub: {
+    fontFamily: FONTS.body,
+    fontSize: 12,
+    color: COLORS.gray2 ?? COLORS.gray,
+    marginTop: 3,
+  },
+  mundialBannerArrow: {
+    fontFamily: FONTS.heading,
+    fontSize: 26,
+    color: COLORS.magentaText ?? COLORS.magenta,
+  },
 });
