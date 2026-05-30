@@ -232,7 +232,7 @@ export default function MundialEnrollScreen({ route, navigation }) {
           <Text style={styles.subtitle}>
             {isPolla
               ? 'Predice marcadores de los 104 partidos. 3-5-8 pts por acierto x multiplicador por fase.'
-              : 'Pick 1 equipo por jornada-día. Cada equipo máximo 2 veces en grupos. Sobreviví la fase de grupos.'}
+              : 'Pick 1 equipo por jornada-día. Cada equipo 1 sola vez en grupos. Sobreviví la fase de grupos.'}
           </Text>
         </View>
 

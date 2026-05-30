@@ -117,12 +117,22 @@ function MainTabs() {
           marginTop: 0,
           textTransform: 'none',
         },
-        tabBarIcon: ({ color, focused }) => (
-          <View style={tabStyles.iconSlot}>
-            <View style={[tabStyles.iconBadge, focused && tabStyles.iconBadgeActive]}>
-              {route.name === 'Mundial' ? (
-                <Image source={mundialLogo} style={tabStyles.mundialIcon} resizeMode="contain" />
-              ) : (
+        tabBarIcon: ({ color, focused }) => {
+          // Mundial: logo grande sin badge cuadrado (se ve mejor que un emoji)
+          if (route.name === 'Mundial') {
+            return (
+              <View style={tabStyles.iconSlot}>
+                <Image
+                  source={mundialLogo}
+                  style={[tabStyles.mundialIcon, focused && tabStyles.mundialIconActive]}
+                  resizeMode="contain"
+                />
+              </View>
+            );
+          }
+          return (
+            <View style={tabStyles.iconSlot}>
+              <View style={[tabStyles.iconBadge, focused && tabStyles.iconBadgeActive]}>
                 <Text
                   style={[
                     route.name === 'Asistente' ? tabStyles.aiText : tabStyles.iconText,
@@ -131,10 +141,10 @@ function MainTabs() {
                 >
                   {TAB_ICONS[route.name]}
                 </Text>
-              )}
+              </View>
             </View>
-          </View>
-        ),
+          );
+        },
         // Los items solo ocupan los 72px superiores — el safe area queda debajo libre
         tabBarItemStyle: { height: 72, paddingTop: 6, paddingBottom: 6 },
       })}
@@ -197,10 +207,12 @@ const tabStyles = StyleSheet.create({
     backgroundColor: COLORS.neon + '14',
   },
   mundialIcon: {
-    width: 24,
-    height: 24,
-    borderRadius: 5,
-    backgroundColor: COLORS.white,
+    width: 40,
+    height: 40,
+    borderRadius: 6,
+  },
+  mundialIconActive: {
+    transform: [{ scale: 1.08 }],
   },
   iconText: {
     fontSize: 20,

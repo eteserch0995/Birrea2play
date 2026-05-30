@@ -270,11 +270,10 @@ export default function MundialSurvivorScreen({ navigation }) {
   const submitPickFor = async (dayId, teamId) => {
     if (saving || !dayId) return;
     const uses = teamUsage[teamId] ?? 0;
-    // Verificar si es cambio (el pick existente para ese día usa el mismo team)
     const existingPick = picksByDay[dayId];
     const isChange = existingPick?.team?.id === teamId;
-    if (!isChange && uses >= 2) {
-      Alert.alert('Equipo agotado', 'Ya usaste este equipo 2 veces (máximo).');
+    if (!isChange && uses >= 1) {
+      Alert.alert('Equipo ya usado', 'Solo podés usar cada equipo 1 vez en toda la fase de grupos.');
       return;
     }
     setSaving(true);
@@ -298,8 +297,8 @@ export default function MundialSurvivorScreen({ navigation }) {
     if (!nextDay) return;
     const uses = teamUsage[teamId] ?? 0;
     const isChange = currentPick?.team_id === teamId;
-    if (!isChange && uses >= 2) {
-      Alert.alert('Equipo agotado', 'Ya usaste este equipo 2 veces (máximo).');
+    if (!isChange && uses >= 1) {
+      Alert.alert('Equipo ya usado', 'Solo podés usar cada equipo 1 vez en toda la fase de grupos.');
       return;
     }
     setSaving(true);
@@ -470,7 +469,7 @@ export default function MundialSurvivorScreen({ navigation }) {
                 ))}
 
                 <Text style={styles.ruleNote}>
-                  ⚠️ Cada equipo se puede usar máximo 2 veces. Si no hacés pick, perdés
+                  ⚠️ Cada equipo se puede usar 1 sola vez en grupos. Si no hacés pick, perdés
                   una vida.
                 </Text>
               </>
@@ -654,24 +653,20 @@ export default function MundialSurvivorScreen({ navigation }) {
         {tab === 'Equipos' && (
           <View>
             <Text style={styles.communityHint}>
-              Cada equipo arranca con 2 corazones — cada vez que lo usás se apaga uno.
-              Al quedar sin corazones, no podés usarlo más.
+              Cada equipo se puede usar 1 sola vez en toda la fase de grupos.
+              Cuando lo usás, se marca como usado y no podés volver a elegirlo.
             </Text>
             {allTeams.map((t) => {
               const uses = teamUsage[t.id] ?? 0;
-              const remaining = Math.max(2 - uses, 0);
+              const used = uses >= 1;
               return (
                 <View key={t.id} style={styles.usageRow}>
                   <Text style={styles.usageCode}>{t.code}</Text>
                   <Text style={styles.usageName} numberOfLines={1}>{t.name_es}</Text>
                   <Text style={styles.usageGroup}>{t.group_letter}</Text>
-                  <View style={styles.usageHearts}>
-                    {[0, 1].map((i) => (
-                      <Text key={i} style={[styles.usageHeart, i < remaining ? styles.usageHeartOn : styles.usageHeartOff]}>
-                        {i < remaining ? '♥' : '♡'}
-                      </Text>
-                    ))}
-                  </View>
+                  <Text style={[styles.usageHeart, used ? styles.usageHeartOff : styles.usageHeartOn]}>
+                    {used ? '✗' : '♥'}
+                  </Text>
                 </View>
               );
             })}
@@ -719,7 +714,7 @@ function DistTile({ lives, count, total, color }) {
 
 function TeamButton({ team, usage, selected, onPress, disabled }) {
   if (!team) return <View style={styles.teamBtn}><Text style={styles.teamBtnEmpty}>—</Text></View>;
-  const capped = usage >= 2 && !selected;
+  const capped = usage >= 1 && !selected;
   return (
     <TouchableOpacity
       style={[
@@ -735,7 +730,7 @@ function TeamButton({ team, usage, selected, onPress, disabled }) {
         {team.name_es}
       </Text>
       <Text style={[styles.teamBtnUsage, selected && { color: COLORS.bg }]}>
-        Usado {usage}/2
+        {usage >= 1 ? '✗ Usado' : '♥ Disponible'}
       </Text>
     </TouchableOpacity>
   );

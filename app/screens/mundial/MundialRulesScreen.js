@@ -32,7 +32,7 @@ export default function MundialRulesScreen({ navigation }) {
               • Si tu equipo <Text style={styles.bold}>gana o empata</Text> mantenés tu vida.{'\n'}
               • Si <Text style={styles.bold}>pierde</Text> perdés 1 vida.{'\n'}
               • Si no pickeás antes del deadline (1h antes del primer partido del día) → perdés 1 vida.{'\n'}
-              • Cada equipo se puede usar máximo 2 veces en toda la fase de grupos.{'\n'}
+              • Cada equipo se puede usar <Text style={styles.bold}>1 sola vez</Text> en toda la fase de grupos.{'\n'}
               • Cuando llegás a 0 vidas quedás eliminado.{'\n'}
               • Ganan los que terminen con más vidas. Si empatan, se reparte el pozo.
             </Text>

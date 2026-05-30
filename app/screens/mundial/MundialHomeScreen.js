@@ -151,7 +151,7 @@ export default function MundialHomeScreen({ navigation }) {
             <Text style={styles.modePrice}>${pool?.survivor_price ?? '10'}</Text>
             <Text style={styles.modeDesc}>
               Pick 1 equipo por jornada-día. Si tu equipo pierde, perdés 1 vida. Cada
-              equipo se puede usar máximo 2 veces. Sobreviví la fase de grupos.
+              equipo se puede usar 1 sola vez. Sobreviví la fase de grupos.
             </Text>
             <View style={styles.modeFooter}>
               {enrollments.survivor?.payment_status === 'paid' ? (
