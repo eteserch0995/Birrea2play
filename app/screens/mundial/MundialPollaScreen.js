@@ -850,16 +850,31 @@ function BonusViewRow({ label, value, correct }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
-  back: { paddingVertical: 4, marginBottom: SPACING.sm },
-  backLink: { color: COLORS.gray2, fontFamily: FONTS.body, fontSize: 14 },
+  back: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.18)',
+    borderWidth: 1,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: SPACING.sm,
+  },
+  backLink: { color: COLORS.bg, fontFamily: FONTS.bodyBold, fontSize: 14 },
 
-  notEnrolled: { padding: SPACING.lg, marginTop: 40, alignItems: 'center' },
+  notEnrolled: {
+    padding: SPACING.lg, marginTop: 40, alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.16)',
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+  },
   notEnrolledTitle: {
-    fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white,
+    fontFamily: FONTS.heading, fontSize: 24, color: COLORS.bg,
     letterSpacing: 1, textAlign: 'center',
   },
   notEnrolledText: {
-    fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2,
+    fontFamily: FONTS.body, fontSize: 14, color: COLORS.bg,
     textAlign: 'center', marginTop: 8, marginBottom: SPACING.lg,
   },
   enrollBtn: {
@@ -924,8 +939,14 @@ const styles = StyleSheet.create({
   tabTextActive: { color: COLORS.white },
 
   helpText: {
-    fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2,
+    fontFamily: FONTS.body, fontSize: 12, color: COLORS.bg,
+    backgroundColor: 'rgba(255,255,255,0.90)',
+    borderColor: 'rgba(10,14,20,0.14)',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
     marginBottom: SPACING.sm, lineHeight: 17,
+    overflow: 'hidden',
   },
   groupBlock: { marginBottom: SPACING.sm },
   groupHeader: {
@@ -1057,6 +1078,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontFamily: FONTS.heading, fontSize: 16, color: COLORS.white,
     letterSpacing: 1, marginBottom: SPACING.sm,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(10,14,20,0.92)',
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderWidth: 1,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    overflow: 'hidden',
   },
   rankRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
@@ -1068,7 +1097,16 @@ const styles = StyleSheet.create({
   rankSubtext: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 },
   rankPts:  { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.neon },
 
-  emptyText: { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray, textAlign: 'center', marginTop: SPACING.lg },
+  emptyText: {
+    fontFamily: FONTS.body, fontSize: 13, color: COLORS.bg,
+    backgroundColor: 'rgba(255,255,255,0.90)',
+    borderColor: 'rgba(10,14,20,0.14)',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
+    textAlign: 'center', marginTop: SPACING.lg,
+    overflow: 'hidden',
+  },
 
   bonusViewCard: {
     backgroundColor: 'rgba(10, 14, 20, 0.93)', borderColor: COLORS.magenta + '66',

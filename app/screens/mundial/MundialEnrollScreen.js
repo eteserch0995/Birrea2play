@@ -224,13 +224,15 @@ export default function MundialEnrollScreen({ route, navigation }) {
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
-        <Text style={styles.title}>{isPolla ? 'POLLA GANADORA' : 'SURVIVOR 3 VIDAS'}</Text>
-        <Text style={styles.priceBig}>${price}</Text>
-        <Text style={styles.subtitle}>
-          {isPolla
-            ? 'Predice marcadores de los 104 partidos. 3-5-8 pts por acierto x multiplicador por fase.'
-            : 'Pick 1 equipo por jornada-día. Cada equipo máximo 2 veces en grupos. Sobreviví la fase de grupos.'}
-        </Text>
+        <View style={styles.enrollHeader}>
+          <Text style={styles.title}>{isPolla ? 'POLLA GANADORA' : 'SURVIVOR 3 VIDAS'}</Text>
+          <Text style={styles.priceBig}>${price}</Text>
+          <Text style={styles.subtitle}>
+            {isPolla
+              ? 'Predice marcadores de los 104 partidos. 3-5-8 pts por acierto x multiplicador por fase.'
+              : 'Pick 1 equipo por jornada-día. Cada equipo máximo 2 veces en grupos. Sobreviví la fase de grupos.'}
+          </Text>
+        </View>
 
         {/* Selector de método de pago */}
         <View style={styles.payMethodBlock}>
@@ -468,19 +470,36 @@ function BonusTeamRow({ label, teamId, teamsById, onPress }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
-  back: { paddingVertical: 4, marginBottom: SPACING.sm },
-  backLink: { color: COLORS.gray2, fontFamily: FONTS.body, fontSize: 14 },
+  back: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.18)',
+    borderWidth: 1,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginBottom: SPACING.sm,
+  },
+  backLink: { color: COLORS.bg, fontFamily: FONTS.bodyBold, fontSize: 14 },
+  enrollHeader: {
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.16)',
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING.lg,
+  },
   title: {
-    fontFamily: FONTS.heading, fontSize: 32, color: COLORS.white,
-    letterSpacing: 1.5, marginTop: 8,
+    fontFamily: FONTS.heading, fontSize: 32, color: COLORS.bg,
+    letterSpacing: 1.5,
   },
   priceBig: {
-    fontFamily: FONTS.heading, fontSize: 52, color: COLORS.neon,
+    fontFamily: FONTS.heading, fontSize: 52, color: COLORS.magenta,
     letterSpacing: 1, marginTop: 6,
   },
   subtitle: {
-    fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2,
-    lineHeight: 20, marginTop: 4, marginBottom: SPACING.lg,
+    fontFamily: FONTS.body, fontSize: 14, color: COLORS.bg,
+    lineHeight: 20, marginTop: 4,
   },
 
   walletCard: {
@@ -623,17 +642,29 @@ const styles = StyleSheet.create({
     fontSize: 18, letterSpacing: 2,
   },
   footnote: {
-    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray,
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.bg,
+    backgroundColor: 'rgba(255,255,255,0.90)',
+    borderColor: 'rgba(10,14,20,0.14)',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.sm,
     textAlign: 'center', marginTop: SPACING.md, fontStyle: 'italic',
+    overflow: 'hidden',
   },
 
-  alreadyWrap: { padding: SPACING.lg, marginTop: 40 },
+  alreadyWrap: {
+    padding: SPACING.lg, marginTop: 40,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.16)',
+    borderWidth: 1,
+    borderRadius: RADIUS.lg,
+  },
   alreadyTitle: {
-    fontFamily: FONTS.heading, fontSize: 26, color: COLORS.neon,
+    fontFamily: FONTS.heading, fontSize: 26, color: COLORS.bg,
     letterSpacing: 1, marginBottom: 8,
   },
   alreadyText: {
-    fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2,
+    fontFamily: FONTS.body, fontSize: 14, color: COLORS.bg,
     marginBottom: SPACING.lg, lineHeight: 20,
   },
 

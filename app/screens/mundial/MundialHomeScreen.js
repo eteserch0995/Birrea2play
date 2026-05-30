@@ -223,10 +223,17 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
 
-  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    margin: SPACING.lg,
+    borderRadius: RADIUS.lg,
+  },
   loadingText: {
     marginTop: SPACING.md,
-    color: COLORS.gray2,
+    color: COLORS.bg,
     fontFamily: FONTS.body,
     fontSize: 14,
   },
