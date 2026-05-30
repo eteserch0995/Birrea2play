@@ -10,6 +10,7 @@ import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
+import { WCButton, WCBadge } from '../../../components/mundial/WCComponents';
 
 export default function MundialEnrollScreen({ route, navigation }) {
   const mode = route?.params?.mode ?? 'survivor';
@@ -201,12 +202,13 @@ export default function MundialEnrollScreen({ route, navigation }) {
             <Text style={styles.alreadyText}>
               Inscripción confirmada para {isPolla ? 'Polla Ganadora' : 'Survivor 3 Vidas'}.
             </Text>
-            <TouchableOpacity
-              style={styles.payBtn}
+            <WCButton
+              label="IR AL JUEGO"
+              variant="primary"
+              size="lg"
               onPress={() => navigation.replace(isPolla ? 'MundialPolla' : 'MundialSurvivor')}
-            >
-              <Text style={styles.payBtnText}>IR AL JUEGO</Text>
-            </TouchableOpacity>
+              style={{ marginTop: SPACING.md }}
+            />
             <TouchableOpacity onPress={() => navigation.goBack()}>
               <Text style={styles.backLink}>Volver</Text>
             </TouchableOpacity>
@@ -363,20 +365,17 @@ export default function MundialEnrollScreen({ route, navigation }) {
           </View>
         )}
 
-        <TouchableOpacity
-          style={[
-            styles.payBtn,
-            (processing || (paymentMethod === 'wallet' && walletBalance < price)) && { opacity: 0.5 },
-          ]}
+        <WCButton
+          label={processing
+            ? (yappyStep === 'waiting' ? 'ESPERANDO YAPPY…' : 'PROCESANDO…')
+            : `INSCRIBIRME · $${price}${paymentMethod === 'yappy' ? ' (YAPPY)' : ' (WALLET)'}`}
           onPress={handleEnroll}
+          variant="primary"
+          size="lg"
           disabled={processing || (paymentMethod === 'wallet' && walletBalance < price)}
-        >
-          <Text style={styles.payBtnText}>
-            {processing
-              ? (yappyStep === 'waiting' ? 'ESPERANDO YAPPY…' : 'PROCESANDO…')
-              : `INSCRIBIRME · $${price}${paymentMethod === 'yappy' ? ' (YAPPY)' : ' (WALLET)'}`}
-          </Text>
-        </TouchableOpacity>
+          loading={processing && yappyStep !== 'waiting'}
+          style={{ marginTop: SPACING.md }}
+        />
 
         {yappyStep === 'waiting' && (
           <TouchableOpacity style={styles.cancelYappyBtn} onPress={cancelYappy}>

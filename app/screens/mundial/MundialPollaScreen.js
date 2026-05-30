@@ -322,12 +322,13 @@ export default function MundialPollaScreen({ navigation }) {
             <Text style={styles.notEnrolledText}>
               Inscribite y predice los 104 partidos del Mundial.
             </Text>
-            <TouchableOpacity
-              style={styles.enrollBtn}
+            <WCButton
+              label="INSCRIBIRME · $15"
+              variant="primary"
+              size="lg"
               onPress={() => navigation.navigate('MundialEnroll', { mode: 'polla' })}
-            >
-              <Text style={styles.enrollBtnText}>INSCRIBIRME · $15</Text>
-            </TouchableOpacity>
+              style={{ marginTop: SPACING.md, paddingHorizontal: 40 }}
+            />
           </View>
         </SafeAreaView>
       </MundialScreenFrame>

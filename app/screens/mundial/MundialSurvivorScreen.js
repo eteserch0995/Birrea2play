@@ -295,12 +295,13 @@ export default function MundialSurvivorScreen({ navigation }) {
             <Text style={styles.notEnrolledText}>
               Inscribite para empezar a participar.
             </Text>
-            <TouchableOpacity
-              style={styles.enrollBtn}
+            <WCButton
+              label="INSCRIBIRME · $10"
+              variant="danger"
+              size="lg"
               onPress={() => navigation.navigate('MundialEnroll', { mode: 'survivor' })}
-            >
-              <Text style={styles.enrollBtnText}>INSCRIBIRME · $10</Text>
-            </TouchableOpacity>
+              style={{ marginTop: SPACING.md, paddingHorizontal: 40 }}
+            />
           </View>
         </SafeAreaView>
       </MundialScreenFrame>
