@@ -15,6 +15,7 @@ import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
+import { WCCard, WCBlock, WCButton, WCBadge, WC_ALPHA } from '../../../components/mundial/WCComponents';
 
 const mundialLogo = require('../../../assets/mundial/mundial-logo.jpg');
 
@@ -183,6 +184,14 @@ export default function MundialHomeScreen({ navigation }) {
             </View>
           </TouchableOpacity>
         </View>
+
+        <WCButton
+          label="📖 VER REGLAS COMPLETAS"
+          variant="ghost"
+          size="md"
+          onPress={() => navigation.navigate('MundialRules')}
+          style={{ marginTop: SPACING.md, marginBottom: SPACING.sm }}
+        />
 
         <View style={styles.rulesCard}>
           <Text style={styles.rulesTitle}>Cómo funciona el pozo</Text>

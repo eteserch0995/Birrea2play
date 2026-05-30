@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import useWcStore from '../../store/wcStore';
+import { WCButton, WCBadge, WCCard, WC_ALPHA } from '../../components/mundial/WCComponents';
 
 const PHASE_LABEL = {
   group: 'Grupos',
@@ -297,15 +298,15 @@ function MatchRow({ match, onSaved }) {
         />
         <Text style={styles.teamName} numberOfLines={1}>{awayName}</Text>
       </View>
-      <TouchableOpacity
-        style={[styles.saveBtn, saving && { opacity: 0.5 }]}
+      <WCButton
+        label={finished ? 'Actualizar' : 'Guardar'}
+        variant={finished ? 'gold' : 'primary'}
+        size="md"
         onPress={save}
+        loading={saving}
         disabled={saving}
-      >
-        <Text style={styles.saveBtnText}>
-          {saving ? 'Guardando…' : finished ? 'Actualizar' : 'Guardar'}
-        </Text>
-      </TouchableOpacity>
+        style={{ marginTop: 8 }}
+      />
     </View>
   );
 }
