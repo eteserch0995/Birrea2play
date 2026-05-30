@@ -595,7 +595,7 @@ export default function MundialSurvivorScreen({ navigation }) {
                           styles.currentPickCard,
                           pick.result === 'won' && { borderColor: COLORS.green },
                           pick.result === 'lost' && { borderColor: COLORS.red2 },
-                          pick.result === 'draw' && { borderColor: COLORS.gold },
+                          pick.result === 'draw' && { borderColor: COLORS.red2 },
                         ]}>
                           <Text style={styles.currentPickLabel}>Tu pick</Text>
                           <Text style={styles.currentPickTeam}>{pick.team?.name_es ?? '—'}</Text>
@@ -603,10 +603,10 @@ export default function MundialSurvivorScreen({ navigation }) {
                             <Text style={[
                               styles.historyResult,
                               pick.result === 'won' && { color: COLORS.green },
-                              pick.result === 'draw' && { color: COLORS.gold },
+                              pick.result === 'draw' && { color: COLORS.red2 },
                               (pick.result === 'lost' || pick.result === 'no_pick') && { color: COLORS.red2 },
                             ]}>
-                              {pick.result === 'won' ? 'GANÓ' : pick.result === 'draw' ? 'EMPATE' : pick.result === 'lost' ? 'PERDIÓ' : pick.result === 'no_pick' ? 'NO PICK' : '—'}
+                              {pick.result === 'won' ? '✓ GANÓ' : pick.result === 'draw' ? '✗ EMPATE −1♥' : pick.result === 'lost' ? '✗ PERDIÓ −1♥' : pick.result === 'no_pick' ? '✗ NO PICK −1♥' : '—'}
                             </Text>
                           )}
                         </View>
