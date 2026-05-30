@@ -15,14 +15,15 @@ export default function TeamBadge({ team, size = 36, showName = true, style }) {
       </View>
     );
   }
-  const initial = (team.nombre ?? '?').trim().charAt(0).toUpperCase();
+  const displayName = team.nombre ?? team.name_es ?? team.name ?? team.code ?? '';
+  const initial = (displayName || '?').trim().charAt(0).toUpperCase();
   const color = team.color || COLORS.blue;
   return (
     <View style={[styles.row, style]}>
       <View style={[styles.shield, { width: size, height: size, backgroundColor: color, borderColor: color }]}>
         <Text style={[styles.initial, { fontSize: size * 0.45 }]}>{initial}</Text>
       </View>
-      {showName && <Text style={styles.name} numberOfLines={1}>{team.nombre}</Text>}
+      {showName && <Text style={styles.name} numberOfLines={1}>{displayName || 'Equipo'}</Text>}
     </View>
   );
 }

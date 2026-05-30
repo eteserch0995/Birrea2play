@@ -104,12 +104,13 @@ export function WCButton({ label, onPress, variant = 'primary', size = 'lg', dis
 }
 
 function btnPalette(variant, disabled) {
-  if (variant === 'primary') return { bg: COLORS.magenta, color: COLORS.white, border: COLORS.magenta };
+  const primaryBg = COLORS.magentaA11y || COLORS.magenta; // a11y WCAG AA, fallback fuera de la ventana Mundial
+  if (variant === 'primary') return { bg: primaryBg, color: COLORS.white, border: primaryBg };
   if (variant === 'secondary') return { bg: COLORS.neon, color: COLORS.bg, border: COLORS.neon, isLight: true };
   if (variant === 'gold') return { bg: COLORS.gold, color: COLORS.bg, border: COLORS.gold, isLight: true };
   if (variant === 'danger') return { bg: COLORS.red, color: COLORS.white, border: COLORS.red };
   if (variant === 'ghost') return { bg: 'transparent', color: COLORS.white, border: COLORS.white + '55' };
-  return { bg: COLORS.magenta, color: COLORS.white, border: COLORS.magenta };
+  return { bg: primaryBg, color: COLORS.white, border: primaryBg };
 }
 
 const btnStyles = StyleSheet.create({

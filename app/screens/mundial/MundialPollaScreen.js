@@ -726,9 +726,11 @@ function PredictionRow({ match, prediction, userId, onSaved }) {
   const [away, setAway] = useState(prediction?.pred_score_away != null ? String(prediction.pred_score_away) : '');
   const [saving, setSaving] = useState(false);
 
-  // Deadline unificado: todas las predicciones cierran al enrollment_deadline del pool
-  // (11-jun-2026 11:00 PA). Después no se pueden tocar más, hasta que termine el Mundial.
-  const ENROLLMENT_DEADLINE_MS = Date.UTC(2026, 5, 11, 16, 0, 0); // 11-jun 16:00 UTC = 11am PA
+  // Deadline unificado: cierra al enrollment_deadline del pool (fuente de verdad en DB).
+  const { pool } = useWcStore();
+  const ENROLLMENT_DEADLINE_MS = pool?.enrollment_deadline
+    ? new Date(pool.enrollment_deadline).getTime()
+    : Date.UTC(2026, 5, 11, 16, 0, 0); // fallback si el pool aún no cargó
   const closed = Date.now() >= ENROLLMENT_DEADLINE_MS || match.status !== 'scheduled';
   const finished = match.status === 'finished';
   const homeName = match.team_home?.name_es || match.home_placeholder || '—';
@@ -844,7 +846,10 @@ function BracketRow({ match, prediction, teamsById, blockedReason, userId, homeR
   const [scoreAway, setScoreAway] = useState(prediction?.pred_score_away != null ? String(prediction.pred_score_away) : '');
   const [savingScore, setSavingScore] = useState(false);
 
-  const ENROLLMENT_DEADLINE_MS = Date.UTC(2026, 5, 11, 16, 0, 0);
+  const { pool } = useWcStore();
+  const ENROLLMENT_DEADLINE_MS = pool?.enrollment_deadline
+    ? new Date(pool.enrollment_deadline).getTime()
+    : Date.UTC(2026, 5, 11, 16, 0, 0);
   const closed = Date.now() >= ENROLLMENT_DEADLINE_MS;
 
   const saveScore = async () => {

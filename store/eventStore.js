@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { filterActiveEventGuests } from '../lib/eventGuests';
+import useAuthStore from './authStore';
 
 // Helper: rechaza si la promise tarda más de `ms`. Sin esto, una query de
 // Supabase que se cuelga (token refresh atascado, lock interno, etc.) deja
@@ -62,8 +63,10 @@ const useEventStore = create((set, get) => ({
               return acc;
             }, {})),
       ]), 12000, 'fetchEvents.counts');
+      const uid = useAuthStore.getState().user?.id;
       const withCount = (data ?? []).map((e) => ({
         ...e,
+        my_registered: !!uid && (regsByEvent[e.id]?.rows ?? []).some((r) => r.user_id === uid),
         event_registrations: [{
           count: (regsByEvent[e.id]?.count ?? 0)
             + filterActiveEventGuests(guestsByEvent[e.id] ?? [], regsByEvent[e.id]?.rows ?? []).length,

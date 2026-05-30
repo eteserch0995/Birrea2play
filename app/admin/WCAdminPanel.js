@@ -250,11 +250,16 @@ function StatTile({ label, value, accent }) {
 function MatchRow({ match, onSaved }) {
   const [home, setHome] = useState(match.score_home != null ? String(match.score_home) : '');
   const [away, setAway] = useState(match.score_away != null ? String(match.score_away) : '');
+  const [penHome, setPenHome] = useState(match.penalties_home != null ? String(match.penalties_home) : '');
+  const [penAway, setPenAway] = useState(match.penalties_away != null ? String(match.penalties_away) : '');
   const [saving, setSaving] = useState(false);
 
   const homeName = match.team_home?.name_es || match.team_home?.code || match.home_placeholder || '—';
   const awayName = match.team_away?.name_es || match.team_away?.code || match.away_placeholder || '—';
   const finished = match.status === 'finished';
+  // En eliminatoria, un empate en los 90' se define por penales (sin esto el ganador queda null y da 0 pts a todos).
+  const isKO = !!match.phase && match.phase !== 'group';
+  const showPens = isKO && home !== '' && away !== '' && home === away;
 
   const save = async () => {
     const h = parseInt(home, 10);
@@ -263,12 +268,23 @@ function MatchRow({ match, onSaved }) {
       Alert.alert('Marcador inválido', 'Ingresá números >= 0 en ambos lados.');
       return;
     }
+    let ph = null, pa = null;
+    if (isKO && h === a) {
+      ph = penHome === '' ? NaN : parseInt(penHome, 10);
+      pa = penAway === '' ? NaN : parseInt(penAway, 10);
+      if (Number.isNaN(ph) || Number.isNaN(pa) || ph < 0 || pa < 0 || ph === pa) {
+        Alert.alert('Penales requeridos', 'Empate en eliminatoria: ingresá los penales (sin empate) para definir al ganador.');
+        return;
+      }
+    }
     setSaving(true);
     try {
       const { error } = await supabase.rpc('wc_admin_override_match_result', {
         p_match_id: match.id,
         p_score_home: h,
         p_score_away: a,
+        p_penalties_home: ph,
+        p_penalties_away: pa,
       });
       if (error) throw error;
       await onSaved();
@@ -316,6 +332,30 @@ function MatchRow({ match, onSaved }) {
         />
         <Text style={styles.teamName} numberOfLines={1}>{awayName}</Text>
       </View>
+      {showPens && (
+        <View style={styles.penRow}>
+          <Text style={styles.penLabel}>Penales</Text>
+          <TextInput
+            style={styles.scoreInput}
+            value={penHome}
+            onChangeText={setPenHome}
+            keyboardType="number-pad"
+            placeholder="-"
+            placeholderTextColor={COLORS.gray}
+            maxLength={2}
+          />
+          <Text style={styles.vs}>-</Text>
+          <TextInput
+            style={styles.scoreInput}
+            value={penAway}
+            onChangeText={setPenAway}
+            keyboardType="number-pad"
+            placeholder="-"
+            placeholderTextColor={COLORS.gray}
+            maxLength={2}
+          />
+        </View>
+      )}
       <WCButton
         label={finished ? 'Actualizar' : 'Guardar'}
         variant={finished ? 'gold' : 'primary'}
@@ -407,6 +447,11 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
   vs: { color: COLORS.gray, fontFamily: FONTS.body, fontSize: 11 },
+  penRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, justifyContent: 'flex-end' },
+  penLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gold,
+    letterSpacing: 1, textTransform: 'uppercase', marginRight: 4,
+  },
   saveBtn: {
     marginTop: 8, backgroundColor: COLORS.red,
     paddingVertical: 8, borderRadius: RADIUS.sm,

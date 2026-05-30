@@ -45,8 +45,15 @@ export default function EventCard({ event, onPress }) {
       )}
       <View style={styles.body}>
         <View style={styles.top}>
-          <View style={[styles.badge, { backgroundColor: effectiveColor + '20' }]}>
-            <Text style={[styles.badgeText, { color: effectiveColor }]}>{effectiveLabel}</Text>
+          <View style={styles.badgeGroup}>
+            <View style={[styles.badge, { backgroundColor: effectiveColor + '20' }]}>
+              <Text style={[styles.badgeText, { color: effectiveColor }]}>{effectiveLabel}</Text>
+            </View>
+            {event.my_registered && (
+              <View style={[styles.badge, styles.badgeInscrito]}>
+                <Text style={[styles.badgeText, { color: COLORS.green }]}>✓ Inscrito</Text>
+              </View>
+            )}
           </View>
           <Text style={styles.price}>${(event.precio ?? 0).toFixed(2)}</Text>
         </View>

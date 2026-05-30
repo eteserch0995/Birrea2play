@@ -861,7 +861,7 @@ const styles = StyleSheet.create({
     letterSpacing: 2, textTransform: 'uppercase', marginBottom: 8,
   },
   livesRow: { flexDirection: 'row', gap: 12 },
-  heart: { fontSize: 48, color: COLORS.line },
+  heart: { fontSize: 48, color: COLORS.gray },
   heartActive: { color: COLORS.red2 },
   eliminatedText: {
     fontFamily: FONTS.heading, fontSize: 20, color: COLORS.red2,
@@ -1021,7 +1021,7 @@ const styles = StyleSheet.create({
   rankPos:  { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.gray2, width: 40 },
   rankName: { flex: 1, fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white },
   rankLives: { flexDirection: 'row', gap: 4 },
-  heartSmall: { fontSize: 14, color: COLORS.line },
+  heartSmall: { fontSize: 14, color: COLORS.gray },
   emptyText: {
     fontFamily: FONTS.body, fontSize: 13, color: COLORS.bg,
     backgroundColor: 'rgba(255,255,255,0.90)',
