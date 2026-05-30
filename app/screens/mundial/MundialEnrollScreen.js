@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput,
-  ActivityIndicator, Alert, Modal,
+  ActivityIndicator, Alert, Modal, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
@@ -11,6 +11,10 @@ import { supabase } from '../../../lib/supabase';
 import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 import { WCButton, WCBadge } from '../../../components/mundial/WCComponents';
+
+// Version del doc de Terminos del Mundial. DEBE coincidir con MundialTermsScreen
+// y docs/terminos-mundial.html. Bump aqui al actualizar el texto legal.
+const MUNDIAL_TYC_VERSION = '2026-05-30';
 
 export default function MundialEnrollScreen({ route, navigation }) {
   const mode = route?.params?.mode ?? 'survivor';
@@ -34,6 +38,7 @@ export default function MundialEnrollScreen({ route, navigation }) {
   const [yappyPhone, setYappyPhone] = useState('');
   const [yappyStep, setYappyStep] = useState('idle'); // idle | waiting | confirmed
   const yappyPollRef = useRef(null);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const price = mode === 'survivor' ? pool?.survivor_price : pool?.polla_price;
   const walletBalance = user?.wallets?.balance ?? 0;
@@ -64,6 +69,12 @@ export default function MundialEnrollScreen({ route, navigation }) {
 
   const handleEnroll = async () => {
     if (processing) return;
+
+    // Gate legal: debe aceptar los Terminos del Mundial ANTES de ir a pago.
+    if (!acceptedTerms) {
+      Alert.alert('Aceptá los Términos', 'Para inscribirte debés leer y aceptar los Términos y Condiciones del Mundial.');
+      return;
+    }
 
     // Validar método de pago
     if (paymentMethod === 'wallet' && walletBalance < price) {
@@ -109,6 +120,18 @@ export default function MundialEnrollScreen({ route, navigation }) {
         p_mode: mode,
       });
       if (e1) throw e1;
+
+      // 1.b) Registrar consentimiento legal (defendible) ligado a este enrollment, ANTES del pago
+      const { error: eConsent } = await supabase.rpc('wc_record_consent', {
+        p_user_id: user.id,
+        p_doc: 'mundial_tyc',
+        p_version: MUNDIAL_TYC_VERSION,
+        p_mode: mode,
+        p_enrollment_id: enrollId,
+        p_user_agent: `${Platform.OS} ${Platform.Version ?? ''}`.trim(),
+        p_source: 'mundial_enroll',
+      });
+      if (eConsent) throw eConsent;
 
       // 2) Si polla, guardar bonus picks
       if (isPolla) {
@@ -365,6 +388,33 @@ export default function MundialEnrollScreen({ route, navigation }) {
           </View>
         )}
 
+        {/* Aceptación de Términos del Mundial — gate legal previo a inscribirse */}
+        <View style={styles.consentBlock}>
+          <TouchableOpacity
+            style={styles.consentRow}
+            onPress={() => setAcceptedTerms(v => !v)}
+            activeOpacity={0.8}
+            disabled={processing}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: acceptedTerms }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <View style={[styles.checkbox, acceptedTerms && styles.checkboxChecked]}>
+              {acceptedTerms && <Text style={styles.checkboxMark}>✓</Text>}
+            </View>
+            <Text style={styles.consentText}>
+              He leído y acepto los{' '}
+              <Text
+                style={styles.consentLink}
+                onPress={() => navigation.navigate('MundialTerms', { mode })}
+              >
+                Términos y Condiciones del Mundial
+              </Text>
+              .
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <WCButton
           label={processing
             ? (yappyStep === 'waiting' ? 'ESPERANDO YAPPY…' : 'PROCESANDO…')
@@ -372,7 +422,7 @@ export default function MundialEnrollScreen({ route, navigation }) {
           onPress={handleEnroll}
           variant="primary"
           size="lg"
-          disabled={processing || (paymentMethod === 'wallet' && walletBalance < price)}
+          disabled={processing || !acceptedTerms || (paymentMethod === 'wallet' && walletBalance < price)}
           loading={processing && yappyStep !== 'waiting'}
           style={{ marginTop: SPACING.md }}
         />
@@ -469,6 +519,25 @@ function BonusTeamRow({ label, teamId, teamsById, onPress }) {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: 'transparent' },
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
+  consentBlock: {
+    marginTop: SPACING.md,
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderColor: 'rgba(10,14,20,0.16)',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+  },
+  consentRow: { flexDirection: 'row', alignItems: 'flex-start', gap: SPACING.sm },
+  checkbox: {
+    width: 24, height: 24, borderRadius: RADIUS.sm,
+    borderWidth: 2, borderColor: COLORS.bg,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'transparent', marginTop: 1,
+  },
+  checkboxChecked: { backgroundColor: COLORS.magentaA11y || COLORS.magenta, borderColor: COLORS.magentaA11y || COLORS.magenta },
+  checkboxMark: { color: COLORS.white, fontFamily: FONTS.bodyBold, fontSize: 14, lineHeight: 16 },
+  consentText: { flex: 1, fontFamily: FONTS.body, fontSize: 13, color: COLORS.bg, lineHeight: 19 },
+  consentLink: { fontFamily: FONTS.bodyBold, color: COLORS.magentaA11y || COLORS.magenta, textDecorationLine: 'underline' },
   back: {
     alignSelf: 'flex-start',
     backgroundColor: 'rgba(255,255,255,0.92)',
