@@ -2,6 +2,8 @@
  * pf-create-link — Edge Function
  * Crea un enlace de pago en PágueloFácil y devuelve la URL al frontend.
  * El CCLW nunca sale al cliente.
+ * Soporta tipo='wc_enrollment' (inscripción Mundial con tarjeta): liga wc_enrollment_id
+ * para que pf-webhook marque la inscripción pagada en vez de acreditar wallet.
  */
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -36,16 +38,21 @@ serve(async (req) => {
     });
   }
 
-  let body: { userId: string; amount: number; descripcion?: string; tipo?: string };
+  let body: { userId: string; amount: number; descripcion?: string; tipo?: string; wc_enrollment_id?: string };
   try { body = await req.json(); } catch {
     return new Response(JSON.stringify({ error: 'Body inválido' }), {
       status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
     });
   }
 
-  const { userId, amount, descripcion = 'Recarga Birrea2Play', tipo = 'recarga_tarjeta' } = body;
+  const { userId, amount, descripcion = 'Recarga Birrea2Play', tipo = 'recarga_tarjeta', wc_enrollment_id = null } = body;
   if (!userId || !amount || amount < 1) {
     return new Response(JSON.stringify({ error: 'Monto mínimo $1.00' }), {
+      status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
+    });
+  }
+  if (tipo === 'wc_enrollment' && !wc_enrollment_id) {
+    return new Response(JSON.stringify({ error: 'wc_enrollment_id requerido para tipo=wc_enrollment' }), {
       status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
     });
   }
@@ -70,11 +77,12 @@ serve(async (req) => {
   // Crear registro de pago pendiente para idempotencia
   const ordenId = `pf-${userId.slice(0, 8)}-${Date.now()}`;
   await supabase.from('pf_pending_payments').insert({
-    orden_id:   ordenId,
-    user_id:    userId,
+    orden_id:    ordenId,
+    user_id:     userId,
     amount,
     tipo,
     descripcion: descripcion.substring(0, 150),
+    wc_enrollment_id: tipo === 'wc_enrollment' ? wc_enrollment_id : null,
   });
 
   // Generar enlace PágueloFácil

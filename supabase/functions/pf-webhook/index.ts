@@ -2,6 +2,10 @@
  * pf-webhook — Edge Function (PÚBLICO — sin JWT)
  * IMPORTANTE: En Supabase Dashboard → esta función → desactivar "Enforce JWT Verification"
  * PágueloFácil redirige aquí como GET sin Authorization header.
+ *
+ * Ramas según pf_pending_payments.tipo:
+ *  - 'wc_enrollment' → marca la inscripción Mundial como pagada (wc_pay_enrollment_card).
+ *  - resto           → acredita wallet (credit_wallet).
  */
 import { serve } from 'https://deno.land/std@0.208.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -31,7 +35,6 @@ serve(async (req) => {
     const url = new URL(req.url);
     const q   = url.searchParams;
 
-    // PF puede usar distintos nombres según modo de integración
     const Estado = q.get('Estado') ?? q.get('estado') ?? '';
     const Total  = q.get('TotalPagado') ?? q.get('Total') ?? q.get('total') ?? '0';
     const Oper   = q.get('Oper') ?? q.get('oper') ?? '';
@@ -68,29 +71,44 @@ serve(async (req) => {
       return redirectToApp({ status: 'error', code: 'orden_no_existe' });
     }
 
+    const isWcEnrollment = pending.tipo === 'wc_enrollment' && !!pending.wc_enrollment_id;
+
     // Idempotencia: ya fue procesado → éxito sin doble crédito
     if (pending.procesado) {
-      return redirectToApp({ status: 'success', amount: String(pending.amount), duplicate: '1' });
+      return redirectToApp({ status: 'success', amount: String(pending.amount), duplicate: '1', wc: isWcEnrollment ? '1' : '0' });
     }
 
-    // Validar monto (rechaza NaN y montos menores)
+    // Validar monto (rechaza NaN y montos menores). Para tarjeta WC, pending.amount = precio + $1.50.
     const totalNum = Number(Total);
     if (!Number.isFinite(totalNum) || totalNum + 0.01 < Number(pending.amount)) {
       console.error(`[pf-webhook] monto no coincide: esperado ${pending.amount}, recibido ${Total}`);
       return redirectToApp({ status: 'error', code: 'amount_mismatch' });
     }
 
-    // Acreditar wallet — RPC firma: credit_wallet(p_user_id, p_monto, p_tipo, p_descripcion)
-    const { error: rpcErr } = await supabase.rpc('credit_wallet', {
-      p_user_id:     pending.user_id,
-      p_monto:       pending.amount,
-      p_tipo:        'recarga_tarjeta',
-      p_descripcion: `Recarga Tarjeta $${Number(pending.amount).toFixed(2)} — PF Oper ${Oper} — ref ${Ref}`,
-    });
-
-    if (rpcErr) {
-      console.error('[pf-webhook] credit_wallet error:', rpcErr.message);
-      return redirectToApp({ status: 'error', code: 'credit_failed' });
+    if (isWcEnrollment) {
+      // Inscripción Mundial: marca pagada (la RPC valida precio del pozo). El +$1.50 es cargo de tarjeta, no entra al pozo.
+      const { error: rpcErr } = await supabase.rpc('wc_pay_enrollment_card', {
+        p_user_id:       pending.user_id,
+        p_enrollment_id: pending.wc_enrollment_id,
+        p_amount:        pending.amount,
+        p_pf_order_id:   Ref,
+      });
+      if (rpcErr) {
+        console.error('[pf-webhook] wc_pay_enrollment_card error:', rpcErr.message);
+        return redirectToApp({ status: 'error', code: 'wc_enroll_failed' });
+      }
+    } else {
+      // Recarga de créditos: acredita wallet — credit_wallet(p_user_id, p_monto, p_tipo, p_descripcion)
+      const { error: rpcErr } = await supabase.rpc('credit_wallet', {
+        p_user_id:     pending.user_id,
+        p_monto:       pending.amount,
+        p_tipo:        'recarga_tarjeta',
+        p_descripcion: `Recarga Tarjeta $${Number(pending.amount).toFixed(2)} — PF Oper ${Oper} — ref ${Ref}`,
+      });
+      if (rpcErr) {
+        console.error('[pf-webhook] credit_wallet error:', rpcErr.message);
+        return redirectToApp({ status: 'error', code: 'credit_failed' });
+      }
     }
 
     // Marcar como procesado (race-safe: solo actualiza si aún está en false)
@@ -100,7 +118,7 @@ serve(async (req) => {
       .eq('orden_id', Ref)
       .eq('procesado', false);
 
-    return redirectToApp({ status: 'success', amount: String(pending.amount) });
+    return redirectToApp({ status: 'success', amount: String(pending.amount), wc: isWcEnrollment ? '1' : '0' });
   } catch (e) {
     console.error('[pf-webhook] error no capturado:', (e as Error).message);
     return redirectToApp({ status: 'error', code: 'exception' });

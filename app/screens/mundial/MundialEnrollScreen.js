@@ -9,12 +9,16 @@ import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
+import { iniciarPagoTarjeta } from '../../../lib/paguelofacil';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 import { WCButton, WCBadge } from '../../../components/mundial/WCComponents';
 
 // Version del doc de Terminos del Mundial. DEBE coincidir con MundialTermsScreen
 // y docs/terminos-mundial.html. Bump aqui al actualizar el texto legal.
 const MUNDIAL_TYC_VERSION = '2026-05-30';
+
+// Comisión fija por pago con tarjeta (Pagueló Fácil)
+const CARD_FEE = 1.50;
 
 export default function MundialEnrollScreen({ route, navigation }) {
   const mode = route?.params?.mode ?? 'survivor';
@@ -150,14 +154,14 @@ export default function MundialEnrollScreen({ route, navigation }) {
         if (e2) throw e2;
       }
 
-      // 3) Pagar — wallet directo, o Yappy con polling
+      // 3) Pagar — wallet directo, Yappy con polling, o Tarjeta (navegador)
       if (paymentMethod === 'wallet') {
         const { error: e3 } = await supabase.rpc('wc_pay_enrollment_wallet', {
           p_user_id: user.id,
           p_enrollment_id: enrollId,
         });
         if (e3) throw e3;
-      } else {
+      } else if (paymentMethod === 'yappy') {
         // Yappy: iniciar orden, mostrar "Esperando confirmación", poll hasta executed
         setYappyStep('waiting');
         const cleanPhone = String(yappyPhone).replace(/\D/g, '');
@@ -175,6 +179,22 @@ export default function MundialEnrollScreen({ route, navigation }) {
         yappyPollRef.current = poll;
         await poll.promise;
         yappyPollRef.current = null;
+      } else if (paymentMethod === 'tarjeta') {
+        // Tarjeta (Pagueló Fácil): abre navegador; el webhook marca la inscripción pagada al confirmar.
+        await iniciarPagoTarjeta({
+          userId: user.id,
+          amount: Number(price) + CARD_FEE,
+          descripcion: `Inscripcion ${isPolla ? 'Polla' : 'Survivor'} Mundial 2026`,
+          tipo: 'wc_enrollment',
+          wc_enrollment_id: enrollId,
+        });
+        Alert.alert(
+          'Pago con tarjeta',
+          `Te abrimos el navegador para pagar $${(Number(price) + CARD_FEE).toFixed(2)} (incluye $${CARD_FEE.toFixed(2)} de comisión de tarjeta). Al completar el pago, volvé a la app: vas a quedar inscrito.`
+        );
+        await refreshProfile();
+        navigation.replace('MundialHome');
+        return;
       }
 
       setYappyStep('confirmed');
@@ -289,11 +309,28 @@ export default function MundialEnrollScreen({ route, navigation }) {
               </Text>
               <Text style={styles.payMethodSub}>Request</Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.payMethodBtn, paymentMethod === 'tarjeta' && styles.payMethodBtnActive]}
+              onPress={() => setPaymentMethod('tarjeta')}
+              disabled={processing}
+            >
+              <Text style={styles.payMethodIcon}>🏦</Text>
+              <Text style={[styles.payMethodLabel, paymentMethod === 'tarjeta' && styles.payMethodLabelActive]}>
+                Tarjeta
+              </Text>
+              <Text style={styles.payMethodSub}>+${CARD_FEE.toFixed(2)}</Text>
+            </TouchableOpacity>
           </View>
 
           {paymentMethod === 'wallet' && walletBalance < price && (
             <Text style={styles.walletWarn}>
               Saldo insuficiente. Necesitás ${(price - walletBalance).toFixed(2)} más, o pagá con Yappy.
+            </Text>
+          )}
+
+          {paymentMethod === 'tarjeta' && (
+            <Text style={styles.cardHint}>
+              {`Cobro con tarjeta: $${price} + $${CARD_FEE.toFixed(2)} de comisión = $${(Number(price) + CARD_FEE).toFixed(2)}. Se abre el navegador para completar el pago.`}
             </Text>
           )}
 
@@ -422,7 +459,9 @@ export default function MundialEnrollScreen({ route, navigation }) {
         <WCButton
           label={processing
             ? (yappyStep === 'waiting' ? 'ESPERANDO YAPPY…' : 'PROCESANDO…')
-            : `INSCRIBIRME · $${price}${paymentMethod === 'yappy' ? ' (YAPPY)' : ' (WALLET)'}`}
+            : paymentMethod === 'tarjeta'
+              ? `INSCRIBIRME · $${(Number(price) + CARD_FEE).toFixed(2)} (TARJETA)`
+              : `INSCRIBIRME · $${price}${paymentMethod === 'yappy' ? ' (YAPPY)' : ' (WALLET)'}`}
           onPress={handleEnroll}
           variant="primary"
           size="lg"
@@ -629,6 +668,10 @@ const styles = StyleSheet.create({
   payMethodLabelActive: { color: COLORS.white },
   payMethodSub: {
     fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 2,
+  },
+  cardHint: {
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2,
+    marginTop: 6, lineHeight: 16,
   },
   yappyInputBlock: { marginTop: SPACING.md },
   yappyInputLabel: {
