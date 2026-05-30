@@ -41,6 +41,24 @@ export default function WCAdminPanel({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [savingFlag, setSavingFlag] = useState(false);
 
+  // Recarga silenciosa: solo refresca stats y matches sin desmontar UI.
+  // Usar después de guardar un resultado de match.
+  const silentReload = useCallback(async () => {
+    try {
+      const [{ count: matches_finished }, { data: matchesData }] = await Promise.all([
+        supabase.from('wc_matches').select('*', { count: 'exact', head: true }).eq('status', 'finished'),
+        supabase.from('wc_matches').select(`
+          id, match_number, phase, group_letter, scheduled_at, status,
+          score_home, score_away, home_placeholder, away_placeholder,
+          team_home:team_home_id ( code, name_es ),
+          team_away:team_away_id ( code, name_es )
+        `).order('scheduled_at', { ascending: true }).limit(110),
+      ]);
+      setStats(s => ({ ...s, matches_finished: matches_finished ?? s.matches_finished }));
+      setMatches(matchesData ?? []);
+    } catch (_) { /* silent */ }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     await loadPool();
@@ -204,7 +222,7 @@ export default function WCAdminPanel({ navigation }) {
             scoring de Polla y Survivor automáticamente.
           </Text>
           {matches.map((m) => (
-            <MatchRow key={m.id} match={m} onSaved={load} />
+            <MatchRow key={m.id} match={m} onSaved={silentReload} />
           ))}
         </View>
 

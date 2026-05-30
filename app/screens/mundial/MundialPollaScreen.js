@@ -190,6 +190,29 @@ export default function MundialPollaScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Recarga silenciosa: refresca solo predicciones + bonus + enrollment
+  // sin montar el loader full screen. Usar después de guardar un pick.
+  const silentReload = useCallback(async () => {
+    try {
+      const { data: e } = await supabase
+        .from('wc_enrollments')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('mode', 'polla')
+        .maybeSingle();
+      if (e) setEnrollment(e);
+      if (!e || e.payment_status !== 'paid') return;
+
+      const { data: preds } = await supabase
+        .from('wc_predictions')
+        .select('*')
+        .eq('enrollment_id', e.id);
+      const predMap = {};
+      (preds ?? []).forEach(p => { predMap[p.match_id] = p; });
+      setPredictions(predMap);
+    } catch (_) { /* silent */ }
+  }, [user.id]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -439,7 +462,7 @@ export default function MundialPollaScreen({ navigation }) {
                               } catch (_) {}
                             }
                           }
-                          await load();
+                          await silentReload();
                         }}
                       >
                         <Text style={styles.quickFillText}>⚡ Llenar grupo con 1-0 (después editás)</Text>
@@ -450,7 +473,7 @@ export default function MundialPollaScreen({ navigation }) {
                           match={m}
                           prediction={predictions[m.id]}
                           userId={user.id}
-                          onSaved={load}
+                          onSaved={silentReload}
                         />
                       ))}
                     </>
@@ -502,7 +525,7 @@ export default function MundialPollaScreen({ navigation }) {
                         userId={user.id}
                         homeResolved={homeResolved}
                         awayResolved={awayResolved}
-                        onSaved={load}
+                        onSaved={silentReload}
                         onPickTeam={() => {
                           if (elig.blocked) {
                             Alert.alert('Pick bloqueado', elig.blocked);
@@ -584,7 +607,7 @@ export default function MundialPollaScreen({ navigation }) {
               });
               if (error) throw error;
               setKoTeamPicker(null);
-              await load();
+              await silentReload();
             } catch (e) {
               Alert.alert('Error', e.message || 'No se pudo guardar el pick');
             }

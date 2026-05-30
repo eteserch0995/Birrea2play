@@ -36,6 +36,49 @@ export default function MundialSurvivorScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Recarga silenciosa: refresca picks + usage + enrollment sin desmontar la UI.
+  // Usar después de guardar un pick (no la primera carga).
+  const silentReload = useCallback(async () => {
+    try {
+      const { data: e } = await supabase
+        .from('wc_enrollments')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('mode', 'survivor')
+        .maybeSingle();
+      if (e) setEnrollment(e);
+      if (!e || e.payment_status !== 'paid') return;
+
+      const { data: picks } = await supabase
+        .from('wc_picks')
+        .select('team_id, match_day_id, result, life_lost')
+        .eq('enrollment_id', e.id);
+      const usage = {};
+      (picks ?? []).forEach(p => {
+        if (p.result !== 'no_pick') usage[p.team_id] = (usage[p.team_id] ?? 0) + 1;
+      });
+      setTeamUsage(usage);
+
+      const { data: allPicks } = await supabase
+        .from('wc_picks')
+        .select(`id, match_day_id, result, life_lost, resolved_at, team:team_id (id, code, name_es)`)
+        .eq('enrollment_id', e.id);
+      const pMap = {};
+      (allPicks ?? []).forEach(p => { pMap[p.match_day_id] = p; });
+      setPicksByDay(pMap);
+
+      if (nextDay) {
+        const { data: pk } = await supabase
+          .from('wc_picks')
+          .select('*')
+          .eq('enrollment_id', e.id)
+          .eq('match_day_id', nextDay.id)
+          .maybeSingle();
+        setCurrentPick(pk);
+      }
+    } catch (_) { /* silent */ }
+  }, [user.id, nextDay]);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -242,7 +285,7 @@ export default function MundialSurvivorScreen({ navigation }) {
         p_team_id: teamId,
       });
       if (error) throw error;
-      await load();
+      await silentReload();
     } catch (err) {
       Alert.alert('Error', err.message || 'No se pudo guardar el pick.');
     } finally {
@@ -267,7 +310,7 @@ export default function MundialSurvivorScreen({ navigation }) {
         p_team_id: teamId,
       });
       if (error) throw error;
-      await load();
+      await silentReload();
     } catch (err) {
       Alert.alert('Error', err.message || 'No se pudo guardar el pick.');
     } finally {
@@ -498,46 +541,54 @@ export default function MundialSurvivorScreen({ navigation }) {
         {tab === 'Jornadas' && (
           <View>
             <Text style={styles.communityHint}>
-              Todas las jornadas del Mundial. Las cerradas son solo consulta;
-              la actual y las futuras son editables.
+              Solo podés pickear la jornada actual (la más próxima sin terminar).
+              Las futuras se habilitan cuando termina la anterior.
             </Text>
-            {allDays.map((d) => {
+            {(() => {
+              // Identificar la "jornada actual": primera no-settled con deadline > now
               const now = Date.now();
-              const kickoffMs = new Date(d.first_kickoff_at).getTime();
-              const deadlineMs = new Date(d.pick_deadline).getTime();
-              const status = d.is_settled || kickoffMs <= now
-                ? 'closed'
-                : deadlineMs <= now
-                ? 'locked'
-                : 'open';
-              const pick = picksByDay[d.id];
-              const dayMatches = matchesByDay[d.id] ?? [];
-              const isOpen = expandedDay === d.id;
+              const currentDayId = allDays.find(d =>
+                !d.is_settled && new Date(d.pick_deadline).getTime() > now
+              )?.id;
 
-              return (
-                <View key={d.id} style={styles.groupBlock}>
-                  <TouchableOpacity
-                    style={[
-                      styles.dayHeader,
-                      status === 'open' && styles.dayHeaderOpen,
-                      status === 'closed' && styles.dayHeaderClosed,
-                    ]}
-                    onPress={() => setExpandedDay(isOpen ? null : d.id)}
-                  >
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.dayHeaderDate}>
-                        {new Date(d.date).toLocaleDateString('es-PA', {
-                          weekday: 'short', day: '2-digit', month: 'short',
-                        }).toUpperCase()}
-                      </Text>
-                      <Text style={styles.dayHeaderMeta}>
-                        {dayMatches.length} partidos ·{' '}
-                        {status === 'open' ? '🟢 Abierta' : status === 'locked' ? '🟡 En curso' : '🔒 Cerrada'}
-                        {pick && ` · Tu pick: ${pick.team?.name_es}`}
-                      </Text>
-                    </View>
-                    <Text style={styles.dayHeaderArrow}>{isOpen ? '▲' : '▼'}</Text>
-                  </TouchableOpacity>
+              return allDays.map((d) => {
+                const kickoffMs = new Date(d.first_kickoff_at).getTime();
+                const deadlineMs = new Date(d.pick_deadline).getTime();
+                let status;
+                if (d.is_settled || kickoffMs <= now) status = 'closed';
+                else if (d.id === currentDayId) status = 'current';
+                else status = 'future_locked';
+
+                const pick = picksByDay[d.id];
+                const dayMatches = matchesByDay[d.id] ?? [];
+                const isOpen = expandedDay === d.id;
+
+                return (
+                  <View key={d.id} style={styles.groupBlock}>
+                    <TouchableOpacity
+                      style={[
+                        styles.dayHeader,
+                        status === 'current' && styles.dayHeaderOpen,
+                        status === 'closed' && styles.dayHeaderClosed,
+                      ]}
+                      onPress={() => setExpandedDay(isOpen ? null : d.id)}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.dayHeaderDate}>
+                          {new Date(d.date).toLocaleDateString('es-PA', {
+                            weekday: 'short', day: '2-digit', month: 'short',
+                          }).toUpperCase()}
+                        </Text>
+                        <Text style={styles.dayHeaderMeta}>
+                          {dayMatches.length} partidos ·{' '}
+                          {status === 'current' ? '🟢 Tu turno' :
+                           status === 'closed' ? '🔒 Cerrada' :
+                           '🔒 Próximamente'}
+                          {pick && ` · Tu pick: ${pick.team?.name_es}`}
+                        </Text>
+                      </View>
+                      <Text style={styles.dayHeaderArrow}>{isOpen ? '▲' : '▼'}</Text>
+                    </TouchableOpacity>
                   {isOpen && (
                     <View style={styles.daySection}>
                       {pick && (
@@ -573,9 +624,9 @@ export default function MundialSurvivorScreen({ navigation }) {
                               usage={teamUsage[mt.team_home?.id] ?? 0}
                               selected={pick?.team?.id === mt.team_home?.id}
                               onPress={() => {
-                                if (status === 'open') submitPickFor(d.id, mt.team_home.id);
+                                if (status === 'current') submitPickFor(d.id, mt.team_home.id);
                               }}
-                              disabled={status !== 'open' || saving || eliminated}
+                              disabled={status !== 'current' || saving || eliminated}
                             />
                             <Text style={styles.vsLabel}>VS</Text>
                             <TeamButton
@@ -583,9 +634,9 @@ export default function MundialSurvivorScreen({ navigation }) {
                               usage={teamUsage[mt.team_away?.id] ?? 0}
                               selected={pick?.team?.id === mt.team_away?.id}
                               onPress={() => {
-                                if (status === 'open') submitPickFor(d.id, mt.team_away.id);
+                                if (status === 'current') submitPickFor(d.id, mt.team_away.id);
                               }}
-                              disabled={status !== 'open' || saving || eliminated}
+                              disabled={status !== 'current' || saving || eliminated}
                             />
                           </View>
                         </View>
@@ -594,7 +645,8 @@ export default function MundialSurvivorScreen({ navigation }) {
                   )}
                 </View>
               );
-            })}
+            });
+            })()}
 
           </View>
         )}

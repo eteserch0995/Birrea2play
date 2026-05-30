@@ -20,7 +20,7 @@ export default function MundialRulesScreen({ navigation }) {
             <Text style={styles.text}>
               • Tu inscripción va al pozo del modo elegido (Survivor $10 / Polla $15).{'\n'}
               • El premio = 95% del total recaudado (5% cubre fees Yappy).{'\n'}
-              • Entrega manual por Yappy o transferencia bancaria.{'\n'}
+              • Entrega manual por <Text style={styles.payAccent}>Yappy o transferencia bancaria</Text>.{'\n'}
               • Cierre de inscripciones: 11-jun-2026 11:00 AM Panamá.
             </Text>
           </WCBlock>
@@ -125,7 +125,7 @@ export default function MundialRulesScreen({ navigation }) {
           <WCBlock title="💰 Cómo se entrega el premio" variant="light">
             <Text style={[styles.text, { color: COLORS.bg }]}>
               Al cerrar el torneo, el admin contacta al ganador para coordinar el pago
-              por <Text style={styles.bold}>Yappy o transferencia bancaria</Text>. Tenés
+              por <Text style={[styles.bold, styles.payAccentDark]}>Yappy o transferencia bancaria</Text>. Tenés
               que tener tu wallet o número Yappy listo. El admin valida tu identidad
               antes de transferir.
             </Text>
@@ -156,6 +156,14 @@ const styles = StyleSheet.create({
   bold: {
     fontFamily: FONTS.bodyBold,
     color: COLORS.white,
+  },
+  payAccent: {
+    fontFamily: FONTS.bodyBold,
+    color: COLORS.blue2 ?? '#3D6BFF',
+  },
+  payAccentDark: {
+    fontFamily: FONTS.bodyBold,
+    color: COLORS.blue ?? '#0033CC',
   },
   subText: {
     fontFamily: FONTS.body,

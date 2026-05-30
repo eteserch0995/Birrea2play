@@ -207,7 +207,7 @@ export default function MundialHomeScreen({ navigation }) {
           <Text style={styles.rulesText}>
             • Pagás $10 (Survivor) o $15 (Polla){'\n'}
             • Premio = 95% del total recaudado{'\n'}
-            • Entrega manual por Yappy o transferencia bancaria{'\n'}
+            • Entrega manual por <Text style={styles.rulesAccent}>Yappy o transferencia bancaria</Text>{'\n'}
             • Resultados oficiales sincronizados desde api-football
           </Text>
         </View>
@@ -430,6 +430,10 @@ const styles = StyleSheet.create({
     color: COLORS.white,
     letterSpacing: 1,
     marginBottom: SPACING.sm,
+  },
+  rulesAccent: {
+    fontFamily: FONTS.bodyBold,
+    color: COLORS.blue2 ?? '#3D6BFF',
   },
   rulesText: {
     fontFamily: FONTS.body,
