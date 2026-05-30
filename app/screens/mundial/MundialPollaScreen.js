@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity, TextInput,
   ActivityIndicator, Alert, RefreshControl,
@@ -20,17 +20,107 @@ const TABS = ['Grupos', 'Bracket', 'Ranking', 'Bonus'];
  * - "Perdedor Mxxx" → los teams candidatos del Mxxx menos el winner pickeado.
  * Devuelve { teams: [], blocked: 'mensaje' | null }.
  */
-function getTeamsForPlaceholder(placeholder, koMatches, allTeams, predictions, teamsById) {
+/**
+ * Calcula la tabla de posiciones por grupo según las predicciones del user.
+ * Solo devuelve standings de los grupos COMPLETAMENTE predichos (6 partidos).
+ * Sort: pts desc, dg desc, gf desc.
+ * Devuelve: { 'A': [team1°, team2°, team3°, team4°], 'B': [...], ... }
+ */
+function calculateUserGroupStandings(predictions, groupMatches, teamsById) {
+  const byGroup = {};
+  for (const m of groupMatches) {
+    if (m.phase !== 'group' || !m.team_home_id || !m.team_away_id) continue;
+    const pred = predictions[m.id];
+    if (!pred || pred.pred_score_home == null || pred.pred_score_away == null) continue;
+
+    const grp = m.group_letter;
+    if (!byGroup[grp]) byGroup[grp] = {};
+    const home = byGroup[grp][m.team_home_id] ?? (byGroup[grp][m.team_home_id] = { teamId: m.team_home_id, pts: 0, gf: 0, ga: 0, played: 0 });
+    const away = byGroup[grp][m.team_away_id] ?? (byGroup[grp][m.team_away_id] = { teamId: m.team_away_id, pts: 0, gf: 0, ga: 0, played: 0 });
+
+    home.gf += pred.pred_score_home;
+    home.ga += pred.pred_score_away;
+    home.played += 1;
+    away.gf += pred.pred_score_away;
+    away.ga += pred.pred_score_home;
+    away.played += 1;
+
+    if (pred.pred_score_home > pred.pred_score_away) home.pts += 3;
+    else if (pred.pred_score_home < pred.pred_score_away) away.pts += 3;
+    else { home.pts += 1; away.pts += 1; }
+  }
+
+  const standings = {};
+  for (const grp in byGroup) {
+    const teams = Object.values(byGroup[grp]);
+    if (teams.length !== 4 || teams.some(t => t.played !== 3)) continue;
+    teams.sort((a, b) => {
+      if (b.pts !== a.pts) return b.pts - a.pts;
+      const dgA = a.gf - a.ga, dgB = b.gf - b.ga;
+      if (dgB !== dgA) return dgB - dgA;
+      return b.gf - a.gf;
+    });
+    standings[grp] = teams;
+  }
+  return standings;
+}
+
+/**
+ * Devuelve el nombre humano del team que el user predijo para un placeholder dado.
+ * Cae al placeholder original si no se puede resolver.
+ */
+function getResolvedNameForPlaceholder(placeholder, userStandings, teamsById, koMatches, predictions) {
+  if (!placeholder) return '—';
+  let m = placeholder.match(/^([12])°\s*Grupo\s*([A-L])$/i);
+  if (m) {
+    const pos = parseInt(m[1], 10);
+    const grp = m[2].toUpperCase();
+    if (userStandings[grp]) {
+      const t = teamsById[userStandings[grp][pos - 1].teamId];
+      return t ? `${t.name_es} (${pos}° ${grp})` : placeholder;
+    }
+    return placeholder;
+  }
+  m = placeholder.match(/^Ganador\s+M(\d+)$/i);
+  if (m) {
+    const prev = koMatches.find(km => km.match_number === parseInt(m[1], 10));
+    const pickId = prev ? predictions[prev.id]?.pred_winner_team_id : null;
+    return pickId && teamsById[pickId] ? teamsById[pickId].name_es : placeholder;
+  }
+  return placeholder;
+}
+
+function getTeamsForPlaceholder(placeholder, koMatches, allTeams, predictions, teamsById, userStandings = {}) {
   if (!placeholder) return { teams: [], blocked: null };
 
-  let m = placeholder.match(/^[12]°\s*Grupo\s*([A-L])$/i);
+  let m = placeholder.match(/^([12])°\s*Grupo\s*([A-L])$/i);
   if (m) {
-    const grp = m[1].toUpperCase();
+    const pos = parseInt(m[1], 10);
+    const grp = m[2].toUpperCase();
+    // Si el user tiene el grupo completo → solo ese team (su predicción)
+    if (userStandings[grp]) {
+      const t = teamsById[userStandings[grp][pos - 1].teamId];
+      return { teams: t ? [t] : [], blocked: null };
+    }
+    // Fallback: todos los teams del grupo
     return { teams: allTeams.filter(t => t.group_letter === grp), blocked: null };
   }
   m = placeholder.match(/^3°\s+(.+)$/i);
   if (m) {
     const groups = new Set(m[1].split('/').map(s => s.trim().toUpperCase()).filter(Boolean));
+    // Si todos los grupos elegibles están completos en las predicciones → solo los 3° de cada uno
+    const candidates = [];
+    let allComplete = true;
+    groups.forEach(grp => {
+      if (userStandings[grp]) {
+        const t = teamsById[userStandings[grp][2].teamId];
+        if (t) candidates.push(t);
+      } else {
+        allComplete = false;
+      }
+    });
+    if (allComplete && candidates.length > 0) return { teams: candidates, blocked: null };
+    // Fallback: todos los teams de esos grupos
     return { teams: allTeams.filter(t => groups.has(t.group_letter)), blocked: null };
   }
   m = placeholder.match(/^Ganador\s+M(\d+)$/i);
@@ -57,7 +147,7 @@ function getTeamsForPlaceholder(placeholder, koMatches, allTeams, predictions, t
   return { teams: [], blocked: null };
 }
 
-function getEligibleTeamsForMatch(match, koMatches, allTeams, predictions, teamsById) {
+function getEligibleTeamsForMatch(match, koMatches, allTeams, predictions, teamsById, userStandings = {}) {
   // Si los teams están resueltos en BD (post fase grupos real), solo esos 2
   if (match.team_home_id && match.team_away_id) {
     return {
@@ -65,8 +155,8 @@ function getEligibleTeamsForMatch(match, koMatches, allTeams, predictions, teams
       blocked: null,
     };
   }
-  const home = getTeamsForPlaceholder(match.home_placeholder, koMatches, allTeams, predictions, teamsById);
-  const away = getTeamsForPlaceholder(match.away_placeholder, koMatches, allTeams, predictions, teamsById);
+  const home = getTeamsForPlaceholder(match.home_placeholder, koMatches, allTeams, predictions, teamsById, userStandings);
+  const away = getTeamsForPlaceholder(match.away_placeholder, koMatches, allTeams, predictions, teamsById, userStandings);
   if (home.blocked || away.blocked) {
     return { teams: [], blocked: home.blocked || away.blocked };
   }
@@ -121,6 +211,7 @@ export default function MundialPollaScreen({ navigation }) {
         .select(`
           id, match_number, phase, group_letter, scheduled_at, prediction_deadline,
           status, multiplier, score_home, score_away, home_placeholder, away_placeholder,
+          team_home_id, team_away_id,
           team_home:team_home_id ( code, name_es ),
           team_away:team_away_id ( code, name_es )
         `)
@@ -198,6 +289,12 @@ export default function MundialPollaScreen({ navigation }) {
   }, [user.id, loadPool]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Calcular standings del user en grupos completos (para auto-resolver bracket)
+  const userStandings = useMemo(
+    () => calculateUserGroupStandings(predictions, matches, teamsById),
+    [predictions, matches, teamsById]
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -354,7 +451,9 @@ export default function MundialPollaScreen({ navigation }) {
                     </Text>
                   </TouchableOpacity>
                   {isOpen && phaseMatches.map((m) => {
-                    const elig = getEligibleTeamsForMatch(m, koMatches, allTeams, predictions, teamsById);
+                    const elig = getEligibleTeamsForMatch(m, koMatches, allTeams, predictions, teamsById, userStandings);
+                    const homeResolved = getResolvedNameForPlaceholder(m.home_placeholder, userStandings, teamsById, koMatches, predictions);
+                    const awayResolved = getResolvedNameForPlaceholder(m.away_placeholder, userStandings, teamsById, koMatches, predictions);
                     return (
                       <BracketRow
                         key={m.id}
@@ -363,6 +462,8 @@ export default function MundialPollaScreen({ navigation }) {
                         teamsById={teamsById}
                         blockedReason={elig.blocked}
                         userId={user.id}
+                        homeResolved={homeResolved}
+                        awayResolved={awayResolved}
                         onSaved={load}
                         onPickTeam={() => {
                           if (elig.blocked) {
@@ -604,11 +705,12 @@ function PredictionRow({ match, prediction, userId, onSaved }) {
   );
 }
 
-function BracketRow({ match, prediction, teamsById, blockedReason, userId, onSaved, onPickTeam }) {
+function BracketRow({ match, prediction, teamsById, blockedReason, userId, homeResolved, awayResolved, onSaved, onPickTeam }) {
   const picked = prediction?.pred_winner_team_id ? teamsById[prediction.pred_winner_team_id] : null;
   const finished = match.status === 'finished';
-  const homeName = match.team_home?.name_es || match.home_placeholder || '—';
-  const awayName = match.team_away?.name_es || match.away_placeholder || '—';
+  // Si tenemos team real (post-resolución BD) usamos ese, sino el nombre resuelto por las predicciones del user
+  const homeName = match.team_home?.name_es || homeResolved || match.home_placeholder || '—';
+  const awayName = match.team_away?.name_es || awayResolved || match.away_placeholder || '—';
 
   const [scoreHome, setScoreHome] = useState(prediction?.pred_score_home != null ? String(prediction.pred_score_home) : '');
   const [scoreAway, setScoreAway] = useState(prediction?.pred_score_away != null ? String(prediction.pred_score_away) : '');
