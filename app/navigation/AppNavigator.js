@@ -31,7 +31,7 @@ import MundialNavigator        from './MundialNavigator';
 
 const Tab   = createBottomTabNavigator();
 const Stack = createStackNavigator();
-const mundialLogo = require('../../assets/mundial/mundial-logo.jpg');
+const mundialLogo = require('../../assets/mundial/mundial-logo.png');
 
 const TAB_ICONS = {
   Inicio:    '🏠',

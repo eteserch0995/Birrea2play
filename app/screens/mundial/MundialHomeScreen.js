@@ -18,7 +18,7 @@ import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 import { WCCard, WCBlock, WCButton, WCBadge, WC_ALPHA } from '../../../components/mundial/WCComponents';
 import { shouldShowOnboarding } from './MundialOnboardingScreen';
 
-const mundialLogo = require('../../../assets/mundial/mundial-logo.jpg');
+const mundialLogo = require('../../../assets/mundial/mundial-logo.png');
 
 function formatCountdown(targetIso) {
   if (!targetIso) return null;
