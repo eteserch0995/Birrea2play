@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
+  Modal,
   Switch,
   Alert,
   ActivityIndicator,
@@ -37,6 +38,7 @@ export default function WCAdminPanel({ navigation }) {
     matches_scheduled: 0,
   });
   const [matches, setMatches] = useState([]);
+  const [teams, setTeams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [savingFlag, setSavingFlag] = useState(false);
@@ -159,6 +161,7 @@ export default function WCAdminPanel({ navigation }) {
         supabase.from('wc_matches').select(`
           id, match_number, phase, group_letter, scheduled_at, status,
           score_home, score_away, home_placeholder, away_placeholder,
+          team_home_id, team_away_id,
           team_home:team_home_id ( code, name_es ),
           team_away:team_away_id ( code, name_es )
         `).order('scheduled_at', { ascending: true }).limit(110),
@@ -190,6 +193,7 @@ export default function WCAdminPanel({ navigation }) {
         .select(`
           id, match_number, phase, group_letter, scheduled_at, status,
           score_home, score_away, home_placeholder, away_placeholder,
+          team_home_id, team_away_id,
           team_home:team_home_id ( code, name_es ),
           team_away:team_away_id ( code, name_es )
         `)
@@ -209,6 +213,25 @@ export default function WCAdminPanel({ navigation }) {
   }, [loadPool]);
 
   useEffect(() => { load(); loadPayouts(); }, [load, loadPayouts]);
+
+  useEffect(() => {
+    supabase.from('wc_teams').select('id, code, name_es, group_letter')
+      .order('group_letter').order('name_es')
+      .then(({ data }) => setTeams(data ?? []));
+  }, []);
+
+  const assignThird = useCallback(async (matchId, teamId) => {
+    try {
+      const { error } = await supabase.rpc('wc_admin_assign_third_place', {
+        p_match_id: matchId, p_team_id: teamId, p_side: 'away',
+      });
+      if (error) throw error;
+      await silentReload();
+      Alert.alert('Listo', 'Tercero asignado al slot.');
+    } catch (e) {
+      Alert.alert('Error', e.message || 'No se pudo asignar el tercero');
+    }
+  }, [silentReload]);
 
   const toggleFlag = async (flag, current) => {
     if (savingFlag) return;
@@ -335,6 +358,21 @@ export default function WCAdminPanel({ navigation }) {
           ))}
         </View>
 
+        {teams.length > 0 && matches.some(m => (m.away_placeholder || '').startsWith('Mejor 3')) && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Asignar mejores terceros</Text>
+          <Text style={styles.cardSubtitle}>
+            Al cerrar la fase de grupos, asigná el 3° clasificado a cada slot de octavos según la tabla oficial FIFA de la combinación real. Sin esto, esos partidos no se pueden resolver.
+          </Text>
+          {matches.filter(m => (m.away_placeholder || '').startsWith('Mejor 3')).map(m => (
+            <View key={m.id} style={styles.thirdRow}>
+              <Text style={styles.thirdLabel}>M{m.match_number} · {m.away_placeholder}</Text>
+              <TeamSelect teams={teams} value={m.team_away_id} onChange={(tid) => assignThird(m.id, tid)} placeholder="Asignar 3°" />
+            </View>
+          ))}
+        </View>
+        )}
+
         {/* Finalizar Survivor */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Finalizar Survivor</Text>
@@ -358,31 +396,10 @@ export default function WCAdminPanel({ navigation }) {
           <Text style={styles.cardSubtitle}>
             Ingresá los resultados reales del Mundial (se usan para resolver los bonus picks de cada jugador).
           </Text>
-          <Text style={styles.flagLabel}>IDs de equipos (UUID)</Text>
-          <TextInput
-            style={[styles.scoreInput, styles.textInputFull]}
-            value={pollaInputs.champion_id}
-            onChangeText={v => setPollaInputs(p => ({ ...p, champion_id: v }))}
-            placeholder="UUID Campeón"
-            placeholderTextColor={COLORS.gray}
-            autoCapitalize="none"
-          />
-          <TextInput
-            style={[styles.scoreInput, styles.textInputFull]}
-            value={pollaInputs.runner_up_id}
-            onChangeText={v => setPollaInputs(p => ({ ...p, runner_up_id: v }))}
-            placeholder="UUID Sub-campeón"
-            placeholderTextColor={COLORS.gray}
-            autoCapitalize="none"
-          />
-          <TextInput
-            style={[styles.scoreInput, styles.textInputFull]}
-            value={pollaInputs.third_place_id}
-            onChangeText={v => setPollaInputs(p => ({ ...p, third_place_id: v }))}
-            placeholder="UUID 3er lugar"
-            placeholderTextColor={COLORS.gray}
-            autoCapitalize="none"
-          />
+          <Text style={styles.flagLabel}>Equipos del podio</Text>
+          <TeamSelect teams={teams} value={pollaInputs.champion_id} onChange={v => setPollaInputs(p => ({ ...p, champion_id: v }))} placeholder="Campeón" />
+          <TeamSelect teams={teams} value={pollaInputs.runner_up_id} onChange={v => setPollaInputs(p => ({ ...p, runner_up_id: v }))} placeholder="Sub-campeón" />
+          <TeamSelect teams={teams} value={pollaInputs.third_place_id} onChange={v => setPollaInputs(p => ({ ...p, third_place_id: v }))} placeholder="3er lugar" />
           <Text style={[styles.flagLabel, { marginTop: SPACING.sm }]}>Goleador y MVP (nombre exacto)</Text>
           <TextInput
             style={[styles.scoreInput, styles.textInputFull]}
@@ -593,6 +610,48 @@ function MatchRow({ match, onSaved }) {
   );
 }
 
+function TeamSelect({ teams, value, onChange, placeholder }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const selected = teams.find(t => t.id === value);
+  const filtered = q
+    ? teams.filter(t => `${t.name_es} ${t.code} ${t.group_letter}`.toLowerCase().includes(q.toLowerCase()))
+    : teams;
+  return (
+    <>
+      <TouchableOpacity style={styles.teamSelectBtn} onPress={() => setOpen(true)}>
+        <Text style={[styles.teamSelectText, !selected && { color: COLORS.gray }]} numberOfLines={1}>
+          {selected ? `${selected.name_es} (${selected.code})` : (placeholder || 'Elegí equipo')}
+        </Text>
+        <Text style={{ color: COLORS.gray2 }}>▾</Text>
+      </TouchableOpacity>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={styles.tsOverlay} activeOpacity={1} onPress={() => setOpen(false)}>
+          <View style={styles.tsBox}>
+            <TextInput
+              style={[styles.scoreInput, styles.textInputFull]}
+              value={q} onChangeText={setQ}
+              placeholder="Buscar equipo…" placeholderTextColor={COLORS.gray} autoCapitalize="none"
+            />
+            <ScrollView style={{ maxHeight: 380 }} keyboardShouldPersistTaps="handled">
+              {filtered.map(t => (
+                <TouchableOpacity key={t.id} style={styles.tsRow} onPress={() => { onChange(t.id); setOpen(false); setQ(''); }}>
+                  <Text style={styles.tsCode}>{t.code}</Text>
+                  <Text style={styles.tsName} numberOfLines={1}>{t.name_es}</Text>
+                  <Text style={styles.tsGrp}>{t.group_letter}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity onPress={() => setOpen(false)} style={styles.tsCancel}>
+              <Text style={styles.tsCancelText}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
+
 function PayoutRow({ payout, onPaid }) {
   const [ref, setRef] = useState('');
   const [marking, setMarking] = useState(false);
@@ -798,6 +857,24 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.body, fontSize: 11, color: COLORS.green,
     marginTop: 4,
   },
+
+  teamSelectBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    width: '100%', minHeight: 40, marginBottom: SPACING.sm,
+    paddingHorizontal: SPACING.sm, borderRadius: RADIUS.sm,
+    borderColor: COLORS.line, borderWidth: 1, backgroundColor: COLORS.bg,
+  },
+  teamSelectText: { flex: 1, color: COLORS.white, fontFamily: FONTS.body, fontSize: 13 },
+  tsOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', justifyContent: 'center', padding: SPACING.lg },
+  tsBox: { backgroundColor: COLORS.card, borderRadius: RADIUS.lg, borderColor: COLORS.line, borderWidth: 1, padding: SPACING.md },
+  tsRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: COLORS.line },
+  tsCode: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.neon, width: 44 },
+  tsName: { flex: 1, fontFamily: FONTS.body, fontSize: 14, color: COLORS.white },
+  tsGrp: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2 },
+  tsCancel: { marginTop: SPACING.sm, alignItems: 'center', paddingVertical: 10 },
+  tsCancelText: { color: COLORS.gray2, fontFamily: FONTS.bodyBold, fontSize: 13 },
+  thirdRow: { marginBottom: SPACING.sm },
+  thirdLabel: { fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gray2, marginBottom: 4 },
   notesTitle: {
     fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.gold, letterSpacing: 1,
   },
