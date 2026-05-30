@@ -630,7 +630,7 @@ export default function MundialSurvivorScreen({ navigation }) {
                           styles.currentPickCard,
                           pick.result === 'won' && { borderColor: COLORS.green },
                           pick.result === 'lost' && { borderColor: COLORS.red2 },
-                          pick.result === 'draw' && { borderColor: COLORS.red2 },
+                          pick.result === 'draw' && { borderColor: COLORS.orange },
                         ]}>
                           <Text style={styles.currentPickLabel}>Tu pick</Text>
                           <Text style={styles.currentPickTeam}>{pick.team?.name_es ?? '—'}</Text>
@@ -638,10 +638,11 @@ export default function MundialSurvivorScreen({ navigation }) {
                             <Text style={[
                               styles.historyResult,
                               pick.result === 'won' && { color: COLORS.green },
-                              pick.result === 'draw' && { color: COLORS.red2 },
-                              (pick.result === 'lost' || pick.result === 'no_pick') && { color: COLORS.red2 },
+                              pick.result === 'draw' && { color: COLORS.orange },
+                              pick.result === 'lost' && { color: COLORS.red2A11y ?? COLORS.red2 },
+                              pick.result === 'no_pick' && { color: COLORS.red2A11y ?? COLORS.red2 },
                             ]}>
-                              {pick.result === 'won' ? '✓ GANÓ' : pick.result === 'draw' ? '✗ EMPATE −1♥' : pick.result === 'lost' ? '✗ PERDIÓ −1♥' : pick.result === 'no_pick' ? '✗ NO PICK −1♥' : '—'}
+                              {pick.result === 'won' ? '✓ GANÓ' : pick.result === 'draw' ? '~ EMPATE −1♥' : pick.result === 'lost' ? '✗ DERROTA −1♥' : pick.result === 'no_pick' ? '✗ NO PICK −1♥' : '—'}
                             </Text>
                           )}
                         </View>
@@ -818,7 +819,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', backgroundColor: 'rgba(10, 14, 20, 0.93)',
     borderColor: COLORS.neon + '66', borderWidth: 1,
     borderRadius: RADIUS.lg, padding: SPACING.md,
-    marginBottom: SPACING.md, ...SHADOWS.card,
+    marginBottom: SPACING.md, ...SHADOWS.glow,
   },
   pozoLeft: {
     flex: 1, alignItems: 'flex-start',
@@ -827,7 +828,7 @@ const styles = StyleSheet.create({
   },
   pozoRight: { flex: 1, alignItems: 'center', paddingLeft: SPACING.md },
   pozoLabel: {
-    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gray,
+    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gray2,
     letterSpacing: 1.5, textTransform: 'uppercase',
   },
   pozoValue: {
@@ -852,7 +853,7 @@ const styles = StyleSheet.create({
   distCount: {
     fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white, marginTop: 2,
   },
-  distPct: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 },
+  distPct: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 2 },
 
   communityHint: {
     fontFamily: FONTS.body, fontSize: 12, color: COLORS.bg,
@@ -872,10 +873,10 @@ const styles = StyleSheet.create({
   communityCode: { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.neon, width: 50 },
   communityName: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white },
   barTrack: { height: 6, backgroundColor: COLORS.line, borderRadius: 3, marginTop: 4, overflow: 'hidden' },
-  barFill: { height: '100%', backgroundColor: COLORS.red, borderRadius: 3 },
+  barFill: { height: '100%', backgroundColor: COLORS.red2, borderRadius: 3 },
   communityStats: { alignItems: 'flex-end', minWidth: 64 },
   communityPct: { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white },
-  communityCount: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray },
+  communityCount: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2 },
 
   insightCard: {
     backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.gold + '99',
@@ -897,7 +898,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.lg, ...SHADOWS.card,
   },
   livesLabel: {
-    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gray,
+    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gray2,
     letterSpacing: 2, textTransform: 'uppercase', marginBottom: 8,
   },
   livesRow: { flexDirection: 'row', gap: 12 },
@@ -996,7 +997,7 @@ const styles = StyleSheet.create({
     textAlign: 'center', marginTop: 2,
   },
   teamBtnUsage: {
-    fontFamily: FONTS.body, fontSize: 10, color: COLORS.gray, marginTop: 2,
+    fontFamily: FONTS.body, fontSize: 10, color: COLORS.gray2, marginTop: 2,
   },
   teamBtnEmpty: { color: COLORS.gray, fontSize: 12 },
   vsLabel: {
@@ -1021,7 +1022,7 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4, borderLeftColor: COLORS.line,
   },
   historyTeam: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white },
-  historyDate: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 },
+  historyDate: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 2 },
   historyResult: {
     fontFamily: FONTS.heading, fontSize: 13, color: COLORS.gray2,
     letterSpacing: 1,
@@ -1033,7 +1034,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card2, borderColor: COLORS.line, borderWidth: 1,
     borderRadius: RADIUS.md, padding: SPACING.md,
   },
-  dayHeaderOpen:   { borderColor: COLORS.green },
+  dayHeaderOpen:   { borderColor: COLORS.red2 },
   dayHeaderClosed: { opacity: 0.6 },
   dayHeaderDate: {
     fontFamily: FONTS.heading, fontSize: 14, color: COLORS.white, letterSpacing: 1,

@@ -170,7 +170,7 @@ export default function MundialHomeScreen({ navigation }) {
               {poolStats.survivor?.pozo != null && (
                 <View style={styles.bolsaChip}>
                   <Text style={styles.bolsaChipLabel}>BOLSA</Text>
-                  <Text style={[styles.bolsaChipValue, { color: COLORS.red2 }]}>
+                  <Text style={[styles.bolsaChipValue, { color: COLORS.neon }]}>
                     ${Number(poolStats.survivor.pozo).toFixed(0)}
                   </Text>
                 </View>
@@ -223,7 +223,7 @@ export default function MundialHomeScreen({ navigation }) {
               {poolStats.polla?.pozo != null && (
                 <View style={styles.bolsaChip}>
                   <Text style={styles.bolsaChipLabel}>BOLSA</Text>
-                  <Text style={[styles.bolsaChipValue, { color: COLORS.magenta }]}>
+                  <Text style={[styles.bolsaChipValue, { color: COLORS.neon }]}>
                     ${Number(poolStats.polla.pozo).toFixed(0)}
                   </Text>
                 </View>
@@ -357,7 +357,7 @@ const styles = StyleSheet.create({
   kicker: {
     fontFamily: FONTS.bodyBold,
     fontSize: 11,
-    color: COLORS.primary ?? COLORS.magenta,
+    color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 3,
     marginBottom: 4,
   },
@@ -430,8 +430,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     marginBottom: SPACING.sm,
   },
-  pillSurvivor: { backgroundColor: COLORS.red + '22', color: COLORS.red2 },
-  pillPolla:    { backgroundColor: COLORS.magenta + '22', color: COLORS.magenta },
+  pillSurvivor: { backgroundColor: COLORS.red + '22', color: COLORS.red2A11y || COLORS.red2 },
+  pillPolla:    { backgroundColor: COLORS.magenta + '22', color: COLORS.magentaText || COLORS.magenta },
   modeTitle: {
     fontFamily: FONTS.heading,
     fontSize: 28,
@@ -496,7 +496,7 @@ const styles = StyleSheet.create({
   bolsaChipLabel: {
     fontFamily: FONTS.bodyBold,
     fontSize: 9,
-    color: COLORS.gray,
+    color: COLORS.gray2,
     letterSpacing: 1.5,
     textTransform: 'uppercase',
   },
@@ -573,7 +573,7 @@ const styles = StyleSheet.create({
   scoreNote: {
     fontFamily: FONTS.body,
     fontSize: 12,
-    color: COLORS.gray,
+    color: COLORS.gray2,
     fontStyle: 'italic',
     marginTop: SPACING.sm,
     lineHeight: 18,

@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
   subText: {
     fontFamily: FONTS.body,
     fontSize: 11,
-    color: COLORS.gray,
+    color: COLORS.gray2,
     fontStyle: 'italic',
     marginTop: SPACING.sm,
     lineHeight: 16,

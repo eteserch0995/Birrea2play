@@ -130,7 +130,8 @@ const btnStyles = StyleSheet.create({
 });
 
 // ─── WCBadge ─────────────────────────────────────────────────
-// tone: 'neutral' | 'success' | 'warning' | 'danger' | 'gold' | 'magenta' | 'neon'
+// tone: 'neutral' | 'success' | 'warning' | 'danger' | 'gold' | 'magenta' | 'neon' | 'blue'
+//       | 'vivo' | 'acertado' | 'eliminado' | 'fallado' | 'pendiente' | 'bloqueado' | 'finalizado' | 'en_vivo'
 export function WCBadge({ label, tone = 'neutral', size = 'md' }) {
   const palette = badgePalette(tone);
   const padV = size === 'sm' ? 2 : 4;
@@ -147,12 +148,27 @@ export function WCBadge({ label, tone = 'neutral', size = 'md' }) {
 }
 
 function badgePalette(tone) {
-  if (tone === 'success') return { bg: COLORS.green + '22', border: COLORS.green + '88', color: COLORS.green };
-  if (tone === 'warning') return { bg: COLORS.gold + '22', border: COLORS.gold + '88', color: COLORS.gold };
-  if (tone === 'danger')  return { bg: COLORS.red + '22', border: COLORS.red + '88', color: COLORS.red2A11y || COLORS.red2 };
-  if (tone === 'gold')    return { bg: COLORS.gold + '22', border: COLORS.gold + '88', color: COLORS.gold };
-  if (tone === 'magenta') return { bg: COLORS.magenta + '22', border: COLORS.magenta + '88', color: COLORS.magentaText || COLORS.magenta };
-  if (tone === 'neon')    return { bg: COLORS.neon + '22', border: COLORS.neon + '88', color: COLORS.neon };
+  if (tone === 'success')    return { bg: COLORS.green + '22', border: COLORS.green + '88', color: COLORS.green };
+  if (tone === 'warning')    return { bg: COLORS.gold + '22', border: COLORS.gold + '88', color: COLORS.gold };
+  if (tone === 'danger')     return { bg: COLORS.red + '22', border: COLORS.red + '88', color: COLORS.red2A11y || COLORS.red2 };
+  if (tone === 'gold')       return { bg: COLORS.gold + '22', border: COLORS.gold + '88', color: COLORS.gold };
+  if (tone === 'magenta')    return { bg: COLORS.magenta + '22', border: COLORS.magenta + '88', color: COLORS.magentaText || COLORS.magenta };
+  if (tone === 'neon')       return { bg: COLORS.neon + '22', border: COLORS.neon + '88', color: COLORS.neon };
+  if (tone === 'blue')       return { bg: (COLORS.blue2 ?? '#3D6BFF') + '22', border: (COLORS.blue2 ?? '#3D6BFF') + '88', color: COLORS.blue2 ?? '#3D6BFF' };
+  // ── Tones semánticos de estado ──────────────────────────────
+  // vivo / acertado → green
+  if (tone === 'vivo')       return { bg: COLORS.green + '22', border: COLORS.green + '88', color: COLORS.green };
+  if (tone === 'acertado')   return { bg: COLORS.green + '22', border: COLORS.green + '88', color: COLORS.green };
+  // eliminado / fallado → red2 (AA)
+  if (tone === 'eliminado')  return { bg: (COLORS.red2 ?? '#FF3B1F') + '22', border: (COLORS.red2 ?? '#FF3B1F') + '88', color: COLORS.red2A11y ?? COLORS.red2 ?? '#D42200' };
+  if (tone === 'fallado')    return { bg: (COLORS.red2 ?? '#FF3B1F') + '22', border: (COLORS.red2 ?? '#FF3B1F') + '88', color: COLORS.red2A11y ?? COLORS.red2 ?? '#D42200' };
+  // pendiente → orange
+  if (tone === 'pendiente')  return { bg: (COLORS.orange ?? '#FF7A18') + '22', border: (COLORS.orange ?? '#FF7A18') + '88', color: COLORS.orange ?? '#FF7A18' };
+  // bloqueado / finalizado → gray2 (texto sobre fondo oscuro)
+  if (tone === 'bloqueado')  return { bg: COLORS.white + '0D', border: WC_ALPHA.divider, color: COLORS.gray2 };
+  if (tone === 'finalizado') return { bg: COLORS.white + '0D', border: WC_ALPHA.divider, color: COLORS.gray2 };
+  // en_vivo → red2 sólido (urgencia en directo)
+  if (tone === 'en_vivo')    return { bg: (COLORS.red2 ?? '#FF3B1F') + '22', border: COLORS.red2 ?? '#FF3B1F', color: COLORS.red2A11y ?? COLORS.red2 ?? '#D42200' };
   return { bg: COLORS.white + '14', border: WC_ALPHA.divider, color: COLORS.gray2 };
 }
 

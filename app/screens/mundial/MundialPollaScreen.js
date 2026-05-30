@@ -1075,7 +1075,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1, marginTop: 4,
   },
   pozoRank: {
-    fontFamily: FONTS.heading, fontSize: 32, color: COLORS.magenta,
+    fontFamily: FONTS.heading, fontSize: 32, color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 1, marginTop: 4,
   },
   pozoMeta: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 4 },
@@ -1087,7 +1087,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.lg, ...SHADOWS.card,
   },
   pointsLabel: {
-    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.magenta,
+    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 2, textTransform: 'uppercase',
   },
   pointsValue: {
@@ -1140,7 +1140,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', marginBottom: 8, marginTop: 4,
   },
   quickFillText: {
-    fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.magenta,
+    fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 0.5,
   },
   groupBlock: { marginBottom: SPACING.sm },
@@ -1170,7 +1170,7 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.sm, padding: SPACING.sm,
   },
   bracketPickLabel: {
-    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.magenta,
+    fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 1.5, textTransform: 'uppercase',
   },
   bracketPickValue: {
@@ -1388,7 +1388,7 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.heading, fontSize: 28, color: COLORS.neon, marginTop: 4,
   },
   bonusTotalPoints: {
-    fontFamily: FONTS.heading, fontSize: 16, color: COLORS.magenta,
+    fontFamily: FONTS.heading, fontSize: 16, color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 1, textAlign: 'center', marginTop: SPACING.md,
   },
 });

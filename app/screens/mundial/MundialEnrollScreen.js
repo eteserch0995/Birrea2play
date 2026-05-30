@@ -580,7 +580,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1.5,
   },
   priceBig: {
-    fontFamily: FONTS.heading, fontSize: 52, color: COLORS.magenta,
+    fontFamily: FONTS.heading, fontSize: 52, color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 1, marginTop: 6,
   },
   subtitle: {
@@ -593,7 +593,7 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.lg,
   },
   walletLabel: {
-    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gray,
+    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gray2,
     letterSpacing: 1.5, textTransform: 'uppercase',
   },
   walletValue: {
@@ -628,7 +628,7 @@ const styles = StyleSheet.create({
   },
   payMethodLabelActive: { color: COLORS.white },
   payMethodSub: {
-    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2,
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 2,
   },
   yappyInputBlock: { marginTop: SPACING.md },
   yappyInputLabel: {
@@ -642,7 +642,7 @@ const styles = StyleSheet.create({
     letterSpacing: 2, textAlign: 'center',
   },
   yappyHint: {
-    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray,
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2,
     marginTop: 4, lineHeight: 16,
   },
   cancelYappyBtn: { marginTop: SPACING.sm, padding: 8, alignItems: 'center' },
@@ -678,7 +678,7 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.lg,
   },
   bonusTitle: {
-    fontFamily: FONTS.heading, fontSize: 18, color: COLORS.magenta,
+    fontFamily: FONTS.heading, fontSize: 18, color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 1, marginBottom: 4,
   },
   bonusDesc: {
@@ -696,7 +696,7 @@ const styles = StyleSheet.create({
   bonusTeamValue: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
   bonusTeamCode:  { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.neon, width: 50 },
   bonusTeamName:  { fontFamily: FONTS.bodyBold, fontSize: 15, color: COLORS.white, flex: 1 },
-  bonusTeamEmpty: { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray },
+  bonusTeamEmpty: { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2 },
 
   bonusInputRow: { marginTop: SPACING.md },
   bonusInputLabel: {
