@@ -26,6 +26,9 @@ export default function MundialSurvivorScreen({ navigation }) {
   const [ranking, setRanking] = useState([]);
   const [communityPicks, setCommunityPicks] = useState([]);
   const [livesDistribution, setLivesDistribution] = useState({ alive3: 0, alive2: 0, alive1: 0, dead: 0, total: 0 });
+  // Stats agregadas REALES (todos los survivor pagados) vía RPC wc_pool_stats.
+  // Antes el cliente solo veía su propia inscripción por RLS → pozo y distribución subcontados.
+  const [poolStats, setPoolStats] = useState(null); // fila { paid_count, pozo, alive3, alive2, alive1, dead } del modo 'survivor'
   const [allDays, setAllDays] = useState([]);
   const [picksByDay, setPicksByDay] = useState({});
   const [matchesByDay, setMatchesByDay] = useState({});
@@ -174,20 +177,23 @@ export default function MundialSurvivorScreen({ navigation }) {
         .limit(30);
       setRanking(rnk ?? []);
 
-      // 9) Distribución de vidas (todos los survivor paid)
-      const { data: allLives } = await supabase
-        .from('wc_enrollments')
-        .select('lives_remaining')
-        .eq('mode', 'survivor')
-        .eq('payment_status', 'paid');
-      const dist = { alive3: 0, alive2: 0, alive1: 0, dead: 0, total: allLives?.length ?? 0 };
-      (allLives ?? []).forEach(x => {
-        if (x.lives_remaining === 3) dist.alive3++;
-        else if (x.lives_remaining === 2) dist.alive2++;
-        else if (x.lives_remaining === 1) dist.alive1++;
-        else dist.dead++;
+      // 9) Distribución de vidas REAL (todos los survivor paid) vía RPC agregado.
+      // El query directo a wc_enrollments solo devolvía la fila del propio user por RLS,
+      // por eso el pozo y la distribución salían subcontados. Ahora usamos wc_pool_stats.
+      let survRow = null;
+      try {
+        const { data: stats } = await supabase.rpc('wc_pool_stats');
+        survRow = (stats ?? []).find(s => s.mode === 'survivor') ?? null;
+      } catch (_) { survRow = null; }
+      setPoolStats(survRow);
+      const alive3 = survRow?.alive3 ?? 0;
+      const alive2 = survRow?.alive2 ?? 0;
+      const alive1 = survRow?.alive1 ?? 0;
+      const dead = survRow?.dead ?? 0;
+      setLivesDistribution({
+        alive3, alive2, alive1, dead,
+        total: survRow?.paid_count ?? (alive3 + alive2 + alive1 + dead),
       });
-      setLivesDistribution(dist);
 
       // 10) Picks de la comunidad para el día actual (conteo agregado por team)
       if (day) {
@@ -364,25 +370,32 @@ export default function MundialSurvivorScreen({ navigation }) {
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
-        {/* Pozo en vivo */}
-        <View style={styles.pozoCard}>
-          <View style={styles.pozoLeft}>
-            <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
-            <Text style={styles.pozoValue}>
-              ${((livesDistribution.total * (pool?.survivor_price ?? 10) * (1 - (pool?.fee_rate ?? 0.085))) || 0).toFixed(0)}
-            </Text>
-            <Text style={styles.pozoMeta}>
-              {livesDistribution.total} inscritos × ${pool?.survivor_price ?? 10}
-            </Text>
-          </View>
-          <View style={styles.pozoRight}>
-            <Text style={styles.pozoLabel}>VIVOS</Text>
-            <Text style={styles.pozoSurvivors}>
-              {livesDistribution.alive3 + livesDistribution.alive2 + livesDistribution.alive1}
-            </Text>
-            <Text style={styles.pozoMeta}>de {livesDistribution.total}</Text>
-          </View>
-        </View>
+        {/* Pozo en vivo — pozo, total y vivos vienen del RPC agregado (real, no subcontado) */}
+        {(() => {
+          // pozo real del RPC; fallback al estimado por conteo si el RPC no devolvió fila.
+          const pozo = poolStats?.pozo != null
+            ? Number(poolStats.pozo)
+            : (livesDistribution.total * (pool?.survivor_price ?? 10) * (1 - (pool?.fee_rate ?? 0.085)));
+          const alive = livesDistribution.alive3 + livesDistribution.alive2 + livesDistribution.alive1;
+          return (
+            <View style={styles.pozoCard}>
+              <View style={styles.pozoLeft}>
+                <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
+                <Text style={styles.pozoValue}>
+                  ${(pozo || 0).toFixed(0)}
+                </Text>
+                <Text style={styles.pozoMeta}>
+                  {livesDistribution.total} inscritos × ${pool?.survivor_price ?? 10}
+                </Text>
+              </View>
+              <View style={styles.pozoRight}>
+                <Text style={styles.pozoLabel}>VIVOS</Text>
+                <Text style={styles.pozoSurvivors}>{alive}</Text>
+                <Text style={styles.pozoMeta}>de {livesDistribution.total}</Text>
+              </View>
+            </View>
+          );
+        })()}
 
         {/* Header con vidas propias */}
         <View style={styles.livesCard}>

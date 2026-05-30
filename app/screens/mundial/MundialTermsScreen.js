@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet, Linking } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
@@ -8,8 +8,6 @@ import { WCBlock, WCBadge, WCHeader, WCButton } from '../../../components/mundia
 // Versión de los T&C del Módulo Mundial. La usa la pantalla de inscripción
 // para dejar constancia de qué versión aceptó el participante (Sección 21).
 export const MUNDIAL_TYC_VERSION = '2026-05-30';
-
-const TERMS_WEB_URL = 'https://birrea2play.com/terminos-mundial.html';
 
 // Subcomponentes locales para no alterar el wording legal (solo formato).
 function P({ children, light }) {
@@ -42,9 +40,8 @@ export default function MundialTermsScreen({ navigation, route }) {
               <WCBadge label="Versión 1.1 — vigencia junio 2026" tone="gold" />
             </View>
             <Text style={styles.text}>
-              <B>Organizador:</B> Birrea2Play (proyecto personal de Sergio Bosso, persona natural,
-              República de Panamá).{'\n'}
-              <B>Contacto:</B> sergio.bosso09@gmail.com{'\n'}
+              <B>Organizador:</B> Panamá Birreas.{'\n'}
+              <B>Contacto:</B> admin@birrea2play.com{'\n'}
               <B>Sitio:</B> birrea2play.com
             </Text>
             <Text style={styles.subText}>
@@ -54,14 +51,6 @@ export default function MundialTermsScreen({ navigation, route }) {
               prevalece este Anexo respecto de esa materia específica. Le recomendamos leerlo completo
               antes de inscribirse.
             </Text>
-            <WCButton
-              label="VER VERSIÓN WEB"
-              variant="gold"
-              size="md"
-              leadingIcon="🌐"
-              onPress={() => Linking.openURL(TERMS_WEB_URL)}
-              style={{ marginTop: SPACING.md }}
-            />
           </WCBlock>
 
           {/* 1 */}
@@ -71,8 +60,7 @@ export default function MundialTermsScreen({ navigation, route }) {
               {'\n'}• <B>Módulo Mundial</B> o <B>Módulo:</B> la sub-aplicación temporal de Birrea2Play
               habilitada con ocasión del torneo internacional de fútbol que se disputará entre el{' '}
               <B>11 de junio de 2026 y el 19 de julio de 2026</B>.{'\n'}
-              • <B>Organizador:</B> Birrea2Play, proyecto personal operado por Sergio Bosso, persona
-              natural domiciliada en la República de Panamá.{'\n'}
+              • <B>Organizador:</B> Birrea2Play, proyecto personal operado por Panamá Birreas.{'\n'}
               • <B>Participante</B> o <B>Usuario:</B> la persona natural mayor de edad que se inscribe
               en cualquiera de los concursos del Módulo.{'\n'}
               • <B>Concursos:</B> los juegos de predicción denominados "Survivor 3 Vidas" y "Polla
@@ -359,8 +347,8 @@ export default function MundialTermsScreen({ navigation, route }) {
           {/* 14 */}
           <WCBlock title="14. Protección de datos personales (Ley 81 de 2019)" accent="neon">
             <P>
-              14.1. <B>Responsable del tratamiento:</B> Sergio Bosso (Birrea2Play), persona natural,
-              contacto <B>sergio.bosso09@gmail.com</B>.
+              14.1. <B>Responsable del tratamiento:</B> Panamá Birreas,
+              contacto <B>admin@birrea2play.com</B>.
             </P>
             <P>
               {'\n'}14.2. <B>Datos que se tratan:</B> datos de identificación y contacto, datos de la
@@ -387,7 +375,7 @@ export default function MundialTermsScreen({ navigation, route }) {
             <P>
               {'\n'}14.6. <B>Derechos ARCO:</B> el Participante puede ejercer sus derechos de{' '}
               <B>acceso, rectificación, cancelación (supresión) y oposición</B>, así como la revocación
-              del consentimiento, escribiendo a <B>sergio.bosso09@gmail.com</B>. El Organizador atenderá
+              del consentimiento, escribiendo a <B>admin@birrea2play.com</B>. El Organizador atenderá
               la solicitud conforme a la Ley 81 de 2019.
             </P>
             <P>
@@ -450,7 +438,7 @@ export default function MundialTermsScreen({ navigation, route }) {
           <WCBlock title="17. Reclamos y resolución de disputas" accent="magenta">
             <P>
               17.1. <B>Canal de reclamo interno:</B> antes de acudir a otras instancias, el Participante
-              puede presentar su reclamo al Organizador escribiendo a <B>sergio.bosso09@gmail.com</B>,
+              puede presentar su reclamo al Organizador escribiendo a <B>admin@birrea2play.com</B>,
               indicando su identificador de cuenta, el Concurso, una descripción del hecho y la pretensión.
             </P>
             <P>
@@ -550,24 +538,15 @@ export default function MundialTermsScreen({ navigation, route }) {
 
           <Text style={styles.footer}>
             Birrea2Play — Módulo Mundial. Versión 1.1. Fecha de vigencia: junio de 2026.
-            Contacto: sergio.bosso09@gmail.com — birrea2play.com
+            Contacto: admin@birrea2play.com — birrea2play.com
           </Text>
-
-          <WCButton
-            label="VER VERSIÓN WEB"
-            variant="ghost"
-            size="lg"
-            leadingIcon="🌐"
-            onPress={() => Linking.openURL(TERMS_WEB_URL)}
-            style={{ marginTop: SPACING.lg }}
-          />
 
           <WCButton
             label="VOLVER"
             variant="ghost"
             size="lg"
             onPress={() => navigation.goBack()}
-            style={{ marginTop: SPACING.sm }}
+            style={{ marginTop: SPACING.lg }}
           />
         </ScrollView>
       </SafeAreaView>

@@ -1,6 +1,6 @@
 import React, { useRef, useState } from 'react';
 import {
-  View, Text, ScrollView, StyleSheet, Dimensions, TouchableOpacity,
+  View, Text, ScrollView, StyleSheet, Dimensions, TouchableOpacity, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -17,6 +17,7 @@ const SLIDES = [
     title: 'MUNDIAL 2026',
     body: 'Pronósticos del Mundial 2026 en USA · México · Canadá. Inscribite a Survivor o Polla, gana puntos por aciertos y llevate el pozo.',
     icon: '🏆',
+    image: require('../../../assets/mundial/mundial-logo.png'),
     accent: 'gold',
   },
   {
@@ -73,7 +74,15 @@ export default function MundialOnboardingScreen({ navigation }) {
         >
           {SLIDES.map((s, i) => (
             <View key={i} style={[styles.slide, { width: SW }]}>
-              <Text style={styles.icon}>{s.icon}</Text>
+              {s.image ? (
+                <Image
+                  source={s.image}
+                  style={{ width: 120, height: 120, borderRadius: 24, marginBottom: SPACING.lg }}
+                  resizeMode="contain"
+                />
+              ) : (
+                <Text style={styles.icon}>{s.icon}</Text>
+              )}
               <WCBadge label={s.kicker} tone={s.accent} size="md" />
               <Text style={styles.title}>{s.title}</Text>
               <Text style={styles.body}>{s.body}</Text>

@@ -38,6 +38,8 @@ export default function MundialHomeScreen({ navigation }) {
   const [countdown, setCountdown] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [enrollments, setEnrollments] = useState({ survivor: null, polla: null });
+  // Pozos REALES por modo (todos los inscritos pagados, sin PII) vía RPC wc_pool_stats.
+  const [poolStats, setPoolStats] = useState({ survivor: null, polla: null });
 
   const role = user?.role ?? 'player';
   const isAdmin = role === 'admin';
@@ -66,6 +68,18 @@ export default function MundialHomeScreen({ navigation }) {
       setEnrollments(map);
     })();
   }, [user?.id, refreshing]);
+
+  // Pozos reales por modo (agregado, sin PII). Se recarga también en pull-to-refresh.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data: stats } = await supabase.rpc('wc_pool_stats');
+        const map = { survivor: null, polla: null };
+        (stats ?? []).forEach((s) => { map[s.mode] = s; });
+        setPoolStats(map);
+      } catch (_) { /* silent — el card cae al precio si no hay pozo */ }
+    })();
+  }, [refreshing]);
 
   useEffect(() => {
     if (!pool?.enrollment_deadline) return;
@@ -149,6 +163,20 @@ export default function MundialHomeScreen({ navigation }) {
             <Text style={[styles.modePill, styles.pillSurvivor]}>SURVIVOR</Text>
             <Text style={styles.modeTitle}>3 Vidas</Text>
             <Text style={styles.modePrice}>${pool?.survivor_price ?? '10'}</Text>
+
+            {/* Sello del modo: 3 corazones + bolsa real del RPC */}
+            <View style={styles.modeSealRow}>
+              <Text style={styles.sealHearts}>♥♥♥</Text>
+              {poolStats.survivor?.pozo != null && (
+                <View style={styles.bolsaChip}>
+                  <Text style={styles.bolsaChipLabel}>BOLSA</Text>
+                  <Text style={[styles.bolsaChipValue, { color: COLORS.red2 }]}>
+                    ${Number(poolStats.survivor.pozo).toFixed(0)}
+                  </Text>
+                </View>
+              )}
+            </View>
+
             <Text style={styles.modeDesc}>
               Pick 1 equipo por jornada-día. Si empata o pierde, perdés 1 vida. Cada
               equipo se puede usar 1 sola vez. Sobreviví la fase de grupos.
@@ -177,6 +205,27 @@ export default function MundialHomeScreen({ navigation }) {
             <Text style={[styles.modePill, styles.pillPolla]}>POLLA GANADORA</Text>
             <Text style={styles.modeTitle}>Predice marcadores</Text>
             <Text style={styles.modePrice}>${pool?.polla_price ?? '15'}</Text>
+
+            {/* Sello del modo: bracket + bolsa real del RPC */}
+            <View style={styles.modeSealRow}>
+              <View style={styles.bracketSeal}>
+                <Text style={styles.bracketSealIcon}>🗂️</Text>
+                <View style={styles.bracketLines}>
+                  <View style={styles.bracketLine} />
+                  <View style={[styles.bracketLine, styles.bracketLineShort]} />
+                </View>
+                <Text style={styles.bracketSealTrophy}>🏆</Text>
+              </View>
+              {poolStats.polla?.pozo != null && (
+                <View style={styles.bolsaChip}>
+                  <Text style={styles.bolsaChipLabel}>BOLSA</Text>
+                  <Text style={[styles.bolsaChipValue, { color: COLORS.magenta }]}>
+                    ${Number(poolStats.polla.pozo).toFixed(0)}
+                  </Text>
+                </View>
+              )}
+            </View>
+
             <Text style={styles.modeDesc}>
               Acumula puntos por aciertos en los 104 partidos. Multiplicador por fase
               (x1 grupos → x4 final). 5 bonus pre-temporada obligatorios. El pozo se
@@ -394,6 +443,60 @@ const styles = StyleSheet.create({
     color: COLORS.gray2,
     lineHeight: 20,
     marginTop: 6,
+  },
+
+  // Sello del modo (corazones / bracket) + chip de bolsa
+  modeSealRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: SPACING.sm,
+  },
+  sealHearts: {
+    fontFamily: FONTS.heading,
+    fontSize: 24,
+    color: COLORS.red2,
+    letterSpacing: 2,
+  },
+  bracketSeal: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  bracketSealIcon: { fontSize: 20 },
+  bracketLines: {
+    justifyContent: 'center',
+    gap: 4,
+    height: 20,
+    marginHorizontal: 2,
+  },
+  bracketLine: {
+    width: 18,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: COLORS.magenta,
+  },
+  bracketLineShort: { width: 11 },
+  bracketSealTrophy: { fontSize: 18 },
+  bolsaChip: {
+    alignItems: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  bolsaChipLabel: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 9,
+    color: COLORS.gray,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  bolsaChipValue: {
+    fontFamily: FONTS.heading,
+    fontSize: 20,
+    letterSpacing: 1,
+    marginTop: 1,
   },
   modeFooter: {
     marginTop: SPACING.md,

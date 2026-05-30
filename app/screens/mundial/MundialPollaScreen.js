@@ -183,6 +183,9 @@ export default function MundialPollaScreen({ navigation }) {
   const [ranking, setRanking] = useState([]);
   const [myRank, setMyRank] = useState(null);
   const [totalEnrolled, setTotalEnrolled] = useState(0);
+  // Stats agregadas REALES (todos los inscritos pagados) vía RPC wc_pool_stats.
+  // El conteo propio (totalEnrolled) subcontaba el pozo por RLS.
+  const [poolStats, setPoolStats] = useState(null); // fila { paid_count, pozo, ... } del modo 'polla'
   const [tab, setTab] = useState('Grupos');
   const [expandedGroup, setExpandedGroup] = useState(null);
   const [expandedKoPhase, setExpandedKoPhase] = useState(null);
@@ -298,13 +301,21 @@ export default function MundialPollaScreen({ navigation }) {
       const myIdx = (rnk ?? []).findIndex(r => r.user_id === user.id);
       setMyRank(myIdx >= 0 ? myIdx + 1 : null);
 
-      // Total inscritos (para pozo)
+      // Total inscritos (conteo propio — fallback; el pozo real viene del RPC)
       const { count: totalCount } = await supabase
         .from('wc_enrollments')
         .select('*', { count: 'exact', head: true })
         .eq('mode', 'polla')
         .eq('payment_status', 'paid');
       setTotalEnrolled(totalCount ?? 0);
+
+      // Stats agregadas REALES de todos los inscritos pagados (sin PII).
+      // Reemplaza el conteo propio para mostrar pozo e inscritos correctos.
+      try {
+        const { data: stats } = await supabase.rpc('wc_pool_stats');
+        const row = (stats ?? []).find(s => s.mode === 'polla') ?? null;
+        setPoolStats(row);
+      } catch (_) { setPoolStats(null); }
 
       await loadPool();
     } finally {
@@ -369,23 +380,32 @@ export default function MundialPollaScreen({ navigation }) {
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
-        {/* Pozo + puntos */}
-        <View style={styles.pozoCard}>
-          <View style={styles.pozoLeft}>
-            <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
-            <Text style={styles.pozoValue}>
-              ${((totalEnrolled * (pool?.polla_price ?? 15) * (1 - (pool?.fee_rate ?? 0.085))) || 0).toFixed(0)}
-            </Text>
-            <Text style={styles.pozoMeta}>
-              {totalEnrolled} inscritos × ${pool?.polla_price ?? 15}
-            </Text>
-          </View>
-          <View style={styles.pozoRight}>
-            <Text style={styles.pozoLabel}>POSICIÓN</Text>
-            <Text style={styles.pozoRank}>{myRank ? `#${myRank}` : '—'}</Text>
-            <Text style={styles.pozoMeta}>de {totalEnrolled}</Text>
-          </View>
-        </View>
+        {/* Pozo + puntos — pozo e inscritos vienen del RPC agregado (real, no subcontado) */}
+        {(() => {
+          // paid_count y pozo reales de TODOS los inscritos pagados. Fallback al conteo propio.
+          const paidCount = poolStats?.paid_count ?? totalEnrolled;
+          const pozo = poolStats?.pozo != null
+            ? Number(poolStats.pozo)
+            : (totalEnrolled * (pool?.polla_price ?? 15) * (1 - (pool?.fee_rate ?? 0.085)));
+          return (
+            <View style={styles.pozoCard}>
+              <View style={styles.pozoLeft}>
+                <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
+                <Text style={styles.pozoValue}>
+                  ${(pozo || 0).toFixed(0)}
+                </Text>
+                <Text style={styles.pozoMeta}>
+                  {paidCount} inscritos × ${pool?.polla_price ?? 15}
+                </Text>
+              </View>
+              <View style={styles.pozoRight}>
+                <Text style={styles.pozoLabel}>POSICIÓN</Text>
+                <Text style={styles.pozoRank}>{myRank ? `#${myRank}` : '—'}</Text>
+                <Text style={styles.pozoMeta}>de {paidCount}</Text>
+              </View>
+            </View>
+          );
+        })()}
 
         <View style={styles.pointsCard}>
           <Text style={styles.pointsLabel}>TUS PUNTOS</Text>
