@@ -5,6 +5,7 @@ import MundialEnrollScreen   from '../screens/mundial/MundialEnrollScreen';
 import MundialSurvivorScreen from '../screens/mundial/MundialSurvivorScreen';
 import MundialPollaScreen    from '../screens/mundial/MundialPollaScreen';
 import MundialRulesScreen    from '../screens/mundial/MundialRulesScreen';
+import MundialOnboardingScreen from '../screens/mundial/MundialOnboardingScreen';
 
 const Stack = createStackNavigator();
 
@@ -18,6 +19,7 @@ export default function MundialNavigator() {
       <Stack.Screen name="MundialSurvivor" component={MundialSurvivorScreen} />
       <Stack.Screen name="MundialPolla"    component={MundialPollaScreen} />
       <Stack.Screen name="MundialRules"    component={MundialRulesScreen} />
+      <Stack.Screen name="MundialOnboarding" component={MundialOnboardingScreen} />
     </Stack.Navigator>
   );
 }

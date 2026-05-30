@@ -16,6 +16,7 @@ import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 import { WCCard, WCBlock, WCButton, WCBadge, WC_ALPHA } from '../../../components/mundial/WCComponents';
+import { shouldShowOnboarding } from './MundialOnboardingScreen';
 
 const mundialLogo = require('../../../assets/mundial/mundial-logo.jpg');
 
@@ -44,6 +45,14 @@ export default function MundialHomeScreen({ navigation }) {
   useEffect(() => {
     if (!pool && !loading) loadPool();
   }, [pool, loading, loadPool]);
+
+  useEffect(() => {
+    (async () => {
+      if (await shouldShowOnboarding()) {
+        navigation.navigate('MundialOnboarding');
+      }
+    })();
+  }, [navigation]);
 
   useEffect(() => {
     if (!user?.id) return;
