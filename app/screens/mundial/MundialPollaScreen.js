@@ -459,10 +459,23 @@ export default function MundialPollaScreen({ navigation }) {
 
 function KoTeamPickerModal({ allTeams, onCancel, onPick }) {
   return (
-    <View style={styles.modalBackdrop}>
-      <View style={styles.modalContent}>
-        <Text style={styles.modalTitle}>Elegí tu pick</Text>
-        <ScrollView style={{ maxHeight: 500 }}>
+    <TouchableOpacity
+      style={styles.modalBackdrop}
+      activeOpacity={1}
+      onPress={onCancel}
+    >
+      <TouchableOpacity
+        style={styles.modalContent}
+        activeOpacity={1}
+        onPress={() => {}}
+      >
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>Elegí tu pick</Text>
+          <TouchableOpacity onPress={onCancel} style={styles.modalClose} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Text style={styles.modalCloseText}>✕</Text>
+          </TouchableOpacity>
+        </View>
+        <ScrollView style={{ maxHeight: 460 }}>
           {allTeams.map((t) => (
             <TouchableOpacity
               key={t.id}
@@ -478,8 +491,8 @@ function KoTeamPickerModal({ allTeams, onCancel, onPick }) {
         <TouchableOpacity onPress={onCancel} style={styles.modalCancel}>
           <Text style={styles.modalCancelText}>Cancelar</Text>
         </TouchableOpacity>
-      </View>
-    </View>
+      </TouchableOpacity>
+    </TouchableOpacity>
   );
 }
 
@@ -877,9 +890,22 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl,
     padding: SPACING.md, maxHeight: '85%',
   },
+  modalHeader: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: SPACING.md,
+  },
+  modalClose: {
+    width: 36, height: 36, borderRadius: 18,
+    backgroundColor: COLORS.bg, borderColor: COLORS.line, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  modalCloseText: {
+    fontFamily: FONTS.bodyBold, fontSize: 18, color: COLORS.white,
+    lineHeight: 20,
+  },
   modalTitle: {
     fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white,
-    letterSpacing: 1, marginBottom: SPACING.md, textAlign: 'center',
+    letterSpacing: 1, flex: 1, textAlign: 'center', marginLeft: 36,
   },
   modalTeamRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 12,
