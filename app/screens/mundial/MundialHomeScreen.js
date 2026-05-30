@@ -179,8 +179,8 @@ export default function MundialHomeScreen({ navigation }) {
             <Text style={styles.modePrice}>${pool?.polla_price ?? '15'}</Text>
             <Text style={styles.modeDesc}>
               Acumula puntos por aciertos en los 104 partidos. Multiplicador por fase
-              (x1 grupos → x4 final). 5 bonus pre-temporada obligatorios. Un único
-              ganador.
+              (x1 grupos → x4 final). 5 bonus pre-temporada obligatorios. El pozo se
+              reparte entre los 3 primeros (60/25/15).
             </Text>
             <View style={styles.modeFooter}>
               {enrollments.polla?.payment_status === 'paid' ? (
@@ -206,7 +206,7 @@ export default function MundialHomeScreen({ navigation }) {
           <Text style={styles.rulesTitle}>Cómo funciona el pozo</Text>
           <Text style={styles.rulesText}>
             • Pagás $10 (Survivor) o $15 (Polla){'\n'}
-            • Premio = 95% del total recaudado{'\n'}
+            • Premio = 91.5% del total recaudado{'\n'}
             • Entrega manual por <Text style={styles.rulesAccent}>Yappy o transferencia bancaria</Text>{'\n'}
             • Resultados oficiales sincronizados desde api-football
           </Text>

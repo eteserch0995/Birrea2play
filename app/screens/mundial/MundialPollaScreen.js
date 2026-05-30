@@ -374,7 +374,7 @@ export default function MundialPollaScreen({ navigation }) {
           <View style={styles.pozoLeft}>
             <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
             <Text style={styles.pozoValue}>
-              ${((totalEnrolled * (pool?.polla_price ?? 15) * (1 - (pool?.fee_rate ?? 0.05))) || 0).toFixed(0)}
+              ${((totalEnrolled * (pool?.polla_price ?? 15) * (1 - (pool?.fee_rate ?? 0.085))) || 0).toFixed(0)}
             </Text>
             <Text style={styles.pozoMeta}>
               {totalEnrolled} inscritos × ${pool?.polla_price ?? 15}

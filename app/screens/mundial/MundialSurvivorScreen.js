@@ -369,7 +369,7 @@ export default function MundialSurvivorScreen({ navigation }) {
           <View style={styles.pozoLeft}>
             <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
             <Text style={styles.pozoValue}>
-              ${((livesDistribution.total * (pool?.survivor_price ?? 10) * (1 - (pool?.fee_rate ?? 0.05))) || 0).toFixed(0)}
+              ${((livesDistribution.total * (pool?.survivor_price ?? 10) * (1 - (pool?.fee_rate ?? 0.085))) || 0).toFixed(0)}
             </Text>
             <Text style={styles.pozoMeta}>
               {livesDistribution.total} inscritos × ${pool?.survivor_price ?? 10}

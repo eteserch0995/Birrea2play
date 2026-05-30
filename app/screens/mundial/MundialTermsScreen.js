@@ -108,10 +108,10 @@ export default function MundialTermsScreen({ navigation, route }) {
               <B>no pretenden ser dinero electrónico</B> ni un instrumento financiero regulado.
             </P>
             <P>
-              {'\n'}2.4. El Organizador <B>no obtiene lucro</B> de la operación del Módulo: según se
-              detalla en la Sección 5, la totalidad de lo recaudado, una vez absorbida la comisión de la
-              plataforma de pago, se destina al Pozo. La <B>ausencia de lucro del Organizador no implica</B>{' '}
-              que la actividad esté exenta de regulación.
+              {'\n'}2.4. El Organizador <B>retiene una comisión de operación</B>. Según la Sección 5, del
+              total recaudado el <B>91.5%</B> se destina al Pozo y el Organizador retiene el <B>8.5%</B>{' '}
+              restante, que cubre la comisión de la plataforma de pago (Yappy) y una comisión de operación
+              de aproximadamente <B>3.5%</B>.
             </P>
             <P>
               {'\n'}2.5. La participación es <B>voluntaria</B>. Ninguna disposición de este Anexo debe
@@ -168,20 +168,18 @@ export default function MundialTermsScreen({ navigation, route }) {
           </WCBlock>
 
           {/* 5 */}
-          <WCBlock title="5. Pozo, recaudación y ausencia de lucro" accent="gold">
+          <WCBlock title="5. Pozo, recaudación y comisión" accent="gold">
             <P>
-              5.1. El <B>Pozo</B> se conforma con aproximadamente el <B>95% de lo recaudado</B> por
+              5.1. El <B>Pozo</B> se conforma con aproximadamente el <B>91.5% de lo recaudado</B> por
               concepto de inscripciones de cada Concurso.
             </P>
             <P>
-              {'\n'}5.2. El <B>~5% restante</B> corresponde a la <B>comisión de la plataforma de pago
-              (Yappy)</B> y es <B>absorbido por el Pozo</B>; el Organizador no lo retiene ni lo percibe
-              como ingreso.
+              {'\n'}5.2. El <B>8.5% restante</B> cubre la <B>comisión de la plataforma de pago (Yappy,
+              ~5%)</B> y la <B>comisión de operación del Organizador (aproximadamente 3.5%)</B>.
             </P>
             <P>
-              {'\n'}5.3. El Organizador <B>no percibe comisión, margen ni ganancia</B> alguna por la
-              operación del Módulo. Conforme a la Sección 2.4, esta ausencia de lucro no implica exención
-              regulatoria.
+              {'\n'}5.3. El Organizador <B>retiene una comisión de operación de aproximadamente 3.5%</B>{' '}
+              del total recaudado (incluida en el 8.5% de la Sección 5.2).
             </P>
             <P>
               {'\n'}5.4. Los importes correspondientes al Pozo se mantienen identificados y separados de
@@ -234,10 +232,11 @@ export default function MundialTermsScreen({ navigation, route }) {
           {/* 8 */}
           <WCBlock title="8. Premios, ganadores y desempate" accent="gold">
             <P>
-              8.1. <B>Polla Ganadora:</B> el premio se otorga a un <B>ganador único</B>, determinado por
-              el mayor puntaje acumulado. Los empates se resuelven mediante un <B>criterio de desempate
-              determinista</B> publicado dentro del Módulo (basado en reglas objetivas y predefinidas, no
-              aleatorias).
+              8.1. <B>Polla Ganadora:</B> el premio se reparte entre los <B>tres (3) primeros del
+              ranking</B> por puntaje acumulado: <B>60% para el 1.º, 25% para el 2.º y 15% para el 3.º</B>.
+              Si hubiera solo dos participantes pagados, <B>70%/30%</B>; si hubiera uno, <B>100%</B>. Los
+              empates se resuelven mediante un <B>criterio de desempate determinista</B> publicado dentro
+              del Módulo (basado en reglas objetivas y predefinidas, no aleatorias).
             </P>
             <P>
               {'\n'}8.2. <B>Survivor 3 Vidas:</B> el premio corresponde al <B>sobreviviente o
