@@ -149,9 +149,9 @@ export function WCBadge({ label, tone = 'neutral', size = 'md' }) {
 function badgePalette(tone) {
   if (tone === 'success') return { bg: COLORS.green + '22', border: COLORS.green + '88', color: COLORS.green };
   if (tone === 'warning') return { bg: COLORS.gold + '22', border: COLORS.gold + '88', color: COLORS.gold };
-  if (tone === 'danger')  return { bg: COLORS.red + '22', border: COLORS.red + '88', color: COLORS.red2 };
+  if (tone === 'danger')  return { bg: COLORS.red + '22', border: COLORS.red + '88', color: COLORS.red2A11y || COLORS.red2 };
   if (tone === 'gold')    return { bg: COLORS.gold + '22', border: COLORS.gold + '88', color: COLORS.gold };
-  if (tone === 'magenta') return { bg: COLORS.magenta + '22', border: COLORS.magenta + '88', color: COLORS.magenta };
+  if (tone === 'magenta') return { bg: COLORS.magenta + '22', border: COLORS.magenta + '88', color: COLORS.magentaText || COLORS.magenta };
   if (tone === 'neon')    return { bg: COLORS.neon + '22', border: COLORS.neon + '88', color: COLORS.neon };
   return { bg: COLORS.white + '14', border: WC_ALPHA.divider, color: COLORS.gray2 };
 }
@@ -246,7 +246,7 @@ const statTileStyles = StyleSheet.create({
   label: {
     fontFamily: FONTS.bodyBold,
     fontSize: 10,
-    color: COLORS.gray,
+    color: COLORS.gray2,
     letterSpacing: 1.5,
     textTransform: 'uppercase',
   },
@@ -362,7 +362,7 @@ const headerStyles = StyleSheet.create({
   kicker: {
     fontFamily: FONTS.bodyBold,
     fontSize: 9,
-    color: COLORS.magenta,
+    color: COLORS.magentaText || COLORS.magenta,
     letterSpacing: 3,
     textTransform: 'uppercase',
   },

@@ -245,6 +245,14 @@ export default function MundialEnrollScreen({ route, navigation }) {
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
+        {enrollment?.payment_status === 'pending' && (
+          <View style={styles.pendingBanner}>
+            <Text style={styles.pendingBannerText}>
+              ⏳ Tenés una inscripción pendiente de pago — completala abajo
+            </Text>
+          </View>
+        )}
+
         <View style={styles.enrollHeader}>
           <Text style={styles.title}>{isPolla ? 'POLLA GANADORA' : 'SURVIVOR 3 VIDAS'}</Text>
           <Text style={styles.priceBig}>${price}</Text>
@@ -545,6 +553,20 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.sm,
   },
   backLink: { color: COLORS.bg, fontFamily: FONTS.bodyBold, fontSize: 14 },
+  pendingBanner: {
+    backgroundColor: COLORS.gold + '22',
+    borderColor: COLORS.gold + '99',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.md,
+  },
+  pendingBannerText: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 13,
+    color: COLORS.gold,
+    lineHeight: 18,
+  },
   enrollHeader: {
     backgroundColor: 'rgba(255,255,255,0.92)',
     borderColor: 'rgba(10,14,20,0.16)',

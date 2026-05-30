@@ -38,6 +38,7 @@ export default function MundialSurvivorScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pickToast, setPickToast] = useState(false);
 
   // Recarga silenciosa: refresca picks + usage + enrollment sin desmontar la UI.
   // Usar después de guardar un pick (no la primera carga).
@@ -273,6 +274,11 @@ export default function MundialSurvivorScreen({ navigation }) {
     setRefreshing(false);
   };
 
+  const showPickToast = () => {
+    setPickToast(true);
+    setTimeout(() => setPickToast(false), 2000);
+  };
+
   const submitPickFor = async (dayId, teamId) => {
     if (saving || !dayId) return;
     const uses = teamUsage[teamId] ?? 0;
@@ -291,6 +297,7 @@ export default function MundialSurvivorScreen({ navigation }) {
       });
       if (error) throw error;
       await silentReload();
+      showPickToast();
     } catch (err) {
       Alert.alert('Error', err.message || 'No se pudo guardar el pick.');
     } finally {
@@ -316,6 +323,7 @@ export default function MundialSurvivorScreen({ navigation }) {
       });
       if (error) throw error;
       await silentReload();
+      showPickToast();
     } catch (err) {
       Alert.alert('Error', err.message || 'No se pudo guardar el pick.');
     } finally {
@@ -410,6 +418,20 @@ export default function MundialSurvivorScreen({ navigation }) {
           {eliminated && (
             <Text style={styles.eliminatedText}>ELIMINADO</Text>
           )}
+          {(() => {
+            if (history.length === 0) return null;
+            let streak = 0;
+            for (const h of history) {
+              if (h.result === 'won') streak++;
+              else break;
+            }
+            if (streak === 0) return null;
+            return (
+              <View style={styles.streakChip}>
+                <Text style={styles.streakChipText}>🔥 Racha: {streak}</Text>
+              </View>
+            );
+          })()}
         </View>
 
         {/* Tabs scrolleables horizontalmente — soporta los 5 tabs sin truncar */}
@@ -707,6 +729,11 @@ export default function MundialSurvivorScreen({ navigation }) {
           </View>
         )}
       </ScrollView>
+      {pickToast && (
+        <View style={styles.pickToast} pointerEvents="none">
+          <Text style={styles.pickToastText}>✓ Pick guardado</Text>
+        </View>
+      )}
     </SafeAreaView>
     </MundialScreenFrame>
   );
@@ -1044,5 +1071,37 @@ const styles = StyleSheet.create({
     padding: SPACING.sm,
     textAlign: 'center', marginTop: SPACING.lg,
     overflow: 'hidden',
+  },
+  pickToast: {
+    position: 'absolute',
+    bottom: 32,
+    alignSelf: 'center',
+    backgroundColor: COLORS.green,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: 10,
+    ...SHADOWS.card,
+  },
+  pickToastText: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 14,
+    color: COLORS.bg,
+    letterSpacing: 1,
+  },
+  streakChip: {
+    marginTop: SPACING.sm,
+    backgroundColor: COLORS.orange + '22',
+    borderColor: COLORS.orange + '88',
+    borderWidth: 1,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+    alignSelf: 'center',
+  },
+  streakChipText: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 13,
+    color: COLORS.orange,
+    letterSpacing: 0.5,
   },
 });

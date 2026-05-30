@@ -20,7 +20,7 @@ export default function MundialRulesScreen({ navigation }) {
             <Text style={styles.text}>
               • Tu inscripción va al pozo del modo elegido (Survivor $10 / Polla $15).{'\n'}
               • El pozo = 91.5% de lo recaudado (8.5% cubre fees Yappy + comisión de la casa).{'\n'}
-              • <Text style={styles.bold}>Polla:</Text> el pozo se reparte entre los 3 primeros — 1.º 60% · 2.º 25% · 3.º 15%.{'\n'}
+              • <Text style={styles.bold}>Polla:</Text> el pozo se reparte entre los 3 primeros: 1.º 60%, 2.º 25%, 3.º 15% (si hay 2 inscritos: 70/30; si 1: 100%).{'\n'}
               • Entrega manual por <Text style={styles.payAccent}>Yappy o transferencia bancaria</Text>.{'\n'}
               • Cierre de inscripciones: 11-jun-2026 11:00 AM Panamá.
             </Text>
@@ -31,11 +31,12 @@ export default function MundialRulesScreen({ navigation }) {
               • Arrancás con 3 corazones.{'\n'}
               • Cada jornada-día elegís 1 equipo de los que juegan.{'\n'}
               • Si tu equipo <Text style={styles.bold}>gana</Text> mantenés tu vida.{'\n'}
-              • Si <Text style={styles.bold}>empata o pierde</Text> perdés 1 vida.{'\n'}
-              • Si no pickeás antes del deadline (1h antes del primer partido del día) → perdés 1 vida.{'\n'}
+              • <Text style={styles.bold}>Empate o derrota = perdés 1 vida.</Text>{'\n'}
+              • No hacer pick antes del deadline (1h antes del primer partido del día) <Text style={styles.bold}>también te resta 1 vida.</Text>{'\n'}
               • Cada equipo se puede usar <Text style={styles.bold}>1 sola vez</Text> en toda la fase de grupos.{'\n'}
               • Cuando llegás a 0 vidas quedás eliminado.{'\n'}
-              • Ganan los que terminen con más vidas. Si empatan, se reparte el pozo.
+              • Ganan los que terminen con más vidas. Si empatan, se reparte el pozo.{'\n'}
+              • <Text style={styles.bold}>Desempate total:</Text> si todos quedan sin vidas, ganan los últimos en caer (los eliminados en la jornada más tardía) y reparten el pozo entre ellos.
             </Text>
           </WCBlock>
 

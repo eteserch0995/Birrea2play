@@ -645,6 +645,13 @@ export default function MundialPollaScreen({ navigation }) {
             {ranking.length === 0 && (
               <Text style={styles.emptyText}>Aún no hay puntos calculados.</Text>
             )}
+            {myRank && !ranking.find(r => r.user_id === user.id) && (
+              <View style={styles.myRankFooter}>
+                <Text style={styles.myRankFooterText}>
+                  Tu posición: #{myRank} · {enrollment.total_points} pts
+                </Text>
+              </View>
+            )}
           </View>
         )}
 
@@ -1343,6 +1350,21 @@ const styles = StyleSheet.create({
     padding: SPACING.sm,
     textAlign: 'center', marginTop: SPACING.lg,
     overflow: 'hidden',
+  },
+  myRankFooter: {
+    marginTop: SPACING.sm,
+    backgroundColor: (COLORS.magentaText || COLORS.magenta) + '22',
+    borderColor: (COLORS.magentaText || COLORS.magenta) + '88',
+    borderWidth: 1,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    alignItems: 'center',
+  },
+  myRankFooterText: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 14,
+    color: COLORS.magentaText || COLORS.magenta,
+    letterSpacing: 0.5,
   },
 
   bonusViewCard: {

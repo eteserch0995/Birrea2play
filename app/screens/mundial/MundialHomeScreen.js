@@ -146,7 +146,7 @@ export default function MundialHomeScreen({ navigation }) {
           <Text style={[styles.countdownValue, countdown?.closed && styles.countdownClosed]}>
             {countdown?.text ?? '—'}
           </Text>
-          <Text style={styles.countdownDate}>11 jun 2026, 10:00 AM Panamá</Text>
+          <Text style={styles.countdownDate}>11 jun 2026, 11:00 AM Panamá</Text>
         </View>
 
         <View style={styles.modesContainer}>
@@ -185,6 +185,10 @@ export default function MundialHomeScreen({ navigation }) {
               {enrollments.survivor?.payment_status === 'paid' ? (
                 <Text style={[styles.modeStatus, { color: COLORS.green }]}>
                   ✓ Inscrito · {enrollments.survivor.lives_remaining}/3 vidas → JUGAR
+                </Text>
+              ) : enrollments.survivor?.payment_status === 'pending' ? (
+                <Text style={[styles.modeStatus, { color: COLORS.gold }]}>
+                  ⏳ Pago pendiente — tocá para completar
                 </Text>
               ) : (
                 <Text style={styles.modeStatus}>Tocá para inscribirte →</Text>
@@ -235,6 +239,10 @@ export default function MundialHomeScreen({ navigation }) {
               {enrollments.polla?.payment_status === 'paid' ? (
                 <Text style={[styles.modeStatus, { color: COLORS.green }]}>
                   ✓ Inscrito · {enrollments.polla.total_points} pts → JUGAR
+                </Text>
+              ) : enrollments.polla?.payment_status === 'pending' ? (
+                <Text style={[styles.modeStatus, { color: COLORS.gold }]}>
+                  ⏳ Pago pendiente — tocá para completar
                 </Text>
               ) : (
                 <Text style={styles.modeStatus}>Tocá para inscribirte →</Text>

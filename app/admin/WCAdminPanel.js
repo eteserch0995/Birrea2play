@@ -521,22 +521,44 @@ function MatchRow({ match, onSaved }) {
         return;
       }
     }
-    setSaving(true);
-    try {
-      const { error } = await supabase.rpc('wc_admin_override_match_result', {
-        p_match_id: match.id,
-        p_score_home: h,
-        p_score_away: a,
-        p_penalties_home: ph,
-        p_penalties_away: pa,
-      });
-      if (error) throw error;
-      await onSaved();
-    } catch (e) {
-      Alert.alert('Error', e.message || 'No se pudo guardar el resultado');
-    } finally {
-      setSaving(false);
-    }
+    const scoreLabel = ph != null
+      ? `${h}-${a} (pen ${ph}-${pa})`
+      : `${h}-${a}`;
+    const phaseLabel = PHASE_LABEL[match.phase] || match.phase || '';
+    const groupLabel = match.group_letter ? ` · Grupo ${match.group_letter}` : '';
+    const confirmMsg =
+      `¿Confirmás ${homeName} ${scoreLabel} ${awayName}?\n\n` +
+      `M${match.match_number ?? '—'} · ${phaseLabel}${groupLabel}\n\n` +
+      `Esto recalcula puntos de la Polla y resuelve la jornada Survivor.`;
+    Alert.alert(
+      'Confirmar resultado',
+      confirmMsg,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Confirmar',
+          style: 'destructive',
+          onPress: async () => {
+            setSaving(true);
+            try {
+              const { error } = await supabase.rpc('wc_admin_override_match_result', {
+                p_match_id: match.id,
+                p_score_home: h,
+                p_score_away: a,
+                p_penalties_home: ph,
+                p_penalties_away: pa,
+              });
+              if (error) throw error;
+              await onSaved();
+            } catch (e) {
+              Alert.alert('Error', e.message || 'No se pudo guardar el resultado');
+            } finally {
+              setSaving(false);
+            }
+          },
+        },
+      ],
+    );
   };
 
   const date = new Date(match.scheduled_at);

@@ -23,7 +23,7 @@ const SLIDES = [
   {
     kicker: '2 MODOS DE JUEGO',
     title: 'ELEGÍ TU ESTILO',
-    body: 'Survivor: $10, 3 vidas, pick 1 equipo por día durante fase de grupos. Polla: $15, predice todos los marcadores + bracket completo; el pozo se reparte entre los 3 primeros (60/25/15).',
+    body: 'Survivor: $10, 3 vidas, pick 1 equipo por día — empate o derrota (o no pickear) resta 1 vida. Polla: $15, predice todos los marcadores + bracket completo; el pozo se reparte entre los 3 primeros: 1.º 60%, 2.º 25%, 3.º 15% (si hay 2: 70/30; si 1: 100%).',
     icon: '⚽',
     accent: 'magenta',
   },
