@@ -73,7 +73,10 @@ export default function EventDetailScreen({ route, navigation }) {
         .in('status', ['confirmed', 'pending_payment']),
     ]);
     const activeGuests = filterActiveEventGuests(guestRows ?? [], regs ?? []);
-    const capacity     = computeEventCapacity(event, regs ?? [], activeGuests);
+    // Excluir la propia inscripción: si el usuario ya tiene un cupo (ej. promovido de
+    // lista de espera) no debe bloquearse al confirmar/pagar su propio lugar.
+    const regsExclSelf = (regs ?? []).filter(r => r.user_id !== user?.id);
+    const capacity     = computeEventCapacity(event, regsExclSelf, activeGuests);
     const check        = checkSpotAvailable(capacity, user?.genero ?? null, event?.genero);
     if (!check.allowed) {
       Alert.alert('No podemos inscribirte', check.reason);
@@ -637,6 +640,20 @@ export default function EventDetailScreen({ route, navigation }) {
     regDeadlinePassed = new Date() >= regDeadline;
   }
   const canRegister = event.status === 'open' && !myReg && !cuposFull && !regDeadlinePassed;
+  const isPromoted = !!myReg && myReg.status === 'pending' && myReg.metodo_pago === 'waitlist_promoted';
+  const joinWaitlist = async () => {
+    if (!user?.id) return;
+    try {
+      const { data: pos, error } = await supabase.rpc('join_event_waitlist', {
+        p_user_id: user.id, p_event_id: event.id,
+      });
+      if (error) throw error;
+      await fetchEvent();
+      Alert.alert('En lista de espera', `Quedaste en la lista de espera${pos ? ` (puesto #${pos})` : ''}. Si se libera un cupo, vas a poder pagar tu lugar.`);
+    } catch (e) {
+      Alert.alert('Error', e.message || 'No se pudo unir a la lista de espera');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -867,9 +884,24 @@ export default function EventDetailScreen({ route, navigation }) {
             myReg.status === 'pending' && { borderColor: COLORS.gold, backgroundColor: COLORS.gold + '15' },
           ]}>
             {myReg.status === 'pending' ? (
-              <Text style={[styles.registeredText, { color: COLORS.gold }]}>
-                ⏳ Pago en efectivo pendiente — contacta al gestor para confirmar
-              </Text>
+              isPromoted ? (
+                <>
+                  <Text style={[styles.registeredText, { color: COLORS.gold }]}>
+                    🎉 ¡Se liberó tu cupo! Pagá para confirmar tu lugar.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.btnPay}
+                    onPress={openPayModal}
+                    disabled={paying || cancelling || yappyLoading}
+                  >
+                    <Text style={styles.btnPayText}>Pagar e inscribirme →</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <Text style={[styles.registeredText, { color: COLORS.gold }]}>
+                  ⏳ Pago en efectivo pendiente — contacta al gestor para confirmar
+                </Text>
+              )
             ) : (
               <Text style={styles.registeredText}>✓ Estás inscrito en este evento</Text>
             )}
@@ -885,9 +917,21 @@ export default function EventDetailScreen({ route, navigation }) {
         )}
 
         {!myReg && !canRegister && event.status === 'open' && (
-          <Text style={styles.fullText}>
-            {cuposFull ? 'Evento lleno — no hay cupos disponibles' : 'Inscripciones cerradas'}
-          </Text>
+          cuposFull ? (
+            <View style={styles.paySection}>
+              <Text style={styles.fullText}>Evento lleno — no hay cupos disponibles</Text>
+              {user?.id && !event.cupos_ilimitado && (
+                <TouchableOpacity
+                  style={[styles.btnPay, { backgroundColor: COLORS.navy, marginTop: SPACING.sm }]}
+                  onPress={joinWaitlist}
+                >
+                  <Text style={styles.btnPayText}>📋 Unirse a la lista de espera</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ) : (
+            <Text style={styles.fullText}>Inscripciones cerradas</Text>
+          )
         )}
 
         <View style={{ height: SPACING.xxl }} />
