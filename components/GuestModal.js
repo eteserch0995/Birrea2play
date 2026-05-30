@@ -170,43 +170,36 @@ export default function GuestModal({
     if (loading) return;
     setLoading(true);
     try {
-      if (!(await checkCapacity())) { setLoading(false); return; }
-      if (await checkAlreadyInvited()) { setLoading(false); return; }
-      // Re-read wallet balance with optimistic lock to prevent double-spend
-      const { data: wallet, error: wErr } = await supabase
-        .from('wallets').select('id, balance').eq('user_id', userId).maybeSingle();
-      if (wErr || !wallet) throw new Error('No se encontraron tus créditos');
-      if (wallet.balance < precio) throw new Error(`Créditos insuficientes — créditos actuales: $${wallet.balance.toFixed(2)}`);
-
-      // Optimistic-lock update: only succeeds if balance hasn't changed
-      const { error: updateErr, count } = await supabase
-        .from('wallets')
-        .update({ balance: wallet.balance - precio })
-        .eq('id', wallet.id)
-        .eq('balance', wallet.balance)
-        .select('id', { count: 'exact', head: true });
-      if (updateErr) throw updateErr;
-      if (count === 0) throw new Error('Tus créditos cambiaron mientras procesabas el pago. Intenta nuevamente.');
-
-      const { error: txErr } = await supabase.from('wallet_transactions').insert({
-        wallet_id:   wallet.id,
-        tipo:        'inscripcion',
-        monto:       -precio,
-        descripcion: `Invitado: ${nombre.trim()} — ${eventNombre}`,
+      // RPC atómico: valida cupo/género y debita la wallet + inserta el guest en
+      // UNA sola transacción server-side. Si algo falla, NADA se debita (no se
+      // pierde plata sin invitado). Reemplaza el flujo por pasos anterior.
+      const { data: guestId, error } = await supabase.rpc('inscribir_guest_con_wallet', {
+        p_user_id:  userId,
+        p_event_id: eventId,
+        p_nombre:   nombre.trim(),
+        p_genero:   genero,
+        p_telefono: telefono.trim() || null,
+        p_monto:    precio,
       });
-      if (txErr) console.warn('wallet_transactions insert failed:', txErr.message);
-
-      const { error: gErr } = await supabase.from('event_guests').insert({
-        event_id:     eventId,
-        nombre:       nombre.trim(),
-        genero:       genero,
-        telefono:     telefono.trim() || null,
-        invited_by:   userId,
-        metodo_pago:  'wallet',
-        monto_pagado: precio,
-        status:       'confirmed',
-      });
-      if (gErr) throw gErr;
+      if (error) {
+        const msg = error.message || '';
+        if (/duplicado/i.test(msg) || error.code === '23505') {
+          Alert.alert('Ya invitaste a esa persona', `Ya tienes un invitado con el nombre "${nombre.trim()}" en este evento.`);
+          setLoading(false);
+          return;
+        }
+        if (/^cupo lleno/i.test(msg)) {
+          Alert.alert('No podemos inscribir al invitado', msg.replace(/^cupo lleno:\s*/i, ''));
+          setLoading(false);
+          return;
+        }
+        if (/Saldo insuficiente/i.test(msg)) {
+          Alert.alert('Créditos insuficientes', 'Tus créditos no alcanzan. Intenta nuevamente.');
+          setLoading(false);
+          return;
+        }
+        throw error;
+      }
 
       // Refresh wallet balance in store immediately (don't wait for realtime)
       const { data: freshWallet } = await supabase.from('wallets').select('balance').eq('user_id', userId).maybeSingle();

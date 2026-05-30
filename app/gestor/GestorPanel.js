@@ -1997,55 +1997,38 @@ function GestorConfig({ route, navigation }) {
         { text: 'Cancelar evento', style: 'destructive', onPress: async () => {
           setCancelling(true);
           try {
-            // 1. Get all confirmed paid registrations
-            const { data: regs, error: regsErr } = await supabase
-              .from('event_registrations')
-              .select('id, user_id, monto_pagado')
-              .eq('event_id', eventId)
-              .eq('status', 'confirmed');
-            if (regsErr) throw regsErr;
+            // Una sola llamada atomica: acredita a wallet TODO lo pagado (efectivo/yappy/wallet),
+            // marca inscripciones cancelled y oculta el evento, en una transaccion.
+            // Idempotente: reintentar no duplica reembolsos (tag referencia_externa).
+            const { data: result, error: rpcErr } = await supabase.rpc('cancel_event_with_refunds', {
+              p_event_id: eventId,
+            });
+            if (rpcErr) throw rpcErr;
 
-            // 2. Cancel all registrations atomically
-            await supabase.from('event_registrations').update({ status: 'cancelled' }).eq('event_id', eventId).eq('status', 'confirmed');
+            const refundCount = result?.refund_count ?? 0;
+            const refundTotal = Number(result?.refund_total ?? 0);
+            const noWalletCount = result?.nowallet_count ?? 0;
+            const noWalletTotal = Number(result?.nowallet_total ?? 0);
 
-            // 3. Refund each paid player
-            let refundCount = 0;
-            let refundTotal = 0;
-            for (const reg of (regs ?? [])) {
-              const monto = reg.monto_pagado ?? 0;
-              if (monto > 0) {
-                try {
-                  await supabase.rpc('credit_wallet', {
-                    p_user_id:     reg.user_id,
-                    p_monto:       monto,
-                    p_tipo:        'reembolso',
-                    p_descripcion: `Reembolso: cancelación de ${event.nombre}`,
-                  });
-                  refundCount++;
-                  refundTotal += monto;
-                } catch (e) {
-                  console.warn(`cancelEvent refund error for ${reg.user_id}:`, e.message);
-                }
-              }
-            }
-
-            // 4. Mark event as cancelled and hidden
-            await supabase.from('events').update({ status: 'cancelled', visible: false }).eq('id', eventId);
             setEvent((e) => ({ ...e, status: 'cancelled', visible: false }));
 
-            // 5. Auto-news
-            await supabase.from('news').insert({
-              titulo:    `🚫 ${event.nombre} — Cancelado`,
-              contenido: `El evento "${event.nombre}" fue cancelado. ${refundCount} jugador(es) recibieron reembolso automático por un total de $${refundTotal.toFixed(2)}.`,
-              tipo:      'general',
-            }).catch(() => {});
-            sendLocalNotification(`🚫 ${event.nombre} cancelado`, `Se emitieron ${refundCount} reembolso(s) automáticos.`);
-            // Notify all players via push
-            sendPushNotificationsToEventPlayers(eventId, `🚫 ${event.nombre} cancelado`, `El evento fue cancelado. ${refundCount > 0 ? `Recibiste un reembolso.` : 'Contacta al organizador.'}`);
+            // Auto-news (best-effort, fuera de la transaccion)
+            try {
+              await supabase.from('news').insert({
+                titulo:    `🚫 ${event.nombre} — Cancelado`,
+                contenido: `El evento "${event.nombre}" fue cancelado. ${refundCount} jugador(es) recibieron crédito automático por un total de $${refundTotal.toFixed(2)}.`,
+                tipo:      'general',
+              });
+            } catch (_) {}
+            sendLocalNotification(`🚫 ${event.nombre} cancelado`, `Se acreditaron ${refundCount} reembolso(s) automáticos.`);
+            sendPushNotificationsToEventPlayers(eventId, `🚫 ${event.nombre} cancelado`, `El evento fue cancelado. ${refundCount > 0 ? `Recibiste un crédito a tu wallet.` : 'Contacta al organizador.'}`);
 
+            const edgeMsg = noWalletCount > 0
+              ? `\n\n${noWalletCount} jugador(es) sin wallet ($${noWalletTotal.toFixed(2)}) quedaron pendientes de gestión manual.`
+              : '';
             Alert.alert(
               'Evento cancelado',
-              `${refundCount} jugador(es) reembolsados ($${refundTotal.toFixed(2)} en total). El evento ya no es visible.`
+              `${refundCount} jugador(es) acreditados a sus créditos ($${refundTotal.toFixed(2)} en total). El evento ya no es visible.${edgeMsg}`
             );
           } catch (e) {
             Alert.alert('Error al cancelar', e.message);

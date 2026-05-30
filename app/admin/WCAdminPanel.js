@@ -40,6 +40,115 @@ export default function WCAdminPanel({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [savingFlag, setSavingFlag] = useState(false);
+  const [finalizingSurvivor, setFinalizingSurvivor] = useState(false);
+  const [finalizingPolla, setFinalizingPolla] = useState(false);
+  const [pollaInputs, setPollaInputs] = useState({
+    champion_id: '', runner_up_id: '', third_place_id: '',
+    top_scorer: '', mvp: '', final_home: '', final_away: '',
+  });
+  const [payouts, setPayouts] = useState([]);
+  const [loadingPayouts, setLoadingPayouts] = useState(false);
+
+  const loadPayouts = useCallback(async () => {
+    setLoadingPayouts(true);
+    try {
+      const { data, error } = await supabase
+        .from('wc_payouts')
+        .select('id, pool_mode, amount, status, payment_ref, paid_at, notes, enrollment_id, user_id')
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const userIds = [...new Set((data ?? []).map(p => p.user_id).filter(Boolean))];
+      let userMap = {};
+      if (userIds.length) {
+        const { data: usersData } = await supabase
+          .from('users')
+          .select('id, nombre, correo')
+          .in('id', userIds);
+        (usersData ?? []).forEach(u => { userMap[u.id] = u; });
+      }
+      setPayouts((data ?? []).map(p => ({ ...p, user: userMap[p.user_id] ?? null })));
+    } catch (e) {
+      // No bloquea UI principal
+    } finally {
+      setLoadingPayouts(false);
+    }
+  }, []);
+
+  const finalizeSurvivor = useCallback(async () => {
+    Alert.alert(
+      'Finalizar Survivor',
+      '¿Confirmar? Esto calcula ganadores, asigna premios y crea los registros de pago. No se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Finalizar',
+          style: 'destructive',
+          onPress: async () => {
+            setFinalizingSurvivor(true);
+            try {
+              const { data, error } = await supabase.rpc('wc_admin_finalize_survivor');
+              if (error) throw error;
+              const winners = Array.isArray(data) ? data.length : '?';
+              await loadPayouts();
+              Alert.alert('Survivor finalizado', `${winners} ganador(es) calculado(s). Revisá el panel de Pagos.`);
+            } catch (e) {
+              Alert.alert('Error al finalizar Survivor', e.message || 'Error desconocido');
+            } finally {
+              setFinalizingSurvivor(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [loadPayouts]);
+
+  const finalizePolla = useCallback(async () => {
+    const { champion_id, runner_up_id, third_place_id, top_scorer, mvp, final_home, final_away } = pollaInputs;
+    if (!champion_id || !runner_up_id || !third_place_id || !top_scorer || !mvp ||
+        final_home === '' || final_away === '') {
+      Alert.alert('Datos incompletos', 'Completá todos los campos antes de finalizar la Polla.');
+      return;
+    }
+    const fh = parseInt(final_home, 10);
+    const fa = parseInt(final_away, 10);
+    if (Number.isNaN(fh) || Number.isNaN(fa)) {
+      Alert.alert('Marcador inválido', 'El marcador de la final debe ser numérico.');
+      return;
+    }
+    Alert.alert(
+      'Finalizar Polla',
+      '¿Confirmar? Se calcula el ganador con los bonus picks y se crea el pago. No se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Finalizar',
+          style: 'destructive',
+          onPress: async () => {
+            setFinalizingPolla(true);
+            try {
+              const { data, error } = await supabase.rpc('wc_admin_finalize_polla', {
+                p_actual_champion_team_id:  champion_id,
+                p_actual_runner_up_team_id: runner_up_id,
+                p_actual_third_place_team_id: third_place_id,
+                p_actual_top_scorer_name:   top_scorer.trim(),
+                p_actual_mvp_name:          mvp.trim(),
+                p_actual_final_score_home:  fh,
+                p_actual_final_score_away:  fa,
+              });
+              if (error) throw error;
+              await loadPayouts();
+              const row = Array.isArray(data) && data[0];
+              Alert.alert('Polla finalizada', row ? `Ganador calculado. Premio: $${row.prize}` : 'Polla finalizada correctamente.');
+            } catch (e) {
+              Alert.alert('Error al finalizar Polla', e.message || 'Error desconocido');
+            } finally {
+              setFinalizingPolla(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [pollaInputs, loadPayouts]);
 
   // Recarga silenciosa: solo refresca stats y matches sin desmontar UI.
   // Usar después de guardar un resultado de match.
@@ -99,7 +208,7 @@ export default function WCAdminPanel({ navigation }) {
     setLoading(false);
   }, [loadPool]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); loadPayouts(); }, [load, loadPayouts]);
 
   const toggleFlag = async (flag, current) => {
     if (savingFlag) return;
@@ -224,6 +333,121 @@ export default function WCAdminPanel({ navigation }) {
           {matches.map((m) => (
             <MatchRow key={m.id} match={m} onSaved={silentReload} />
           ))}
+        </View>
+
+        {/* Finalizar Survivor */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Finalizar Survivor</Text>
+          <Text style={styles.cardSubtitle}>
+            Solo disponible cuando todos los match_days de fase de grupos estén resueltos.
+            Calcula ganadores, asigna premios y genera los registros de pago.
+          </Text>
+          <WCButton
+            label={finalizingSurvivor ? 'Calculando…' : 'Finalizar Survivor'}
+            variant="gold"
+            size="md"
+            onPress={finalizeSurvivor}
+            loading={finalizingSurvivor}
+            disabled={finalizingSurvivor}
+          />
+        </View>
+
+        {/* Finalizar Polla */}
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Finalizar Polla</Text>
+          <Text style={styles.cardSubtitle}>
+            Ingresá los resultados reales del Mundial (se usan para resolver los bonus picks de cada jugador).
+          </Text>
+          <Text style={styles.flagLabel}>IDs de equipos (UUID)</Text>
+          <TextInput
+            style={[styles.scoreInput, styles.textInputFull]}
+            value={pollaInputs.champion_id}
+            onChangeText={v => setPollaInputs(p => ({ ...p, champion_id: v }))}
+            placeholder="UUID Campeón"
+            placeholderTextColor={COLORS.gray}
+            autoCapitalize="none"
+          />
+          <TextInput
+            style={[styles.scoreInput, styles.textInputFull]}
+            value={pollaInputs.runner_up_id}
+            onChangeText={v => setPollaInputs(p => ({ ...p, runner_up_id: v }))}
+            placeholder="UUID Sub-campeón"
+            placeholderTextColor={COLORS.gray}
+            autoCapitalize="none"
+          />
+          <TextInput
+            style={[styles.scoreInput, styles.textInputFull]}
+            value={pollaInputs.third_place_id}
+            onChangeText={v => setPollaInputs(p => ({ ...p, third_place_id: v }))}
+            placeholder="UUID 3er lugar"
+            placeholderTextColor={COLORS.gray}
+            autoCapitalize="none"
+          />
+          <Text style={[styles.flagLabel, { marginTop: SPACING.sm }]}>Goleador y MVP (nombre exacto)</Text>
+          <TextInput
+            style={[styles.scoreInput, styles.textInputFull]}
+            value={pollaInputs.top_scorer}
+            onChangeText={v => setPollaInputs(p => ({ ...p, top_scorer: v }))}
+            placeholder="Nombre goleador"
+            placeholderTextColor={COLORS.gray}
+          />
+          <TextInput
+            style={[styles.scoreInput, styles.textInputFull]}
+            value={pollaInputs.mvp}
+            onChangeText={v => setPollaInputs(p => ({ ...p, mvp: v }))}
+            placeholder="Nombre MVP"
+            placeholderTextColor={COLORS.gray}
+          />
+          <Text style={[styles.flagLabel, { marginTop: SPACING.sm }]}>Marcador de la Final</Text>
+          <View style={styles.matchTeams}>
+            <TextInput
+              style={styles.scoreInput}
+              value={pollaInputs.final_home}
+              onChangeText={v => setPollaInputs(p => ({ ...p, final_home: v }))}
+              keyboardType="number-pad"
+              placeholder="-"
+              placeholderTextColor={COLORS.gray}
+              maxLength={2}
+            />
+            <Text style={styles.vs}>–</Text>
+            <TextInput
+              style={styles.scoreInput}
+              value={pollaInputs.final_away}
+              onChangeText={v => setPollaInputs(p => ({ ...p, final_away: v }))}
+              keyboardType="number-pad"
+              placeholder="-"
+              placeholderTextColor={COLORS.gray}
+              maxLength={2}
+            />
+          </View>
+          <WCButton
+            label={finalizingPolla ? 'Calculando…' : 'Finalizar Polla'}
+            variant="primary"
+            size="md"
+            onPress={finalizePolla}
+            loading={finalizingPolla}
+            disabled={finalizingPolla}
+            style={{ marginTop: SPACING.md }}
+          />
+        </View>
+
+        {/* Pagos a ganadores */}
+        <View style={styles.card}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm }}>
+            <Text style={styles.cardTitle}>Pagos a ganadores</Text>
+            <TouchableOpacity onPress={loadPayouts} style={{ padding: 4 }}>
+              <Text style={{ color: COLORS.neon, fontFamily: FONTS.bodyBold, fontSize: 12 }}>Actualizar</Text>
+            </TouchableOpacity>
+          </View>
+          {loadingPayouts ? (
+            <ActivityIndicator color={COLORS.neon} size="small" style={{ marginVertical: SPACING.md }} />
+          ) : payouts.length === 0 ? (
+            <Text style={styles.cardSubtitle}>Sin pagos pendientes. Finalizá Survivor o Polla para generarlos.</Text>
+          ) : (
+            payouts.map(p => (
+              <PayoutRow key={p.id} payout={p} onPaid={loadPayouts} />
+            ))
+          )}
         </View>
 
         <View style={styles.notesCard}>
@@ -369,6 +593,82 @@ function MatchRow({ match, onSaved }) {
   );
 }
 
+function PayoutRow({ payout, onPaid }) {
+  const [ref, setRef] = useState('');
+  const [marking, setMarking] = useState(false);
+  const isPaid = payout.status === 'paid';
+
+  const markPaid = async () => {
+    if (!ref.trim()) {
+      Alert.alert('Referencia requerida', 'Ingresá una referencia de pago (número de transferencia, etc.).');
+      return;
+    }
+    Alert.alert(
+      'Marcar como pagado',
+      `¿Confirmar pago de $${payout.amount} a ${payout.user?.nombre ?? 'Usuario'} con ref: ${ref}?`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Confirmar',
+          onPress: async () => {
+            setMarking(true);
+            try {
+              const { error } = await supabase.rpc('wc_admin_mark_payout_paid', {
+                p_payout_id:   payout.id,
+                p_payment_ref: ref.trim(),
+              });
+              if (error) throw error;
+              await onPaid();
+            } catch (e) {
+              Alert.alert('Error', e.message || 'No se pudo marcar el pago');
+            } finally {
+              setMarking(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const badgeTone = isPaid ? 'success' : 'warning';
+  const modeLabel = payout.pool_mode === 'survivor' ? 'SURVIVOR' : 'POLLA';
+
+  return (
+    <View style={styles.payoutRow}>
+      <View style={styles.payoutHead}>
+        <WCBadge label={modeLabel} tone={payout.pool_mode === 'survivor' ? 'neon' : 'magenta'} size="sm" />
+        <WCBadge label={isPaid ? 'PAGADO' : 'PENDIENTE'} tone={badgeTone} size="sm" />
+      </View>
+      <Text style={styles.payoutUser}>{payout.user?.nombre ?? '—'}</Text>
+      <Text style={styles.payoutEmail}>{payout.user?.correo ?? '—'}</Text>
+      <Text style={styles.payoutAmount}>${Number(payout.amount).toFixed(2)}</Text>
+      {payout.notes ? <Text style={styles.payoutNotes}>{payout.notes}</Text> : null}
+      {isPaid ? (
+        <Text style={styles.payoutPaidRef}>Ref: {payout.payment_ref ?? '—'} · {payout.paid_at ? new Date(payout.paid_at).toLocaleString('es-PA') : ''}</Text>
+      ) : (
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 8, alignItems: 'center' }}>
+          <TextInput
+            style={[styles.scoreInput, { flex: 1, height: 36 }]}
+            value={ref}
+            onChangeText={setRef}
+            placeholder="Ref. transferencia"
+            placeholderTextColor={COLORS.gray}
+            autoCapitalize="none"
+          />
+          <WCButton
+            label={marking ? '…' : 'Marcar pagado'}
+            variant="secondary"
+            size="sm"
+            onPress={markPaid}
+            loading={marking}
+            disabled={marking}
+          />
+        </View>
+      )}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: COLORS.bg },
   headerRow: {
@@ -465,6 +765,38 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card2,
     borderColor: COLORS.gold + '44', borderWidth: 1,
     borderRadius: RADIUS.md, padding: SPACING.md,
+  },
+
+  textInputFull: {
+    width: '100%', height: 38, marginBottom: SPACING.sm,
+    paddingHorizontal: SPACING.sm, textAlign: 'left', fontSize: 13,
+  },
+
+  payoutRow: {
+    backgroundColor: COLORS.card2,
+    borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.md, padding: SPACING.sm,
+    marginBottom: SPACING.sm,
+  },
+  payoutHead: {
+    flexDirection: 'row', gap: 8, marginBottom: 6,
+  },
+  payoutUser: {
+    fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.white,
+  },
+  payoutEmail: {
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 1,
+  },
+  payoutAmount: {
+    fontFamily: FONTS.heading, fontSize: 22, color: COLORS.neon,
+    marginTop: 4, letterSpacing: 1,
+  },
+  payoutNotes: {
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2,
+  },
+  payoutPaidRef: {
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.green,
+    marginTop: 4,
   },
   notesTitle: {
     fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.gold, letterSpacing: 1,
