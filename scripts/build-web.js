@@ -206,13 +206,13 @@ if (existsSync(indexPath)) {
       box-shadow: 0 8px 24px rgba(200,16,46,0.35);
     }
     #b2p-splash-title {
-      color: #fff; font-size: 22px; font-weight: 700;
-      letter-spacing: 4px; margin-bottom: 22px;
+      color: #fff; font-size: 34px; font-weight: 800;
+      letter-spacing: 0; margin-bottom: 22px;
     }
     #b2p-splash-spinner {
       width: 28px; height: 28px;
       border: 3px solid rgba(255,255,255,0.15);
-      border-top-color: #C8102E;
+      border-top-color: #B8FF00;
       border-radius: 50%;
       animation: b2p-spin 0.9s linear infinite;
     }
@@ -223,8 +223,7 @@ if (existsSync(indexPath)) {
   // /evento/:id → "Cargando evento..." para dar contexto inmediato al usuario.
   // El script es tiny e inline — no hay dependencias.
   const splashBody = `<div id="b2p-splash">
-  <div id="b2p-splash-logo">B2P</div>
-  <div id="b2p-splash-title">PANAMA BIRREAS</div>
+  <div id="b2p-splash-title">birrea<span style="color:#B8FF00">2play</span></div>
   <div id="b2p-splash-msg" style="color:#9AA3B0;font-size:13px;letter-spacing:1px;margin-bottom:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;"></div>
   <div id="b2p-splash-spinner"></div>
   <script>

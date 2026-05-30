@@ -703,7 +703,7 @@ export default function MundialSurvivorScreen({ navigation }) {
         )}
 
         {tab === 'Ranking' && (
-          <View>
+          <View style={styles.rankCard}>
             <Text style={styles.sectionTitle}>Top 30 sobrevivientes</Text>
             {ranking.map((r, i) => (
               <View key={r.id} style={styles.rankRow}>
@@ -1047,6 +1047,11 @@ const styles = StyleSheet.create({
   usageHeartOn: { color: COLORS.red2 },
   usageHeartOff: { color: COLORS.lineVisible ?? '#556070' },
 
+  rankCard: {
+    backgroundColor: 'rgba(10,14,20,0.85)',
+    borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.line,
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, marginTop: SPACING.sm,
+  },
   rankRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
     borderBottomWidth: 1, borderBottomColor: COLORS.line,

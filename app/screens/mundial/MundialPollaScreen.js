@@ -124,6 +124,19 @@ function getTeamsForPlaceholder(placeholder, koMatches, allTeams, predictions, t
     // Fallback: todos los teams de esos grupos
     return { teams: allTeams.filter(t => groups.has(t.group_letter)), blocked: null };
   }
+  // "Mejor 3° (n)": los 8 mejores terceros. En la predicción el user elige entre
+  // los terceros que predijo en sus grupos (asignación manual, sin tabla FIFA).
+  m = placeholder.match(/^Mejor\s*3°/i);
+  if (m) {
+    const thirds = [];
+    Object.keys(userStandings).forEach((grp) => {
+      const row = userStandings[grp]?.[2];
+      const t = row ? teamsById[row.teamId] : null;
+      if (t) thirds.push(t);
+    });
+    if (thirds.length > 0) return { teams: thirds, blocked: null };
+    return { teams: [], blocked: 'Completá los grupos para habilitar los mejores 3os' };
+  }
   m = placeholder.match(/^Ganador\s+M(\d+)$/i);
   if (m) {
     const prevMatchNum = parseInt(m[1], 10);
@@ -622,7 +635,7 @@ export default function MundialPollaScreen({ navigation }) {
         })()}
 
         {tab === 'Ranking' && (
-          <View>
+          <View style={styles.rankCard}>
             <Text style={styles.sectionTitle}>Top 50 de la Polla</Text>
             {ranking.map((r, i) => (
               <View key={r.id} style={[styles.rankRow, r.user_id === user.id && styles.rankRowMe]}>
@@ -1332,6 +1345,11 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1, borderBottomColor: COLORS.line,
   },
   rankRowMe: { backgroundColor: 'rgba(255, 26, 107, 0.18)' },
+  rankCard: {
+    backgroundColor: 'rgba(10,14,20,0.85)',
+    borderRadius: RADIUS.lg, borderWidth: 1, borderColor: COLORS.line,
+    paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, marginTop: SPACING.sm,
+  },
   rankPos:  { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.gray2, width: 40 },
   rankName: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white },
   rankSubtext: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 },

@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, Text, StyleSheet, Animated } from 'react-native';
+import { View, Text, StyleSheet, Animated, Image } from 'react-native';
 import { COLORS, FONTS } from '../../../constants/theme';
 
 export default function SplashScreen({ navigation }) {
@@ -21,9 +21,11 @@ export default function SplashScreen({ navigation }) {
   return (
     <View style={styles.container}>
       <Animated.View style={[styles.logoWrap, { opacity, transform: [{ scale }] }]}>
-        <Text style={styles.logo}>PANAMA</Text>
-        <Text style={styles.logoSub}>BIRREAS</Text>
-        <View style={styles.line} />
+        <Image
+          source={require('../../../assets/birrea2play-logo.png')}
+          style={styles.logoImg}
+          resizeMode="contain"
+        />
         <Text style={styles.tagline}>Tu liga, tu comunidad</Text>
       </Animated.View>
     </View>
@@ -38,6 +40,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   logoWrap: { alignItems: 'center' },
+  logoImg: { width: '82%', maxWidth: 360, aspectRatio: 2.19, marginBottom: 12 },
   logo: {
     fontFamily: FONTS.heading,
     fontSize: 56,
