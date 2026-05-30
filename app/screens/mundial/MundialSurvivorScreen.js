@@ -10,7 +10,7 @@ import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 
-const TABS = ['Pick', 'Jornadas', 'Comunidad', 'Ranking'];
+const TABS = ['Pick', 'Jornadas', 'Equipos', 'Comunidad', 'Ranking'];
 
 export default function MundialSurvivorScreen({ navigation }) {
   const { user } = useAuthStore();
@@ -604,20 +604,30 @@ export default function MundialSurvivorScreen({ navigation }) {
               );
             })}
 
-            <Text style={styles.sectionTitle}>Mis equipos usados</Text>
+          </View>
+        )}
+
+        {tab === 'Equipos' && (
+          <View>
             <Text style={styles.communityHint}>
-              Cada equipo se puede usar máximo 2 veces en grupos. Los agotados
-              no aparecen en futuras jornadas.
+              Cada equipo arranca con 2 corazones — cada vez que lo usás se apaga uno.
+              Al quedar sin corazones, no podés usarlo más.
             </Text>
             {allTeams.map((t) => {
               const uses = teamUsage[t.id] ?? 0;
-              const color = uses === 0 ? COLORS.gray : uses === 1 ? COLORS.gold : COLORS.red2;
+              const remaining = Math.max(2 - uses, 0);
               return (
                 <View key={t.id} style={styles.usageRow}>
                   <Text style={styles.usageCode}>{t.code}</Text>
                   <Text style={styles.usageName} numberOfLines={1}>{t.name_es}</Text>
                   <Text style={styles.usageGroup}>{t.group_letter}</Text>
-                  <Text style={[styles.usageBadge, { color }]}>{uses}/2</Text>
+                  <View style={styles.usageHearts}>
+                    {[0, 1].map((i) => (
+                      <Text key={i} style={[styles.usageHeart, i < remaining ? styles.usageHeartOn : styles.usageHeartOff]}>
+                        {i < remaining ? '♥' : '♡'}
+                      </Text>
+                    ))}
+                  </View>
                 </View>
               );
             })}
@@ -958,7 +968,10 @@ const styles = StyleSheet.create({
   usageCode: { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.neon, width: 50 },
   usageName: { flex: 1, fontFamily: FONTS.body, fontSize: 13, color: COLORS.white },
   usageGroup: { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gray2, width: 24 },
-  usageBadge: { fontFamily: FONTS.heading, fontSize: 14, width: 40, textAlign: 'right' },
+  usageHearts: { flexDirection: 'row', gap: 4, width: 50, justifyContent: 'flex-end' },
+  usageHeart: { fontSize: 16 },
+  usageHeartOn: { color: COLORS.red2 },
+  usageHeartOff: { color: COLORS.line },
 
   rankRow: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 10,
