@@ -400,6 +400,40 @@ export default function MundialPollaScreen({ navigation }) {
           </View>
         </View>
 
+        {/* Barra de progreso global — visible siempre, ayuda a no olvidar partidos */}
+        {(() => {
+          const gFilled = matches.filter(mt => predictions[mt.id]).length;
+          const gTotal = matches.length;
+          const bFilled = koMatches.filter(mt => predictions[mt.id]?.pred_winner_team_id).length;
+          const bTotal = koMatches.length;
+          const bonusFilled = bonus ? 1 : 0;
+          const totalAll = gTotal + bTotal + 1;
+          const filledAll = gFilled + bFilled + bonusFilled;
+          const pct = totalAll > 0 ? Math.round((filledAll / totalAll) * 100) : 0;
+          const complete = filledAll === totalAll;
+          return (
+            <View style={[styles.globalProgress, complete && styles.globalProgressDone]}>
+              <View style={styles.globalProgressRow}>
+                <Text style={styles.globalProgressLabel}>
+                  {complete ? '✓ POLLA COMPLETA' : 'TU PROGRESO'}
+                </Text>
+                <Text style={styles.globalProgressPct}>{pct}%</Text>
+              </View>
+              <View style={styles.progressTrack}>
+                <View style={[styles.progressFill, { width: `${pct}%` }, complete && { backgroundColor: COLORS.green }]} />
+              </View>
+              <Text style={styles.globalProgressDetail}>
+                Grupos {gFilled}/{gTotal} · Bracket {bFilled}/{bTotal} · Bonus {bonusFilled}/1
+              </Text>
+              {!complete && (
+                <Text style={styles.globalProgressWarn}>
+                  ⚠️ Llená TODO antes del cierre (11-jun 11am PA) — después no se puede tocar
+                </Text>
+              )}
+            </View>
+          );
+        })()}
+
         {/* Tabs scrolleables — Grupos / Bracket / Ranking / Bonus */}
         <WCTabBar tabs={TABS} active={tab} onChange={setTab} accent="magenta" />
 
@@ -484,7 +518,35 @@ export default function MundialPollaScreen({ navigation }) {
           </View>
         )}
 
-        {tab === 'Bracket' && (
+        {tab === 'Bracket' && (() => {
+          const groupsFilled = matches.filter(mt => predictions[mt.id]).length;
+          const groupsTotal = matches.length;
+          const groupsComplete = groupsTotal > 0 && groupsFilled === groupsTotal;
+
+          if (!groupsComplete) {
+            return (
+              <View style={styles.bracketLocked}>
+                <Text style={styles.bracketLockedIcon}>🔒</Text>
+                <Text style={styles.bracketLockedTitle}>BRACKET BLOQUEADO</Text>
+                <Text style={styles.bracketLockedText}>
+                  Primero tenés que llenar los <Text style={styles.bold}>72 partidos de fase de grupos</Text>.
+                  Tu predicción de grupos calcula automáticamente quién avanza al bracket.
+                </Text>
+                <Text style={styles.bracketLockedProgress}>
+                  Llevás {groupsFilled}/{groupsTotal} grupos
+                </Text>
+                <WCButton
+                  label="IR A LLENAR GRUPOS"
+                  variant="primary"
+                  size="lg"
+                  onPress={() => setTab('Grupos')}
+                  style={{ marginTop: SPACING.lg }}
+                />
+              </View>
+            );
+          }
+
+          return (
           <View>
             <Text style={styles.helpText}>
               Predicí quién avanza en cada partido de eliminatoria.
@@ -540,7 +602,8 @@ export default function MundialPollaScreen({ navigation }) {
               );
             })}
           </View>
-        )}
+          );
+        })()}
 
         {tab === 'Ranking' && (
           <View>
@@ -750,12 +813,16 @@ function PredictionRow({ match, prediction, userId, onSaved }) {
 
       {!closed && (
         <TouchableOpacity
-          style={[styles.predSaveBtn, saving && { opacity: 0.5 }]}
+          style={[
+            styles.predSaveBtn,
+            prediction && styles.predUpdateBtn,
+            saving && { opacity: 0.5 },
+          ]}
           onPress={save}
           disabled={saving}
         >
-          <Text style={styles.predSaveBtnText}>
-            {saving ? '…' : prediction ? 'Actualizar' : 'Guardar'}
+          <Text style={[styles.predSaveBtnText, prediction && styles.predUpdateBtnText]}>
+            {saving ? '…' : prediction ? '✏️ Actualizar' : '💾 Guardar'}
           </Text>
         </TouchableOpacity>
       )}
@@ -866,11 +933,20 @@ function BracketRow({ match, prediction, teamsById, blockedReason, userId, homeR
                   maxLength={2}
                 />
                 <TouchableOpacity
-                  style={[styles.predSaveBtn, savingScore && { opacity: 0.5 }]}
+                  style={[
+                    styles.predSaveBtn,
+                    (prediction?.pred_score_home != null) && styles.predUpdateBtn,
+                    savingScore && { opacity: 0.5 },
+                  ]}
                   onPress={saveScore}
                   disabled={savingScore}
                 >
-                  <Text style={styles.predSaveBtnText}>{savingScore ? '…' : 'Guardar'}</Text>
+                  <Text style={[
+                    styles.predSaveBtnText,
+                    (prediction?.pred_score_home != null) && styles.predUpdateBtnText,
+                  ]}>
+                    {savingScore ? '…' : (prediction?.pred_score_home != null) ? '✏️ Actualizar' : '💾 Guardar'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -1153,6 +1229,55 @@ const styles = StyleSheet.create({
     paddingVertical: 8, borderRadius: RADIUS.sm, alignItems: 'center',
   },
   predSaveBtnText: { color: COLORS.white, fontFamily: FONTS.bodyBold, fontSize: 12, letterSpacing: 1 },
+  predUpdateBtn: { backgroundColor: COLORS.gold },
+  predUpdateBtnText: { color: COLORS.bg },
+
+  globalProgress: {
+    backgroundColor: 'rgba(10,14,20,0.92)',
+    borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.md, padding: SPACING.md,
+    marginBottom: SPACING.sm,
+  },
+  globalProgressDone: { borderColor: COLORS.green },
+  globalProgressRow: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: 6,
+  },
+  globalProgressLabel: {
+    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gray2,
+    letterSpacing: 1.5, textTransform: 'uppercase',
+  },
+  globalProgressPct: {
+    fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white,
+  },
+  globalProgressDetail: {
+    fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 6,
+  },
+  globalProgressWarn: {
+    fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.gold,
+    marginTop: 6, lineHeight: 16,
+  },
+
+  bracketLocked: {
+    backgroundColor: 'rgba(10,14,20,0.92)',
+    borderColor: COLORS.gold, borderWidth: 1,
+    borderRadius: RADIUS.lg, padding: SPACING.lg,
+    alignItems: 'center', marginTop: SPACING.md,
+  },
+  bracketLockedIcon: { fontSize: 56, marginBottom: SPACING.sm },
+  bracketLockedTitle: {
+    fontFamily: FONTS.heading, fontSize: 22, color: COLORS.gold,
+    letterSpacing: 2, marginBottom: SPACING.md,
+  },
+  bracketLockedText: {
+    fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2,
+    textAlign: 'center', lineHeight: 20, marginBottom: SPACING.md,
+  },
+  bracketLockedProgress: {
+    fontFamily: FONTS.heading, fontSize: 18, color: COLORS.neon,
+    letterSpacing: 1,
+  },
+  bold: { fontFamily: FONTS.bodyBold, color: COLORS.white },
   closedText: {
     fontFamily: FONTS.body, fontSize: 11, color: COLORS.gold,
     textAlign: 'center', marginTop: 8, fontStyle: 'italic',
