@@ -1,9 +1,10 @@
 import React, { useCallback, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ScrollView, RefreshControl, Linking } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ScrollView, RefreshControl, Linking, Platform } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
+import { isTema2Active, setTema2 } from '../../../lib/tema2';
 import { supabase } from '../../../lib/supabase';
 import {
   getReferralStatus,
@@ -168,6 +169,19 @@ export default function ProfileScreen({ navigation }) {
         {/* Actions */}
         <View style={styles.actions}>
           <ActionBtn icon="✏️" label="Editar perfil" onPress={() => navigation.navigate('EditProfile')} />
+
+          {/* Switch del rediseño 2026 (preview gateado, solo admin): más confiable
+              que el ?preview=tema por URL, que el autocompletado del cel se come. */}
+          {role === 'admin' && Platform.OS === 'web' && (
+            <ActionBtn
+              icon="✨"
+              label={isTema2Active() ? 'Rediseño 2026: ACTIVADO — tocar para apagar' : 'Rediseño 2026 (ver preview)'}
+              onPress={() => {
+                setTema2(!isTema2Active());
+                try { if (typeof window !== 'undefined') window.location.reload(); } catch (e) {}
+              }}
+            />
+          )}
 
           {role === 'player' && (
             <ActionBtn icon="🎽" label="Solicitar ser Gestor" onPress={() => navigation.navigate('GestorRequest')} />
