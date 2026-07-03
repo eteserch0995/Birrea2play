@@ -35,7 +35,6 @@ import NotificationPermissionModal from './components/NotificationPermissionModa
 import PlayerOnboardingModal from './components/PlayerOnboardingModal';
 import WCFlyerModal from './components/WCFlyerModal';
 import RecaudoFlyerModal from './components/RecaudoFlyerModal';
-import WorldCupSplash from './components/WorldCupSplash';
 import ErrorBoundary from './components/ErrorBoundary';
 import useWcStore from './store/wcStore';
 import { captureRefFromUrl } from './lib/referral';
@@ -44,6 +43,7 @@ import { getPendingDeepLink, clearPendingDeepLink } from './lib/pendingDeepLink'
 import { logWarn } from './lib/logger';
 import { initRemoteLogger, setRemoteLogUser } from './lib/remoteLogger';
 import { applyModo26DomAttribute } from './lib/modo26';
+import { applyTema2DomAttribute } from './lib/tema2';
 import { requestCameraPermissionWeb } from './lib/cameraPermissionWeb';
 
 // Instala captura global de errores y flush periódico hacia Supabase client_logs.
@@ -148,8 +148,8 @@ export default function App() {
   // independiente del timing de AsyncStorage (ver effect del flyer Recaudo).
   const wcFlyerShownRef = useRef(false);
 
-  // Aplica data-modo26 en <html> al montar (web). Sin deps: solo se corre una vez.
-  useEffect(() => { applyModo26DomAttribute(); }, []);
+  // Aplica data-modo26 y data-tema2 en <html> al montar (web). Sin deps: una vez.
+  useEffect(() => { applyModo26DomAttribute(); applyTema2DomAttribute(); }, []);
 
   // Suscripción única a auth events: evita doble loadProfile (race condition)
   // que generaba escrituras simultáneas al store de usuario.
@@ -454,7 +454,8 @@ export default function App() {
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
-          {Platform.OS === 'web' && <WorldCupSplash />}
+          {/* WorldCupSplash desmontado 2026-07-02: campaña 10-25 jun vencida
+              (montaba, corría su effect y retornaba null — overhead sin función). */}
           {/* key forzando remount al cambiar auth state — esto re-evalúa el linking
               config y, si la URL es /evento/:id, abre EventDetail tanto en
               AuthNavigator (vista pública) como en AppNavigator (con inscripción). */}

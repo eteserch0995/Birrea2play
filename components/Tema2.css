@@ -1,0 +1,123 @@
+/* Tema 2 — "Estadio Nocturno + Holo" (rediseño 2026, híbrido A+B).
+   Inyectado por scripts/build-web.js como <style id="b2p-tema2"> (patrón wc-splash).
+   TODO el bloque solo actúa con data-tema2="on" en <html>; con el gate apagado
+   la app queda byte-idéntica en lo visual. Los componentes RN opt-in vía
+   dataSet={{ t2Glass:'', t2Holo:'', ... }} → atributos data-t2-*. */
+
+/* ── Glass 2.0: superficies flotantes (hero, modales, stories, tiles) ── */
+[data-tema2="on"] [data-t2-glass] {
+  background-color: rgba(255, 255, 255, 0.055) !important;
+  border-color: rgba(255, 255, 255, 0.11) !important;
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  backdrop-filter: blur(14px) saturate(1.25);
+}
+/* Android viejo / WebView sin backdrop-filter: cae a superficie sólida limpia */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  [data-tema2="on"] [data-t2-glass] { background-color: rgba(22, 27, 37, 0.96) !important; }
+}
+/* Highlight superior sutil (línea de luz de estadio) */
+[data-tema2="on"] [data-t2-glass]::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 8%; right: 8%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.28), transparent);
+  pointer-events: none;
+}
+
+/* ── Holo: cartas coleccionables (evento hero, carné, Cinturón, perfil) ──
+   El foil reacciona a --t2hx/--t2rx/--t2ry que setea tema2-fx.js
+   (pointer en desktop, giroscopio en celular). Sin JS queda un sheen animado. */
+[data-tema2="on"] [data-t2-holo] {
+  transform: perspective(900px) rotateX(var(--t2rx, 0deg)) rotateY(var(--t2ry, 0deg));
+  transition: transform 0.18s ease;
+  will-change: transform;
+}
+[data-tema2="on"] [data-t2-holo]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  mix-blend-mode: color-dodge;
+  opacity: 0.4;
+  background: linear-gradient(
+    115deg,
+    transparent 18%,
+    rgba(255, 26, 107, 0.38) 36%,
+    rgba(114, 167, 255, 0.44) 50%,
+    rgba(214, 255, 47, 0.38) 64%,
+    transparent 82%
+  );
+  background-size: 260% 260%;
+  background-position: var(--t2hx, 50%) 50%;
+  transition: background-position 0.18s ease;
+}
+/* Sheen automático cuando no hay tilt activo (listas, primer paint) */
+[data-tema2="on"] [data-t2-holo="auto"]::after {
+  animation: t2Sheen 5.5s ease-in-out infinite;
+}
+@keyframes t2Sheen {
+  0%, 100% { background-position: 15% 50%; }
+  50%      { background-position: 85% 50%; }
+}
+
+/* ── Aurora: fondo vivo sutil (wrapper absoluto detrás del contenido) ── */
+[data-tema2="on"] [data-t2-aurora] { overflow: hidden; }
+[data-tema2="on"] [data-t2-aurora]::before,
+[data-tema2="on"] [data-t2-aurora]::after {
+  content: '';
+  position: absolute;
+  width: 46vw; height: 46vw;
+  max-width: 340px; max-height: 340px;
+  border-radius: 50%;
+  filter: blur(52px);
+  pointer-events: none;
+}
+[data-tema2="on"] [data-t2-aurora]::before {
+  background: #E1062C; opacity: 0.10;
+  top: -12%; left: -14%;
+  animation: t2Drift 13s ease-in-out infinite alternate;
+}
+[data-tema2="on"] [data-t2-aurora]::after {
+  background: #D6FF2F; opacity: 0.06;
+  bottom: -14%; right: -16%;
+  animation: t2Drift 16s ease-in-out infinite alternate-reverse;
+}
+@keyframes t2Drift {
+  from { transform: translate(0, 0) scale(1); }
+  to   { transform: translate(26px, 20px) scale(1.14); }
+}
+
+/* ── Microinteracciones baratas (compositor GPU, cero JS) ── */
+[data-tema2="on"] [data-t2-press] { transition: transform 0.12s ease; }
+[data-tema2="on"] [data-t2-press]:active { transform: scale(0.97); }
+
+[data-tema2="on"] [data-t2-rise] { animation: t2Rise 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both; }
+[data-tema2="on"] [data-t2-rise="2"] { animation-delay: 0.06s; }
+[data-tema2="on"] [data-t2-rise="3"] { animation-delay: 0.12s; }
+[data-tema2="on"] [data-t2-rise="4"] { animation-delay: 0.18s; }
+[data-tema2="on"] [data-t2-rise="5"] { animation-delay: 0.24s; }
+@keyframes t2Rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Glow de 3 niveles (firma "luz de estadio") ── */
+[data-tema2="on"] [data-t2-glow="subtle"] { box-shadow: 0 0 18px rgba(214, 255, 47, 0.10); }
+[data-tema2="on"] [data-t2-glow="mid"]    { box-shadow: 0 0 26px rgba(225, 6, 44, 0.22); }
+[data-tema2="on"] [data-t2-glow="hero"]   { box-shadow: 0 8px 44px rgba(225, 6, 44, 0.28), 0 0 22px rgba(214, 255, 47, 0.12); }
+
+/* ── Accesibilidad: todo el motion del tema respeta reduced-motion ── */
+@media (prefers-reduced-motion: reduce) {
+  [data-tema2="on"] [data-t2-holo],
+  [data-tema2="on"] [data-t2-holo="auto"]::after,
+  [data-tema2="on"] [data-t2-aurora]::before,
+  [data-tema2="on"] [data-t2-aurora]::after,
+  [data-tema2="on"] [data-t2-rise],
+  [data-tema2="on"] [data-t2-press] {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}

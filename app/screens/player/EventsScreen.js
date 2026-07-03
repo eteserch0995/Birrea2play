@@ -12,6 +12,7 @@ import EventCard from '../../../components/EventCard';
 import EventListSkeleton from '../../../components/EventListSkeleton';
 import EmptyState from '../../../components/EmptyState';
 import ResponsiveContainer from '../../../components/ResponsiveContainer';
+import { isTema2Active } from '../../../lib/tema2';
 
 const FILTERS = ['Todos', 'Liga', 'Torneo', 'Amistoso', 'Abiertos'];
 
@@ -40,12 +41,18 @@ export default function EventsScreen({ navigation }) {
     return events.filter((e) => e.formato === filter);
   }, [events, filter]);
 
-  const renderItem = useCallback(({ item }) => (
-    <EventCard
-      event={item}
-      onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
-    />
-  ), [navigation]);
+  const renderItem = useCallback(({ item, index }) => {
+    const card = (
+      <EventCard
+        event={item}
+        onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
+      />
+    );
+    // Entrada escalonada solo con tema2 activo; sin gate, el árbol DOM queda igual (sin wrapper).
+    if (!isTema2Active()) return card;
+    const rise = String((index % 5) + 1);
+    return <View dataSet={{ t2Rise: rise }}>{card}</View>;
+  }, [navigation]);
 
   return (
     <SafeAreaView style={styles.safe}>

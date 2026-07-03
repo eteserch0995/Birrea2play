@@ -1,9 +1,11 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
+import { View, Text, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../constants/theme';
+import { COLORS, FONTS, SPACING, RADIUS, SHADOWS, withAlpha } from '../constants/theme';
 import { getEventStatusInfo, freeLabel } from '../lib/eventHelpers';
 import { isModo26Active } from '../lib/modo26';
+import { isTema2Active } from '../lib/tema2';
+import PressableScale from './ui/PressableScale';
 
 function parseLocalDate(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
@@ -29,16 +31,23 @@ function EventCard({ event, onPress }) {
     : label;
   const effectiveColor = (event.status === 'open' && (cuposFull || regClosed)) ? COLORS.red : color;
 
+  const tema2 = isTema2Active();
+  // Con tema2 activo el glass/holo del rediseño pisa la franja tricolor de modo26
+  // (el gate tema2 tiene prioridad estética sobre modo26).
+  const cardDataSet = tema2
+    ? { m26Card: '', t2Glass: '', t2Holo: 'auto', t2Tilt: '', t2Glow: 'subtle' }
+    : { m26Card: '' };
+
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85} dataSet={{ m26Card: '' }}>
-      {isModo26Active() && (
+    <PressableScale style={[styles.card, tema2 && styles.cardTema2]} onPress={onPress} activeOpacity={0.85} dataSet={cardDataSet}>
+      {isModo26Active() && !tema2 && (
         <View pointerEvents="none" style={styles.m26Stripe}>
           <View style={{ flex: 1, backgroundColor: COLORS.green }} />
           <View style={{ flex: 1, backgroundColor: COLORS.blue }} />
           <View style={{ flex: 1, backgroundColor: COLORS.red }} />
         </View>
       )}
-      {event.cancha_foto_url && (
+      {event.cancha_foto_url ? (
         <View>
           <Image
             source={{ uri: event.cancha_foto_url }}
@@ -49,6 +58,19 @@ function EventCard({ event, onPress }) {
             colors={['#00000010', '#000000CC']}
             style={styles.imageFade}
           />
+        </View>
+      ) : (
+        // Placeholder "cancha nocturna" (F0, sin gate): misma altura que la foto
+        // real para que la lista no salte de layout entre cards con/sin imagen.
+        <View style={styles.cardPlaceholder}>
+          <View style={styles.placeholderStripes}>
+            <View style={[styles.placeholderStripe, { backgroundColor: withAlpha(COLORS.green, '14') }]} />
+            <View style={[styles.placeholderStripe, { backgroundColor: withAlpha(COLORS.green, '14') }]} />
+            <View style={[styles.placeholderStripe, { backgroundColor: withAlpha(COLORS.green, '14') }]} />
+            <View style={[styles.placeholderStripe, { backgroundColor: withAlpha(COLORS.green, '14') }]} />
+            <View style={[styles.placeholderStripe, { backgroundColor: withAlpha(COLORS.green, '14') }]} />
+          </View>
+          <View style={styles.placeholderCircle} />
         </View>
       )}
       <View style={styles.body}>
@@ -97,7 +119,7 @@ function EventCard({ event, onPress }) {
           </View>
         )}
       </View>
-    </TouchableOpacity>
+    </PressableScale>
   );
 }
 
@@ -112,9 +134,33 @@ const styles = StyleSheet.create({
     borderColor: COLORS.line,
     ...SHADOWS.card,
   },
+  cardTema2: {
+    borderRadius: RADIUS.xl,
+  },
   cardImage: {
     width: '100%',
     height: 142,
+  },
+  cardPlaceholder: {
+    width: '100%',
+    height: 142,
+    backgroundColor: COLORS.bg2,
+    flexDirection: 'row',
+    overflow: 'hidden',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  placeholderStripes: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+  },
+  placeholderStripe: { flex: 1 },
+  placeholderCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 2,
+    borderColor: withAlpha(COLORS.white, '22'),
   },
   imageFade:   { position: 'absolute', left: 0, right: 0, bottom: 0, height: 80 },
   body:        { padding: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.white + '08' },

@@ -1,18 +1,17 @@
 /**
  * EventDetailSkeleton — placeholder inmediato para EventDetailScreen.
  * Se muestra mientras loading=true, eliminando el spinner puro.
- * Sin lógica, solo presentación con shimmer CSS vía StyleSheet.
+ * Sin lógica, solo presentación con shimmer vía StyleSheet + tokens del theme
+ * (respeta el skin activo: MODO26 hoy, TEMA2 mañana, sin flash de color).
  * Propietario: agente PERF — no editar desde otros agentes.
  */
 import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet, Animated } from 'react-native';
+import { COLORS } from '../constants/theme';
 
-// Colores hardcoded para no depender de carga de módulos en el render crítico
-const BG       = '#07080B';
-const SHIMMER1 = '#1A2030';
-const SHIMMER2 = '#242D3F';
-
-function Bone({ style }) {
+// Shimmer compartido: anima entre card2 (mid) y navy (bright) del skin activo.
+// Exportado para que EventListSkeleton use la misma animación/tokens.
+export function useShimmer() {
   const anim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -26,11 +25,16 @@ function Bone({ style }) {
     return () => loop.stop();
   }, [anim]);
 
-  const bg = anim.interpolate({
+  return anim.interpolate({
     inputRange: [0, 1],
-    outputRange: [SHIMMER1, SHIMMER2],
+    // card2↔line: neutros en TODOS los skins. navy quedaba azul saturado
+    // en MODO26 (#1E3AAD) y teñía el loading en prod (hallazgo del review).
+    outputRange: [COLORS.card2, COLORS.line],
   });
+}
 
+function Bone({ style }) {
+  const bg = useShimmer();
   return <Animated.View style={[styles.bone, { backgroundColor: bg }, style]} />;
 }
 
@@ -100,7 +104,7 @@ export default function EventDetailSkeleton() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: BG,
+    backgroundColor: COLORS.bg,
   },
   headerImage: {
     width: '100%',
@@ -124,7 +128,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: '#1E2530',
+    backgroundColor: COLORS.line,
     marginHorizontal: 16,
     marginTop: 20,
   },
@@ -145,7 +149,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 24,
     paddingTop: 12,
-    backgroundColor: BG,
+    backgroundColor: COLORS.bg,
   },
   ctaButton: {
     height: 50,

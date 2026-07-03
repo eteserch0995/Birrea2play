@@ -1,20 +1,26 @@
 /**
  * EventListSkeleton — placeholder inmediato para EventsScreen mientras loading=true.
- * Silueta de 3 EventCard (imagen + 2 líneas de texto), sin lógica, sin
- * animaciones complejas (opacity estática, misma idea que EventDetailSkeleton
- * pero sin shimmer para mantenerlo simple en una lista).
+ * Silueta de 3 EventCard (imagen + 2 líneas de texto). Usa el mismo shimmer
+ * animado (card2 <-> navy) que EventDetailSkeleton para igualar la calidad
+ * percibida entre lista y detalle.
  */
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Animated } from 'react-native';
 import { COLORS, SPACING, RADIUS } from '../constants/theme';
+import { useShimmer } from './EventDetailSkeleton';
+
+function ShimmerBox({ style }) {
+  const bg = useShimmer();
+  return <Animated.View style={[style, { backgroundColor: bg }]} />;
+}
 
 function CardBone() {
   return (
     <View style={styles.card}>
-      <View style={styles.image} />
+      <ShimmerBox style={styles.image} />
       <View style={styles.body}>
-        <View style={styles.lineWide} />
-        <View style={styles.lineNarrow} />
+        <ShimmerBox style={styles.lineWide} />
+        <ShimmerBox style={styles.lineNarrow} />
       </View>
     </View>
   );
@@ -42,8 +48,6 @@ const styles = StyleSheet.create({
   image: {
     width: '100%',
     height: 142,
-    backgroundColor: COLORS.card2,
-    opacity: 0.6,
   },
   body: {
     padding: SPACING.md,
@@ -53,14 +57,10 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 6,
     width: '65%',
-    backgroundColor: COLORS.card2,
-    opacity: 0.6,
   },
   lineNarrow: {
     height: 14,
     borderRadius: 6,
     width: '40%',
-    backgroundColor: COLORS.card2,
-    opacity: 0.6,
   },
 });

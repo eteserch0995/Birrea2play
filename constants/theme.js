@@ -1,11 +1,12 @@
 import { isModo26Active } from '../lib/modo26';
+import { isTema2Active } from '../lib/tema2';
 
 // BUMP OBLIGATORIO EN CADA DEPLOY donde solo cambien chunks lazy (paneles).
 // Gotcha 2026-07-02: Metro reusa el nombre del bundle principal (index-<hash>.js)
 // aunque cambien las referencias a chunks; con Cache-Control immutable, los
 // browsers quedan apuntando a chunks del deploy anterior (404 -> panel roto).
 // Cambiar este valor fuerza contenido nuevo en el grafo principal -> nombre nuevo.
-export const BUILD_STAMP = '2026-07-02.6';
+export const BUILD_STAMP = '2026-07-03.1';
 
 const MUNDIAL_THEME_START_MS = Date.UTC(2026, 4, 29, 5, 0, 0); // 2026-05-29 00:00 PA
 const MUNDIAL_THEME_END_MS = Date.UTC(2026, 6, 20, 5, 0, 0); // 2026-07-20 00:00 PA
@@ -101,7 +102,60 @@ const MODO26_COLORS = {
   magentaText: '#6E8CFF',
 };
 
-export const COLORS = isModo26Active() ? MODO26_COLORS : (isMundialThemeWindow() ? MUNDIAL_COLORS : BASE_COLORS);
+// TEMA2 — "Estadio Nocturno" (rediseño 2026, híbrido A+B). Preview gateado con
+// ?preview=tema (lib/tema2.js); tiene PRIORIDAD sobre modo26/mundial. Mantiene
+// la identidad rojo/neón con negros más profundos y dorado del Cinturón.
+const TEMA2_COLORS = {
+  bg: '#05070B',
+  bg2: '#0C1017',
+  navy: '#1A2434',
+  blue: '#1E3A8A',
+  blue2: '#3E7BFA',
+  red: '#E1062C',
+  red2: '#FF2D4E',
+  magenta: '#FF1E78',
+  purple: '#4C1D95',
+  purple2: '#7C3AED',
+  gold: '#FFD700',
+  gold2: '#FFE766',
+  white: '#FFFFFF',
+  gray: '#8A93A3',
+  gray2: '#CDD3DC',
+  card: '#10141C',
+  card2: '#161B25',
+  green: '#23D18B',
+  asphalt: '#04060A',
+  line: '#232B38',
+  neon: '#D6FF2F',
+  orange: '#FF7A18',
+  magentaText: '#FF5C97',
+};
+
+// Tokens compartidos por TODOS los skins (los componentes pueden asumir que existen):
+// overlays de modal y colores semánticos de método de pago (mismo método = mismo
+// color en toda la app; antes cada archivo hardcodeaba el suyo).
+const SHARED_TOKENS = {
+  overlay: '#000000A6',       // scrim estándar de modal/bottom-sheet
+  overlayHeavy: '#000000E6',  // lightbox / visores fullscreen
+  payYappy: '#2EA8E0',
+  payTarjeta: '#3E7BFA',
+  payEfectivo: '#C89B3C',
+  payMixto: '#3E9FB0',
+  payWallet: '#23D18B',
+};
+
+const ACTIVE_COLORS = isTema2Active()
+  ? TEMA2_COLORS
+  : (isModo26Active() ? MODO26_COLORS : (isMundialThemeWindow() ? MUNDIAL_COLORS : BASE_COLORS));
+
+export const COLORS = { ...SHARED_TOKENS, ...ACTIVE_COLORS };
+
+// withAlpha('#RRGGBB', '22') — reemplaza el patrón frágil COLORS.x + '22'
+// (concatenación rompe si el token no es hex de 6). Alpha en hex de 2 dígitos.
+export function withAlpha(hex, alpha) {
+  if (typeof hex === 'string' && /^#[0-9A-Fa-f]{6}$/.test(hex)) return hex + alpha;
+  return hex;
+}
 
 const FONTS_BASE = {
   heading: 'BebasNeue_400Regular',
@@ -119,7 +173,21 @@ const FONTS_MODO26 = {
   bodyBold: 'Archivo_700Bold',
 };
 
-export const FONTS = isModo26Active() ? FONTS_MODO26 : FONTS_BASE;
+// TEMA2 mantiene Bebas/Barlow (la identidad tipográfica validada de la marca).
+export const FONTS = isTema2Active() ? FONTS_BASE : (isModo26Active() ? FONTS_MODO26 : FONTS_BASE);
+
+// Escala tipográfica modular (rediseño 2026). Reemplaza los 15+ fontSize ad hoc:
+// display = saludo/hero, h1 = título de card grande, h2 = título de sección,
+// h3 = subtítulo/label fuerte, body = texto, small = meta, caption = micro-labels.
+export const TYPE = {
+  display: 34,
+  h1: 24,
+  h2: 18,
+  h3: 15,
+  body: 14,
+  small: 12,
+  caption: 11,
+};
 
 export const GRAD_TRI = ['#00C865', '#2D5BFF', '#FF3B4E'];
 
@@ -132,7 +200,13 @@ export const SPACING = {
   xxl: 48,
 };
 
-export const RADIUS = isMundialThemeWindow() ? {
+export const RADIUS = isTema2Active() ? {
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 22,
+  full: 9999,
+} : isMundialThemeWindow() ? {
   sm: 6,
   md: 12,
   lg: 18,
@@ -160,5 +234,21 @@ export const SHADOWS = {
     shadowOpacity: isMundialThemeWindow() ? 0.36 : 0.28,
     shadowRadius: isMundialThemeWindow() ? 22 : 18,
     elevation: isMundialThemeWindow() ? 14 : 12,
+  },
+  // Glow formalizado en 3 niveles (patrón que el módulo Mundial ya usaba ad hoc):
+  // subtle = chips/badges, glow (arriba) = cards/CTAs, hero = pieza central de pantalla.
+  glowSubtle: {
+    shadowColor: '#D6FF2F',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  glowHero: {
+    shadowColor: '#E1062C',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.34,
+    shadowRadius: 26,
+    elevation: 16,
   },
 };

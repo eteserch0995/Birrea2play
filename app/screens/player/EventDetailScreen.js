@@ -914,7 +914,7 @@ export default function EventDetailScreen({ route, navigation }) {
       >
       <ResponsiveContainer>
         {/* Header */}
-        <View style={styles.header}>
+        <View style={styles.header} dataSet={{ t2Rise: '1' }}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.back}>
             <Text style={styles.backText}>←</Text>
           </TouchableOpacity>
@@ -929,7 +929,7 @@ export default function EventDetailScreen({ route, navigation }) {
         </View>
 
         {/* Status + Timer */}
-        <View style={styles.statusRow}>
+        <View style={styles.statusRow} dataSet={{ t2Rise: '2' }}>
           <View style={[styles.statusBadge, { backgroundColor: statusColor + '20', borderColor: statusColor }]}>
             <Text style={[styles.statusText, { color: statusColor }]}>{statusLabel}</Text>
           </View>
@@ -953,16 +953,19 @@ export default function EventDetailScreen({ route, navigation }) {
           </TouchableOpacity>
         )}
 
-        {/* Foto de cancha */}
+        {/* Foto de cancha — wrapper solo para anclar el holo (::after inset:0); sin estilos
+            propios no cambia el layout, la Image adentro conserva su tamaño de siempre. */}
         {event.cancha_foto_url && (
-          <Image
-            source={{ uri: event.cancha_foto_url }}
-            style={{ width: '100%', height: 180, resizeMode: 'cover' }}
-          />
+          <View dataSet={{ t2Holo: 'auto', t2Tilt: '' }}>
+            <Image
+              source={{ uri: event.cancha_foto_url }}
+              style={{ width: '100%', height: 180, resizeMode: 'cover' }}
+            />
+          </View>
         )}
 
         {/* Info card */}
-        <View style={styles.card}>
+        <View style={styles.card} dataSet={{ t2Glass: '', t2Rise: '3' }}>
           {event.deporte && <InfoRow icon="🏅" label={`${event.deporte} · ${event.formato}`} />}
           <InfoRow icon="📅" label={`${(() => { const [y,m,d] = event.fecha.split('-').map(Number); return new Date(y, m-1, d).toLocaleDateString('es-PA', { weekday: 'long', day: 'numeric', month: 'long' }); })()} · ${event.hora?.slice(0, 5) ?? ''}`} />
           <InfoRow icon="📍" label={event.lugar} />
@@ -1031,7 +1034,7 @@ export default function EventDetailScreen({ route, navigation }) {
                   ? ((t.vidas_actuales ?? 0) > 0 ? '❤'.repeat(t.vidas_actuales) : '☠')
                   : null;
                 return (
-                  <View key={t.id} style={[styles.teamCard, { borderLeftColor: color, opacity: is2Vidas && (t.vidas_actuales ?? 0) === 0 ? 0.5 : 1 }]}>
+                  <View key={t.id} style={[styles.teamCard, { borderLeftColor: color, opacity: is2Vidas && (t.vidas_actuales ?? 0) === 0 ? 0.5 : 1 }]} dataSet={{ t2Glass: '' }}>
                     <View style={styles.teamHeader}>
                       <TeamMark team={t} size={26} square style={{ marginRight: 2 }} />
                       <Text style={styles.teamName}>{getTeamNameWithColor(t)}</Text>
@@ -1268,7 +1271,7 @@ export default function EventDetailScreen({ route, navigation }) {
       <Modal visible={yappyStep !== 'idle'} transparent animationType="slide" onRequestClose={cancelYappy}>
         <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={yappyStyles.modalOverlay}>
-            <View style={yappyStyles.modal}>
+            <View style={yappyStyles.modal} dataSet={{ t2Glass: '' }}>
               <Text style={yappyStyles.modalTitle}>PAGAR CON YAPPY</Text>
 
               {(yappyStep === 'phone' || yappyStep === 'phone_mixto') && (

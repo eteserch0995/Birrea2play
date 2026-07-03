@@ -1,11 +1,13 @@
 import React, { useEffect, useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, RefreshControl,
+  ActivityIndicator, RefreshControl, Image,
 } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
+import { COLORS, FONTS, SPACING, RADIUS, SHADOWS, TYPE } from '../../../constants/theme';
 import { isModo26Active } from '../../../lib/modo26';
+import { isTema2Active } from '../../../lib/tema2';
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import useClubStore from '../../../store/clubStore';
@@ -16,6 +18,9 @@ import EventCard from '../../../components/EventCard';
 import MundialQuickCard from '../../../components/mundial/MundialQuickCard';
 import { useAppRefresh } from '../../../hooks/useAppRefresh';
 import ResponsiveContainer from '../../../components/ResponsiveContainer';
+import EmptyState from '../../../components/EmptyState';
+import { freeLabel } from '../../../lib/eventHelpers';
+import { Card } from '../../../components/ui';
 
 // Colores propios del banner de rifa (morados), no forman parte de ningún theme.
 const RAFFLE_COLORS = { bg: '#1A0A2E', border: '#9B59B6', text: '#BB8FCE' };
@@ -181,6 +186,311 @@ export default function HomeScreen({ navigation }) {
   useEffect(() => { loadWcPool(); }, [loadWcPool]);
 
   const { refreshing, onRefresh } = useAppRefresh(fetchData);
+
+  // ═══ Tema2: rama de layout bento, SOLO JSX (mismos hooks/estado de arriba) ═══
+  // No condicionar hooks acá — isTema2Active() solo decide qué árbol de JSX se
+  // devuelve al final del componente (ver `return` más abajo).
+  function renderTema2Home() {
+    const heroEvent = events[0];
+    const heroInscritos = heroEvent?.event_registrations?.[0]?.count ?? 0;
+    const heroPct = heroEvent?.cupos_total ? heroInscritos / heroEvent.cupos_total : 0;
+    const restoEventos = events.slice(1);
+
+    return (
+      <SafeAreaView style={styles.safe}>
+        <View pointerEvents="none" dataSet={{ t2Aurora: '' }} style={t2.aurora} />
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
+        >
+        <ResponsiveContainer>
+          {/* ── Header ── */}
+          <View style={styles.header} dataSet={{ t2Rise: '1' }}>
+            <View>
+              <Text style={styles.kicker}>BIRREA2PLAY CLUBHOUSE</Text>
+              <Text style={[styles.greeting, { fontSize: TYPE.display }]}>¡Hola, {user?.nombre?.split(' ')[0]}!</Text>
+              <Text style={styles.sub}>Tu próxima birrea está calentando</Text>
+            </View>
+            <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
+              <PlayerAvatar user={user} size={44} borderColor={COLORS.gold} />
+            </TouchableOpacity>
+          </View>
+
+          {/* ── Hero: próximo evento ── */}
+          <View style={t2.heroWrap} dataSet={{ t2Rise: '2' }}>
+            {loading ? (
+              <Card variant="glass" style={t2.heroEmptyCard}>
+                <ActivityIndicator color={COLORS.red} />
+              </Card>
+            ) : error ? (
+              <Card variant="glass" style={t2.heroEmptyCard}>
+                <Text style={{ fontSize: 28, marginBottom: SPACING.sm }}>⚠️</Text>
+                <Text style={styles.empty}>No se pudieron cargar los eventos</Text>
+                <TouchableOpacity style={styles.retryBtn} onPress={() => { setLoading(true); fetchData(); }}>
+                  <Text style={styles.retryText}>Reintentar</Text>
+                </TouchableOpacity>
+              </Card>
+            ) : heroEvent ? (
+              <Card
+                variant="holo"
+                glow="hero"
+                padding={0}
+                onPress={() => navigation.navigate('Eventos', { screen: 'EventDetail', params: { eventId: heroEvent.id } })}
+              >
+                {heroEvent.cancha_foto_url && (
+                  <View>
+                    <Image source={{ uri: heroEvent.cancha_foto_url }} style={t2.heroImage} resizeMode="cover" />
+                    <LinearGradient colors={['#00000000', COLORS.bg + 'E6']} style={t2.heroImageFade} />
+                  </View>
+                )}
+                <View style={t2.heroBody}>
+                  <Text style={t2.heroKicker}>PRÓXIMO EVENTO</Text>
+                  <Text style={t2.heroNombre}>{heroEvent.nombre}</Text>
+                  <Text style={t2.heroMeta}>{heroEvent.lugar}</Text>
+                  <Text style={t2.heroMeta}>{formatHeroFecha(heroEvent)}</Text>
+                  {!heroEvent.cupos_ilimitado && heroEvent.cupos_total > 0 && (
+                    <View style={t2.heroCuposRow}>
+                      <View style={t2.heroProgressBg}>
+                        <View style={[
+                          t2.heroProgressFill,
+                          { width: `${Math.min(heroPct * 100, 100)}%`, backgroundColor: heroPct > 0.9 ? COLORS.red : COLORS.neon },
+                        ]} />
+                      </View>
+                      <Text style={t2.heroCuposText}>{heroInscritos}/{heroEvent.cupos_total} cupos</Text>
+                    </View>
+                  )}
+                  <View style={t2.heroFooterRow}>
+                    <Text style={t2.heroPrice}>
+                      {(heroEvent.precio ?? 0) > 0 ? `$${heroEvent.precio.toFixed(2)}` : freeLabel(heroEvent.deporte)}
+                    </Text>
+                  </View>
+                </View>
+              </Card>
+            ) : (
+              <Card variant="glass" style={t2.heroEmptyCard}>
+                <EmptyState icon="📅" title="No hay eventos disponibles" subtitle="Volvé pronto para ver la próxima birrea" />
+              </Card>
+            )}
+          </View>
+
+          {/* ── Bento: saldo / stats / MVPs ── */}
+          <View style={t2.bentoGrid}>
+            <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '3' }}>
+              <Card variant="glass" glow="subtle" style={t2.bentoTile} onPress={() => navigation.navigate('Wallet')}>
+                <Text style={t2.bentoIcon}>💰</Text>
+                <Text style={[t2.bentoValue, { color: COLORS.neon }]}>${Number(walletBalance ?? 0).toFixed(2)}</Text>
+                <Text style={t2.bentoLabel}>Saldo</Text>
+              </Card>
+            </View>
+            <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '3' }}>
+              <Card variant="glass" style={t2.bentoTile}>
+                <Text style={t2.bentoIcon}>⚽</Text>
+                <Text style={t2.bentoValue}>{user?.actividades_completadas ?? 0}</Text>
+                <Text style={t2.bentoLabel}>Actividades</Text>
+              </Card>
+            </View>
+            <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '4' }}>
+              <Card variant="glass" style={t2.bentoTile}>
+                <Text style={t2.bentoIcon}>📅</Text>
+                <Text style={t2.bentoValue}>{totalEvents}</Text>
+                <Text style={t2.bentoLabel}>Eventos</Text>
+              </Card>
+            </View>
+            <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '4' }}>
+              <Card variant="glass" style={t2.bentoTile}>
+                <Text style={t2.bentoIcon}>🏆</Text>
+                <Text style={t2.bentoValue}>{mvpCount}</Text>
+                <Text style={t2.bentoLabel}>MVPs</Text>
+              </Card>
+            </View>
+
+            {myMvps.length > 0 && (
+              <View style={t2.bentoTileWrapFull} dataSet={{ t2Rise: '5' }}>
+                <Card
+                  variant="glass"
+                  style={t2.bentoTileWide}
+                  onPress={() => navigation.navigate('Eventos', { screen: 'EventDetail', params: { eventId: myMvps[0].event_id } })}
+                >
+                  <Text style={t2.bentoIcon}>🏆</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={t2.bentoWideTitle} numberOfLines={1}>{myMvps[0].event?.nombre ?? 'Último MVP'}</Text>
+                    <Text style={t2.bentoWideSub}>
+                      {myMvps[0].votos_totales ?? 0} voto{myMvps[0].votos_totales === 1 ? '' : 's'}
+                      {myMvps[0].premio_wallet ? ` · +$${Number(myMvps[0].premio_wallet).toFixed(0)}` : ''}
+                    </Text>
+                  </View>
+                </Card>
+              </View>
+            )}
+          </View>
+
+          {/* ── Banners existentes: mismo contenido/condiciones que la rama clásica ──
+             No se migraron a estilo glass hoy (ver risks del handoff); se reutiliza
+             el JSX tal cual para no reescribir 6 banners en esta pasada. */}
+          {RAFFLE_ACTIVE && !RECAUDO_FOCUS && (
+            <TouchableOpacity
+              style={styles.raffleBanner}
+              activeOpacity={0.88}
+              onPress={() => navigation.navigate('Raffle', { eventId: '3293898c-a937-48e2-84f0-cf3fcc10e068' })}
+            >
+              <Text style={styles.raffleEmoji}>🎽</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.raffleKicker}>RIFA DE ANIVERSARIO</Text>
+                <Text style={styles.raffleTitle}>Camiseta Birrea2Play</Text>
+                <Text style={styles.raffleSub}>Presencial · jue 16 jul · $1 boleto</Text>
+              </View>
+              <View style={styles.rafflePriceBadge}>
+                <Text style={styles.rafflePriceAmt}>$1</Text>
+                <Text style={styles.rafflePriceLbl}>boleto</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {WELCOME_BONUS_ENABLED && !bonusClaimed && (
+            bonusExpired ? (
+              <View style={[styles.bonusBanner, { borderColor: COLORS.gray, opacity: 0.75 }]}>
+                <Text style={styles.bonusBannerIcon}>⏰</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.bonusBannerTitle}>Recompensa vencida</Text>
+                  <Text style={styles.bonusBannerSub}>El período de la recompensa de bienvenida ya finalizó.</Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => setBonusClaimed(true)}
+                  style={styles.bonusBannerCta}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.bonusBannerCtaText}>OK</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={[styles.bonusBanner, bonusSuccess && styles.bonusBannerSuccess]}>
+                <Text style={styles.bonusBannerIcon}>{bonusSuccess ? '✅' : '🎁'}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.bonusBannerTitle}>
+                    {bonusSuccess ? '¡$1 acreditado en tu wallet!' : 'RECOMPENSA DE BIENVENIDA'}
+                  </Text>
+                  <Text style={styles.bonusBannerSub}>
+                    {bonusSuccess
+                      ? 'Ya podés usarlo en tu próxima birrea.'
+                      : bonusRemaining != null
+                        ? `Solo quedan ${bonusRemaining} — vence hoy al arrancar PAN 🆚 CRO`
+                        : 'Recibí $1 en tu wallet — vence hoy al arrancar PAN 🆚 CRO'}
+                  </Text>
+                  {bonusError ? (
+                    <Text style={{ color: BONUS_COLORS.error, fontSize: 11, marginTop: 4 }}>{bonusError}</Text>
+                  ) : null}
+                </View>
+                {!bonusSuccess && (
+                  bonusClaiming
+                    ? <ActivityIndicator size="small" color={COLORS.neon} style={{ marginLeft: 8 }} />
+                    : (
+                      <TouchableOpacity
+                        onPress={handleClaimBonus}
+                        style={styles.bonusBannerCta}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.bonusBannerCtaText}>COBRAR $1</Text>
+                      </TouchableOpacity>
+                    )
+                )}
+              </View>
+            )
+          )}
+
+          {(() => {
+            if (!user?.id) return null;
+            const localPart = (user.correo ?? '').split('@')[0];
+            const expectedFallback = localPart.charAt(0).toUpperCase() + localPart.slice(1);
+            const nombreEsFallback = !!user.nombre && user.nombre === expectedFallback;
+            const sinTelefono = !user.telefono || user.telefono.trim() === '';
+            if (!nombreEsFallback && !sinTelefono) return null;
+            return (
+              <TouchableOpacity
+                style={styles.profileBanner}
+                onPress={() => navigation.navigate('EditProfile')}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.profileBannerIcon}>👤</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.profileBannerTitle}>Completá tu perfil</Text>
+                  <Text style={styles.profileBannerSub}>
+                    {nombreEsFallback && sinTelefono
+                      ? 'Falta tu nombre completo y teléfono.'
+                      : nombreEsFallback
+                        ? 'Tu nombre quedó como tu correo. Actualizalo.'
+                        : 'Falta tu número de teléfono.'}
+                  </Text>
+                </View>
+                <Text style={styles.profileBannerArrow}>→</Text>
+              </TouchableOpacity>
+            );
+          })()}
+
+          {mundialOn && !RECAUDO_FOCUS && <MundialQuickCard onPress={() => navigation.navigate('Mundial')} />}
+
+          {clubOn && !RECAUDO_FOCUS && (
+            <TouchableOpacity
+              style={styles.clubBanner}
+              activeOpacity={0.9}
+              onPress={() => navigation.navigate('Beneficios')}
+            >
+              <Text style={styles.clubBannerIcon}>🎁</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.clubBannerKicker}>CLUB BIRREOSO</Text>
+                <Text style={styles.clubBannerTitle}>BENEFICIOS DE SOCIO</Text>
+                <Text style={styles.clubBannerSub}>Descuentos exclusivos en comercios aliados</Text>
+              </View>
+              <Text style={styles.clubBannerArrow}>→</Text>
+            </TouchableOpacity>
+          )}
+
+          {RECAUDO_FOCUS && (
+            <TouchableOpacity
+              style={styles.recaudoBig}
+              activeOpacity={0.9}
+              onPress={() => navigation.navigate('Recaudo')}
+            >
+              <Text style={styles.recaudoBigHeart}>❤️🇻🇪</Text>
+              <Text style={styles.recaudoBigKicker}>RECAUDO SOLIDARIO</Text>
+              <Text style={styles.recaudoBigTitle}>YO APOYO A VENEZUELA</Text>
+              <View style={styles.recaudoNews}>
+                <Text style={styles.recaudoNewsText}>
+                  🧾 ¡Buenas noticias! Ya compramos los primeros insumos médicos. Mirá la factura, las fotos y el fondo disponible. Seguimos toda la semana — aún faltan insumos. ¿Nos ayudás?
+                </Text>
+              </View>
+              <Text style={styles.recaudoBigSub}>Doná productos, dinero o ayudá con la recolección</Text>
+              <View style={styles.recaudoBigCta}>
+                <Text style={styles.recaudoBigCtaText}>VER DETALLES Y APOYAR  →</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+
+          {/* ── Más eventos (el resto de la lista, después del hero) ── */}
+          {!loading && !error && restoEventos.length > 0 && (
+            <>
+              <SectionHeader title="Más eventos" onPress={() => navigation.navigate('Eventos')} />
+              {restoEventos.map((ev) => (
+                <View key={ev.id} style={styles.cardWrap}>
+                  <EventCard
+                    event={ev}
+                    onPress={() => navigation.navigate('Eventos', { screen: 'EventDetail', params: { eventId: ev.id } })}
+                  />
+                </View>
+              ))}
+            </>
+          )}
+
+          {/* Invita y Gana — mismo componente, con su propio fetch interno */}
+          {user?.id && <HomeReferralCard />}
+
+          <View style={{ height: SPACING.xxl }} />
+        </ResponsiveContainer>
+        </ScrollView>
+      </SafeAreaView>
+    );
+  }
+
+  if (isTema2Active()) return renderTema2Home();
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -430,6 +740,16 @@ export default function HomeScreen({ navigation }) {
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+// Formatea fecha+hora del evento hero (mismo criterio de EventCard: fecha local
+// sin desfase UTC, weekday/día/mes + hora si existe).
+function formatHeroFecha(ev) {
+  if (!ev?.fecha) return '';
+  const [y, m, d] = ev.fecha.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  const dateTxt = date.toLocaleDateString('es-PA', { weekday: 'long', day: 'numeric', month: 'long' });
+  return ev.hora ? `${dateTxt} · ${ev.hora.slice(0, 5)}` : dateTxt;
 }
 
 function SectionHeader({ title, onPress }) {
@@ -723,6 +1043,43 @@ const styles = StyleSheet.create({
     fontSize: 16,
     letterSpacing: 1,
   },
+});
+
+// ── Estilos exclusivos de la rama Tema2 (bento) — solo se montan con el gate
+// encendido, no afectan al árbol clásico ni a sus estilos. ──
+const t2 = StyleSheet.create({
+  aurora: { ...StyleSheet.absoluteFillObject },
+  heroWrap: { paddingHorizontal: SPACING.md, marginTop: SPACING.sm, marginBottom: SPACING.md },
+  heroEmptyCard: { alignItems: 'center', justifyContent: 'center', minHeight: 140, padding: SPACING.lg },
+  heroImage: { width: '100%', height: 180 },
+  heroImageFade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 90 },
+  heroBody: { padding: SPACING.lg },
+  heroKicker: {
+    fontFamily: FONTS.bodyBold, fontSize: TYPE.caption, color: COLORS.neon,
+    letterSpacing: 1.6, textTransform: 'uppercase', marginBottom: 4,
+  },
+  heroNombre: { fontFamily: FONTS.heading, fontSize: TYPE.h1, color: COLORS.white, letterSpacing: 1, lineHeight: 28 },
+  heroMeta: { fontFamily: FONTS.body, fontSize: TYPE.body, color: COLORS.gray2, marginTop: 2 },
+  heroCuposRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginTop: SPACING.sm },
+  heroProgressBg: { flex: 1, height: 6, backgroundColor: COLORS.line, borderRadius: 3, overflow: 'hidden' },
+  heroProgressFill: { height: '100%', borderRadius: 3 },
+  heroCuposText: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray2 },
+  heroFooterRow: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: SPACING.md },
+  heroPrice: { fontFamily: FONTS.heading, fontSize: TYPE.h1, color: COLORS.neon, letterSpacing: 1 },
+
+  bentoGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm,
+    paddingHorizontal: SPACING.md, marginBottom: SPACING.sm,
+  },
+  bentoTileWrap: { flexBasis: '48%', flexGrow: 1 },
+  bentoTileWrapFull: { flexBasis: '100%' },
+  bentoTile: { alignItems: 'flex-start', minHeight: 88 },
+  bentoTileWide: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  bentoIcon: { fontSize: 22, marginBottom: 6 },
+  bentoValue: { fontFamily: FONTS.heading, fontSize: TYPE.h2, color: COLORS.white, letterSpacing: 0.5 },
+  bentoLabel: { fontFamily: FONTS.body, fontSize: TYPE.caption, color: COLORS.gray, marginTop: 2 },
+  bentoWideTitle: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.h3, color: COLORS.white },
+  bentoWideSub: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gold, marginTop: 2 },
 });
 
 // ─── Tarjeta "Invita y Gana" en Home ─────────────────────────

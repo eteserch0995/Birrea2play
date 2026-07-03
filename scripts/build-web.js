@@ -315,11 +315,27 @@ if (existsSync(indexPath)) {
     wcSplashCss = `<style id="wc-splash">${readFileSync(path.join(ROOT, 'components', 'WorldCupSplash.css'), 'utf8')}</style>`;
   } catch (e) { wcSplashCss = ''; }
 
-  html = html.replace('</head>', preloadInject + scrollFix + splashInline + swInject + splashHideScript + modo26Css + wcSplashCss + '</head>');
+  // Tema 2 "Estadio Nocturno + Holo" (rediseño 2026): CSS + motor de tilt leídos
+  // de components/Tema2.css y components/tema2-fx.js. Todo gateado por
+  // data-tema2="on" en <html> (lib/tema2.js, ?preview=tema) — con el gate
+  // apagado estos bloques no tienen ningún efecto visual.
+  let tema2Css = '';
+  try {
+    tema2Css = `<style id="b2p-tema2">${readFileSync(path.join(ROOT, 'components', 'Tema2.css'), 'utf8')}</style>`;
+  } catch (e) { tema2Css = ''; }
+  let tema2Fx = '';
+  try {
+    tema2Fx = `<script id="b2p-tema2-fx">${readFileSync(path.join(ROOT, 'components', 'tema2-fx.js'), 'utf8')}</script>`;
+  } catch (e) { tema2Fx = ''; }
+
+  html = html.replace('</head>', preloadInject + scrollFix + splashInline + swInject + splashHideScript + modo26Css + wcSplashCss + tema2Css + '</head>');
   // Splash dentro del body, ANTES del #root (queda como hermano, no como child)
   html = html.replace(/(<body[^>]*>)/, `$1${splashBody}`);
+  // El motor de tilt va al final del body: necesita leer data-tema2 (que App.js
+  // aplica al montar) y no debe bloquear el parse del head.
+  html = html.replace('</body>', tema2Fx + '</body>');
   writeFileSync(indexPath, html);
-  console.log('  + preload + splash inline + scroll fix + SW push register + modo26 + wc-splash inyectados en dist/index.html');
+  console.log('  + preload + splash inline + scroll fix + SW push register + modo26 + wc-splash + tema2 inyectados en dist/index.html');
 }
 
 console.log('\nBuild web completo. Salida en dist/');

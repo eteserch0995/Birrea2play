@@ -1,13 +1,17 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
-import { Text, Platform, View, StyleSheet, Image, ActivityIndicator } from 'react-native';
+import { Text, Platform, View, StyleSheet, Image, ActivityIndicator, Animated } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, FONTS } from '../../constants/theme';
 import useAuthStore from '../../store/authStore';
 import useWcStore from '../../store/wcStore';
 import useClubStore from '../../store/clubStore';
 import { isSocialPreviewEnabled } from '../../lib/featureFlags';
+import {
+  IconHome, IconCalendar, IconWallet, IconBag, IconNews,
+  IconGift, IconGear, IconField, IconTrophy,
+} from '../../components/ui/TabIcons';
 
 // ── Main screens ─────────────────────────────────────────────────────────────
 import HomeScreen           from '../screens/player/HomeScreen';
@@ -75,17 +79,36 @@ const panelLoadingStyles = StyleSheet.create({
   wrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' },
 });
 
-const TAB_ICONS = {
-  Inicio:    '🏠',
-  Eventos:   '📅',
-  Wallet:    '💳',
-  Tienda:    '🛍',
-  Noticias:  '📰',
-  Mundial:   '🏆',
-  Beneficios:'🎁',
-  Panel:     '⚙',
-  Cancha:    '🏟',
+// Mapa nombre de tab → componente de icono SVG (reemplaza los emojis previos)
+const TAB_ICON_COMPONENTS = {
+  Inicio:    IconHome,
+  Eventos:   IconCalendar,
+  Wallet:    IconWallet,
+  Tienda:    IconBag,
+  Noticias:  IconNews,
+  Mundial:   IconTrophy, // no se usa (Mundial tiene caso especial con logo), queda por completitud
+  Beneficios:IconGift,
+  Panel:     IconGear,
+  Cancha:    IconField,
 };
+
+// Puntito indicador de tab activa: aparece con spring scale 0→1
+function ActiveDot({ focused }) {
+  const scale = useRef(new Animated.Value(focused ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.spring(scale, {
+      toValue: focused ? 1 : 0,
+      useNativeDriver: true,
+      friction: 6,
+      tension: 80,
+    }).start();
+  }, [focused, scale]);
+  return (
+    <Animated.View
+      style={[tabStyles.activeDot, { transform: [{ scale }] }]}
+    />
+  );
+}
 
 const TAB_LABELS = {
   Inicio:    'Inicio',
@@ -180,18 +203,17 @@ function MainTabs() {
               </View>
             );
           }
+          const IconComp = TAB_ICON_COMPONENTS[route.name];
           return (
             <View style={tabStyles.iconSlot}>
-              <View style={[tabStyles.iconBadge, focused && tabStyles.iconBadgeActive]}>
-                <Text
-                  style={[
-                    route.name === 'Asistente' ? tabStyles.aiText : tabStyles.iconText,
-                    { color },
-                  ]}
-                >
-                  {TAB_ICONS[route.name]}
-                </Text>
+              <View
+                style={[tabStyles.iconBadge, focused && tabStyles.iconBadgeActive]}
+                dataSet={{ t2Press: '' }}
+              >
+                {/* Fallback: tab sin icono registrado renderiza vacío (nunca texto crudo) */}
+                {IconComp ? <IconComp color={color} size={20} /> : null}
               </View>
+              {focused && <ActiveDot focused={focused} />}
             </View>
           );
         },
@@ -258,6 +280,17 @@ const tabStyles = StyleSheet.create({
   iconBadgeActive: {
     borderColor: COLORS.neon + '55',
     backgroundColor: COLORS.neon + '14',
+  },
+  activeDot: {
+    // Absoluto: no suma alto al iconSlot de 34px (30 badge + 4 dot + margen desbordaba)
+    position: 'absolute',
+    bottom: -1,
+    left: '50%',
+    marginLeft: -2,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: COLORS.neon,
   },
   mundialIcon: {
     width: 40,
