@@ -70,6 +70,10 @@ const styles = StyleSheet.create({
     borderTopRightRadius: RADIUS.xl,
     paddingHorizontal: SPACING.xl,
     paddingTop: SPACING.sm,
+    // Tope de altura AQUÍ (el overlay flex:1 le da altura definida al %);
+    // un maxHeight % en el ScrollView interno no resolvía (hallazgo del review)
+    // y contenido largo podía desbordar la pantalla.
+    maxHeight: '90%',
     paddingBottom: SPACING.lg,
     position: 'relative',
   },
@@ -113,6 +117,8 @@ const styles = StyleSheet.create({
     right: 0,
     zIndex: 1,
   },
-  scroll: { maxHeight: '85%' },
+  // flexGrow 0: el scroll mide su contenido y solo scrollea si el sheet
+  // (capado a 90%) se queda corto — el patrón estándar de bottom-sheet.
+  scroll: { flexGrow: 0 },
   footer: { marginTop: SPACING.md },
 });

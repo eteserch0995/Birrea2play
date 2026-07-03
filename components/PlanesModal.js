@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
-  View, Text, StyleSheet, Modal, TouchableOpacity,
-  ActivityIndicator, Alert, ScrollView,
+  View, Text, StyleSheet, TouchableOpacity,
+  ActivityIndicator, Alert,
 } from 'react-native';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 import { supabase } from '../lib/supabase';
 import useAuthStore from '../store/authStore';
+import BottomSheetModal from './ui/BottomSheetModal';
 
 const BADGE_COLOR = {
   'Plan Básico':   COLORS.navy   ?? '#1A2A4A',
@@ -82,104 +83,81 @@ export default function PlanesModal({ visible, onClose, onPlanActivado }) {
   const esActivo = (plan) => planActivo?.plan_id === plan.id;
 
   return (
-    <Modal visible={visible} transparent animationType="slide">
-      <View style={styles.overlay}>
-        <View style={styles.container} dataSet={{ t2Glass: '' }}>
-          <View style={styles.header}>
-            <Text style={styles.title}>PLANES MENSUALES</Text>
-            <TouchableOpacity onPress={onClose}>
-              <Text style={styles.closeBtn}>✕</Text>
-            </TouchableOpacity>
-          </View>
-
-          {planActivo && (
-            <View style={styles.activoBanner}>
-              <Text style={styles.activoText}>
-                ✅ Plan activo: <Text style={styles.activoNombre}>{planActivo.nombre}</Text>
-              </Text>
-              <Text style={styles.activoSub}>
-                {planActivo.descuento_pct}% descuento • Vence {new Date(planActivo.fecha_fin).toLocaleDateString('es-PA')}
-              </Text>
-            </View>
-          )}
-
-          {loading ? (
-            <ActivityIndicator color={COLORS.red} style={{ marginVertical: SPACING.xl }} />
-          ) : (
-            <ScrollView showsVerticalScrollIndicator={false}>
-              {planes.map((plan) => {
-                const activo   = esActivo(plan);
-                const badgeCol = BADGE_COLOR[plan.nombre] ?? COLORS.navy;
-                return (
-                  <View key={plan.id} style={[styles.planCard, activo && styles.planCardActivo]}>
-                    <View style={[styles.planBadge, { backgroundColor: badgeCol }]}>
-                      <Text style={styles.planNombre}>{plan.nombre.toUpperCase()}</Text>
-                    </View>
-
-                    <View style={styles.planBody}>
-                      <Text style={styles.planPrecio}>
-                        ${plan.precio_mensual.toFixed(2)}
-                        <Text style={styles.planPeriodo}> / mes</Text>
-                      </Text>
-                      <Text style={styles.planDesc}>{plan.descripcion}</Text>
-
-                      <View style={styles.planPerks}>
-                        <Text style={styles.perk}>🎯 {plan.descuento_pct}% descuento en inscripciones</Text>
-                        {plan.bonus_wallet > 0 && (
-                          <Text style={styles.perk}>💰 +${plan.bonus_wallet.toFixed(2)} bonus en créditos</Text>
-                        )}
-                        <Text style={styles.perk}>📅 30 días de vigencia</Text>
-                      </View>
-
-                      {activo ? (
-                        <View style={styles.activoTag}>
-                          <Text style={styles.activoTagText}>PLAN ACTIVO</Text>
-                        </View>
-                      ) : (
-                        <TouchableOpacity
-                          style={[styles.comprarBtn, { backgroundColor: badgeCol }]}
-                          onPress={() => comprarPlan(plan)}
-                          disabled={comprando !== null}
-                          dataSet={{ t2Press: '' }}
-                        >
-                          {comprando === plan.id
-                            ? <ActivityIndicator color={COLORS.white} />
-                            : <Text style={styles.comprarText}>ACTIVAR PLAN</Text>
-                          }
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-                );
-              })}
-              <View style={{ height: SPACING.xl }} />
-            </ScrollView>
-          )}
+    <BottomSheetModal
+      visible={visible}
+      onClose={onClose}
+      title="PLANES MENSUALES"
+      // Overlay actual no cierra al tocar (no tenia backdrop touchable): se preserva.
+      dismissOnBackdrop={false}
+    >
+      {planActivo && (
+        <View style={styles.activoBanner}>
+          <Text style={styles.activoText}>
+            ✅ Plan activo: <Text style={styles.activoNombre}>{planActivo.nombre}</Text>
+          </Text>
+          <Text style={styles.activoSub}>
+            {planActivo.descuento_pct}% descuento • Vence {new Date(planActivo.fecha_fin).toLocaleDateString('es-PA')}
+          </Text>
         </View>
-      </View>
-    </Modal>
+      )}
+
+      {loading ? (
+        <ActivityIndicator color={COLORS.red} style={{ marginVertical: SPACING.xl }} />
+      ) : (
+        <>
+          {planes.map((plan) => {
+            const activo   = esActivo(plan);
+            const badgeCol = BADGE_COLOR[plan.nombre] ?? COLORS.navy;
+            return (
+              <View key={plan.id} style={[styles.planCard, activo && styles.planCardActivo]}>
+                <View style={[styles.planBadge, { backgroundColor: badgeCol }]}>
+                  <Text style={styles.planNombre}>{plan.nombre.toUpperCase()}</Text>
+                </View>
+
+                <View style={styles.planBody}>
+                  <Text style={styles.planPrecio}>
+                    ${plan.precio_mensual.toFixed(2)}
+                    <Text style={styles.planPeriodo}> / mes</Text>
+                  </Text>
+                  <Text style={styles.planDesc}>{plan.descripcion}</Text>
+
+                  <View style={styles.planPerks}>
+                    <Text style={styles.perk}>🎯 {plan.descuento_pct}% descuento en inscripciones</Text>
+                    {plan.bonus_wallet > 0 && (
+                      <Text style={styles.perk}>💰 +${plan.bonus_wallet.toFixed(2)} bonus en créditos</Text>
+                    )}
+                    <Text style={styles.perk}>📅 30 días de vigencia</Text>
+                  </View>
+
+                  {activo ? (
+                    <View style={styles.activoTag}>
+                      <Text style={styles.activoTagText}>PLAN ACTIVO</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={[styles.comprarBtn, { backgroundColor: badgeCol }]}
+                      onPress={() => comprarPlan(plan)}
+                      disabled={comprando !== null}
+                      dataSet={{ t2Press: '' }}
+                    >
+                      {comprando === plan.id
+                        ? <ActivityIndicator color={COLORS.white} />
+                        : <Text style={styles.comprarText}>ACTIVAR PLAN</Text>
+                      }
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })}
+          <View style={{ height: SPACING.xl }} />
+        </>
+      )}
+    </BottomSheetModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
-    flex: 1, backgroundColor: '#00000099', justifyContent: 'flex-end',
-  },
-  container: {
-    backgroundColor: COLORS.card2 ?? '#111827',
-    borderTopLeftRadius: RADIUS.xl,
-    borderTopRightRadius: RADIUS.xl,
-    padding: SPACING.xl,
-    maxHeight: '90%',
-  },
-  header: {
-    flexDirection: 'row', justifyContent: 'space-between',
-    alignItems: 'center', marginBottom: SPACING.md,
-  },
-  title: {
-    fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white, letterSpacing: 2,
-  },
-  closeBtn: { fontFamily: FONTS.body, fontSize: 20, color: COLORS.gray },
   activoBanner: {
     backgroundColor: COLORS.green + '22',
     borderRadius: RADIUS.md,

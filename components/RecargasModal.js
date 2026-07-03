@@ -1,13 +1,13 @@
 import React, { useRef, useState } from 'react';
 import {
-  View, Text, Modal, TouchableOpacity, TextInput,
-  StyleSheet, ActivityIndicator, Alert, ScrollView,
-  KeyboardAvoidingView, Platform,
+  View, Text, TouchableOpacity, TextInput,
+  StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../constants/theme';
 import useAuthStore from '../store/authStore';
 import { iniciarBotonYappy, pollBotonOrder } from '../lib/yappy';
 import { iniciarPagoTarjeta } from '../lib/paguelofacil';
+import BottomSheetModal from './ui/BottomSheetModal';
 
 const TIERS = [
   { amount: 18, credito: 20,  label: '$18 → $20',  bonus: '+$2',  color: COLORS.navy  },
@@ -111,158 +111,144 @@ export default function RecargasModal({ visible, onClose, onSuccess }) {
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={handleClose}>
-      <KeyboardAvoidingView
-        style={styles.overlay}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
-        <View style={styles.sheet} dataSet={{ t2Glass: '' }}>
-          <View style={styles.header}>
-            <Text style={styles.title}>CRÉDITOS CON BONO</Text>
-            <TouchableOpacity onPress={handleClose}>
-              <Text style={styles.closeBtn}>✕</Text>
+    // Backdrop nunca cerró este modal (el overlay original no tenía onPress);
+    // se preserva igual, y así queda también cubierto el polling de Yappy.
+    <BottomSheetModal
+      visible={visible}
+      onClose={handleClose}
+      title="CRÉDITOS CON BONO"
+      dismissOnBackdrop={false}
+    >
+      {/* ── Paso 1: elegir tier ───────────────────────────────── */}
+      {step === 'tiers' && (
+        <>
+          <Text style={styles.subtitle}>Compra créditos internos para eventos y servicios Birrea2Play</Text>
+          {TIERS.map((t) => (
+            <TouchableOpacity
+              key={t.amount}
+              style={styles.tierCard}
+              dataSet={{ t2Press: '' }}
+              onPress={() => { setTier(t); setStep('payment'); }}
+            >
+              <View style={[styles.tierBadge, { backgroundColor: t.color }]}>
+                <Text style={styles.tierBonusText}>{t.bonus}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.tierAmounts}>
+                  ${t.amount} {'→'} <Text style={styles.tierCredito}>${t.credito}</Text>
+                </Text>
+                <Text style={styles.tierSub}>Pagas ${t.amount} — recibes ${t.credito} en créditos internos</Text>
+              </View>
+              <Text style={styles.tierArrow}>›</Text>
+            </TouchableOpacity>
+          ))}
+        </>
+      )}
+
+      {/* ── Paso 2: método de pago ───────────────────────────── */}
+      {step === 'payment' && tier && (
+        <>
+          <Text style={styles.subtitle}>
+            Pagas <Text style={styles.tierCredito}>${tier.amount}</Text>
+            {' → '}recibes <Text style={styles.tierCredito}>${tier.credito}</Text>
+          </Text>
+
+          <View style={styles.metodoBtns}>
+            <TouchableOpacity
+              style={[styles.metodoBtn, metodo === 'yappy' && styles.metodoBtnActivo]}
+              dataSet={{ t2Press: '' }}
+              onPress={() => setMetodo('yappy')}
+              disabled={procesando}
+            >
+              <Text style={[styles.metodoBtnText, metodo === 'yappy' && styles.metodoBtnTextActivo]}>
+                📱 Yappy
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.metodoBtn, metodo === 'tarjeta' && styles.metodoBtnActivo]}
+              dataSet={{ t2Press: '' }}
+              onPress={() => setMetodo('tarjeta')}
+              disabled={procesando}
+            >
+              <Text style={[styles.metodoBtnText, metodo === 'tarjeta' && styles.metodoBtnTextActivo]}>
+                💳 Tarjeta
+              </Text>
             </TouchableOpacity>
           </View>
 
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {metodo === 'yappy' && yappyStep === 'idle' && (
+            <>
+              <TextInput
+                style={styles.input}
+                placeholder="Número Yappy (ej. 61234567)"
+                placeholderTextColor={COLORS.gray}
+                keyboardType="phone-pad"
+                value={yappyPhone}
+                onChangeText={setYappyPhone}
+                maxLength={12}
+                editable={!procesando}
+              />
+              <TouchableOpacity
+                style={[styles.payBtn, yappyPhone.replace(/\D/g, '').length < 7 && styles.payBtnDisabled]}
+                onPress={pagarYappy}
+                disabled={procesando || yappyPhone.replace(/\D/g, '').length < 7}
+              >
+                {procesando
+                  ? <ActivityIndicator color={COLORS.white} />
+                  : <Text style={styles.payBtnText}>📱 COBRAR POR YAPPY</Text>
+                }
+              </TouchableOpacity>
+            </>
+          )}
 
-            {/* ── Paso 1: elegir tier ───────────────────────────────── */}
-            {step === 'tiers' && (
-              <>
-                <Text style={styles.subtitle}>Compra créditos internos para eventos y servicios Birrea2Play</Text>
-                {TIERS.map((t) => (
-                  <TouchableOpacity
-                    key={t.amount}
-                    style={styles.tierCard}
-                    dataSet={{ t2Press: '' }}
-                    onPress={() => { setTier(t); setStep('payment'); }}
-                  >
-                    <View style={[styles.tierBadge, { backgroundColor: t.color }]}>
-                      <Text style={styles.tierBonusText}>{t.bonus}</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.tierAmounts}>
-                        ${t.amount} {'→'} <Text style={styles.tierCredito}>${t.credito}</Text>
-                      </Text>
-                      <Text style={styles.tierSub}>Pagas ${t.amount} — recibes ${t.credito} en créditos internos</Text>
-                    </View>
-                    <Text style={styles.tierArrow}>›</Text>
-                  </TouchableOpacity>
-                ))}
-              </>
-            )}
+          {metodo === 'yappy' && yappyStep === 'polling' && (
+            <View style={styles.pollingCard}>
+              <ActivityIndicator color={COLORS.green} style={{ marginBottom: SPACING.sm }} />
+              <Text style={styles.pollingTitle}>Esperando aprobación...</Text>
+              <Text style={styles.pollingAmount}>${tier.credito.toFixed(2)}</Text>
+              <Text style={styles.pollingSub}>Abre tu app Yappy y acepta el cobro de Birrea2Play.{'\n'}O entra a tu banca en línea y elegí la opción de Yappy.</Text>
+              <Text style={styles.pollingDots}>
+                {yappyProgress.attempts}/{yappyProgress.maxAttempts} intentos
+              </Text>
+              <TouchableOpacity
+                style={styles.cancelBtn}
+                onPress={() => { cancelRef.current?.(); setYappyStep('idle'); setProcesando(false); }}
+              >
+                <Text style={styles.cancelBtnText}>Cancelar</Text>
+              </TouchableOpacity>
+            </View>
+          )}
 
-            {/* ── Paso 2: método de pago ───────────────────────────── */}
-            {step === 'payment' && tier && (
-              <>
-                <Text style={styles.subtitle}>
-                  Pagas <Text style={styles.tierCredito}>${tier.amount}</Text>
-                  {' → '}recibes <Text style={styles.tierCredito}>${tier.credito}</Text>
-                </Text>
+          {metodo === 'tarjeta' && (
+            <>
+              <Text style={styles.tarjetaInfo}>
+                Se abrirá el browser con el checkout seguro de PágueloFácil.
+                Recibirás <Text style={styles.tierCredito}>${tier.credito.toFixed(2)}</Text> en créditos internos al confirmar.
+              </Text>
+              <TouchableOpacity style={styles.payBtn} onPress={pagarTarjeta} disabled={procesando}>
+                {procesando
+                  ? <ActivityIndicator color={COLORS.white} />
+                  : <Text style={styles.payBtnText}>💳 PAGAR CON TARJETA</Text>
+                }
+              </TouchableOpacity>
+            </>
+          )}
 
-                <View style={styles.metodoBtns}>
-                  <TouchableOpacity
-                    style={[styles.metodoBtn, metodo === 'yappy' && styles.metodoBtnActivo]}
-                    dataSet={{ t2Press: '' }}
-                    onPress={() => setMetodo('yappy')}
-                    disabled={procesando}
-                  >
-                    <Text style={[styles.metodoBtnText, metodo === 'yappy' && styles.metodoBtnTextActivo]}>
-                      📱 Yappy
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.metodoBtn, metodo === 'tarjeta' && styles.metodoBtnActivo]}
-                    dataSet={{ t2Press: '' }}
-                    onPress={() => setMetodo('tarjeta')}
-                    disabled={procesando}
-                  >
-                    <Text style={[styles.metodoBtnText, metodo === 'tarjeta' && styles.metodoBtnTextActivo]}>
-                      💳 Tarjeta
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+          {!procesando && (
+            <TouchableOpacity style={styles.backBtn} onPress={() => setStep('tiers')}>
+              <Text style={styles.backBtnText}>← Cambiar monto</Text>
+            </TouchableOpacity>
+          )}
+        </>
+      )}
 
-                {metodo === 'yappy' && yappyStep === 'idle' && (
-                  <>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Número Yappy (ej. 61234567)"
-                      placeholderTextColor={COLORS.gray}
-                      keyboardType="phone-pad"
-                      value={yappyPhone}
-                      onChangeText={setYappyPhone}
-                      maxLength={12}
-                      editable={!procesando}
-                    />
-                    <TouchableOpacity
-                      style={[styles.payBtn, yappyPhone.replace(/\D/g, '').length < 7 && styles.payBtnDisabled]}
-                      onPress={pagarYappy}
-                      disabled={procesando || yappyPhone.replace(/\D/g, '').length < 7}
-                    >
-                      {procesando
-                        ? <ActivityIndicator color={COLORS.white} />
-                        : <Text style={styles.payBtnText}>📱 COBRAR POR YAPPY</Text>
-                      }
-                    </TouchableOpacity>
-                  </>
-                )}
-
-                {metodo === 'yappy' && yappyStep === 'polling' && (
-                  <View style={styles.pollingCard}>
-                    <ActivityIndicator color={COLORS.green} style={{ marginBottom: SPACING.sm }} />
-                    <Text style={styles.pollingTitle}>Esperando aprobación...</Text>
-                    <Text style={styles.pollingAmount}>${tier.credito.toFixed(2)}</Text>
-                    <Text style={styles.pollingSub}>Abre tu app Yappy y acepta el cobro de Birrea2Play.{'\n'}O entra a tu banca en línea y elegí la opción de Yappy.</Text>
-                    <Text style={styles.pollingDots}>
-                      {yappyProgress.attempts}/{yappyProgress.maxAttempts} intentos
-                    </Text>
-                    <TouchableOpacity
-                      style={styles.cancelBtn}
-                      onPress={() => { cancelRef.current?.(); setYappyStep('idle'); setProcesando(false); }}
-                    >
-                      <Text style={styles.cancelBtnText}>Cancelar</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-
-                {metodo === 'tarjeta' && (
-                  <>
-                    <Text style={styles.tarjetaInfo}>
-                      Se abrirá el browser con el checkout seguro de PágueloFácil.
-                      Recibirás <Text style={styles.tierCredito}>${tier.credito.toFixed(2)}</Text> en créditos internos al confirmar.
-                    </Text>
-                    <TouchableOpacity style={styles.payBtn} onPress={pagarTarjeta} disabled={procesando}>
-                      {procesando
-                        ? <ActivityIndicator color={COLORS.white} />
-                        : <Text style={styles.payBtnText}>💳 PAGAR CON TARJETA</Text>
-                      }
-                    </TouchableOpacity>
-                  </>
-                )}
-
-                {!procesando && (
-                  <TouchableOpacity style={styles.backBtn} onPress={() => setStep('tiers')}>
-                    <Text style={styles.backBtnText}>← Cambiar monto</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-
-            <View style={{ height: SPACING.xl }} />
-          </ScrollView>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+      <View style={{ height: SPACING.xl }} />
+    </BottomSheetModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay:  { flex: 1, backgroundColor: '#00000099', justifyContent: 'flex-end' },
-  sheet:    { backgroundColor: COLORS.card2, borderTopLeftRadius: RADIUS.xl, borderTopRightRadius: RADIUS.xl, padding: SPACING.xl, maxHeight: '90%' },
-  header:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.md },
-  title:    { fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white, letterSpacing: 2 },
-  closeBtn: { fontFamily: FONTS.body, fontSize: 20, color: COLORS.gray },
+  // overlay/sheet/header/closeBtn del andamiaje viejo migraron a BottomSheetModal.
   subtitle: { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, marginBottom: SPACING.md },
 
   tierCard: {

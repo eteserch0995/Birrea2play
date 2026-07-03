@@ -188,6 +188,164 @@ export default function HomeScreen({ navigation }) {
 
   const { refreshing, onRefresh } = useAppRefresh(fetchData);
 
+  // ═══ Banners compartidos entre la rama clásica y Tema2 (rifa, bono bienvenida,
+  // perfil incompleto, Mundial, club, recaudo). Antes vivían duplicados casi
+  // literalmente en ambas ramas; unificados acá para no divergir. `rise` opcional
+  // (string del dataSet t2Rise) envuelve el grupo en un View — solo la rama Tema2
+  // lo usa para su animación de entrada; la rama clásica llama sin `rise`. ═══
+  function renderSharedBanners({ rise } = {}) {
+    const content = (
+      <>
+        {/* ── Rifa Aniversario Birrea2Play ── */}
+        {RAFFLE_ACTIVE && !RECAUDO_FOCUS && (
+          <TouchableOpacity
+            style={styles.raffleBanner}
+            activeOpacity={0.88}
+            onPress={() => navigation.navigate('Raffle', { eventId: '3293898c-a937-48e2-84f0-cf3fcc10e068' })}
+          >
+            <Text style={styles.raffleEmoji}>🎽</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.raffleKicker}>RIFA DE ANIVERSARIO</Text>
+              <Text style={styles.raffleTitle}>Camiseta Birrea2Play</Text>
+              <Text style={styles.raffleSub}>Presencial · jue 16 jul · $1 boleto</Text>
+            </View>
+            <View style={styles.rafflePriceBadge}>
+              <Text style={styles.rafflePriceAmt}>$1</Text>
+              <Text style={styles.rafflePriceLbl}>boleto</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {/* ── Banner $1 bienvenida — un solo uso, vence PAN vs CRO ── */}
+        {WELCOME_BONUS_ENABLED && !bonusClaimed && (
+          bonusExpired ? (
+            <View style={[styles.bonusBanner, { borderColor: COLORS.gray, opacity: 0.75 }]}>
+              <Text style={styles.bonusBannerIcon}>⏰</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.bonusBannerTitle}>Recompensa vencida</Text>
+                <Text style={styles.bonusBannerSub}>El período de la recompensa de bienvenida ya finalizó.</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setBonusClaimed(true)}
+                style={styles.bonusBannerCta}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.bonusBannerCtaText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={[styles.bonusBanner, bonusSuccess && styles.bonusBannerSuccess]}>
+              <Text style={styles.bonusBannerIcon}>{bonusSuccess ? '✅' : '🎁'}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.bonusBannerTitle}>
+                  {bonusSuccess ? '¡$1 acreditado en tu wallet!' : 'RECOMPENSA DE BIENVENIDA'}
+                </Text>
+                <Text style={styles.bonusBannerSub}>
+                  {bonusSuccess
+                    ? 'Ya podés usarlo en tu próxima birrea.'
+                    : bonusRemaining != null
+                      ? `Solo quedan ${bonusRemaining} — vence hoy al arrancar PAN 🆚 CRO`
+                      : 'Recibí $1 en tu wallet — vence hoy al arrancar PAN 🆚 CRO'}
+                </Text>
+                {bonusError ? (
+                  <Text style={{ color: BONUS_COLORS.error, fontSize: 11, marginTop: 4 }}>{bonusError}</Text>
+                ) : null}
+              </View>
+              {!bonusSuccess && (
+                bonusClaiming
+                  ? <ActivityIndicator size="small" color={COLORS.neon} style={{ marginLeft: 8 }} />
+                  : (
+                    <TouchableOpacity
+                      onPress={handleClaimBonus}
+                      style={styles.bonusBannerCta}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.bonusBannerCtaText}>COBRAR $1</Text>
+                    </TouchableOpacity>
+                  )
+              )}
+            </View>
+          )
+        )}
+
+        {/* ── Banner: perfil incompleto ── */}
+        {(() => {
+          if (!user?.id) return null;
+          const localPart = (user.correo ?? '').split('@')[0];
+          const expectedFallback = localPart.charAt(0).toUpperCase() + localPart.slice(1);
+          const nombreEsFallback = !!user.nombre && user.nombre === expectedFallback;
+          const sinTelefono = !user.telefono || user.telefono.trim() === '';
+          if (!nombreEsFallback && !sinTelefono) return null;
+          return (
+            <TouchableOpacity
+              style={styles.profileBanner}
+              onPress={() => navigation.navigate('EditProfile')}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.profileBannerIcon}>👤</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.profileBannerTitle}>Completá tu perfil</Text>
+                <Text style={styles.profileBannerSub}>
+                  {nombreEsFallback && sinTelefono
+                    ? 'Falta tu nombre completo y teléfono.'
+                    : nombreEsFallback
+                      ? 'Tu nombre quedó como tu correo. Actualizalo.'
+                      : 'Falta tu número de teléfono.'}
+                </Text>
+              </View>
+              <Text style={styles.profileBannerArrow}>→</Text>
+            </TouchableOpacity>
+          );
+        })()}
+
+        {mundialOn && !RECAUDO_FOCUS && <MundialQuickCard onPress={() => navigation.navigate('Mundial')} />}
+
+        {/* ── Banner Club de Beneficios (botón dorado) ── */}
+        {clubOn && !RECAUDO_FOCUS && (
+          <TouchableOpacity
+            style={styles.clubBanner}
+            activeOpacity={0.9}
+            onPress={() => navigation.navigate('Beneficios')}
+          >
+            <Text style={styles.clubBannerIcon}>🎁</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.clubBannerKicker}>CLUB BIRREOSO</Text>
+              <Text style={styles.clubBannerTitle}>BENEFICIOS DE SOCIO</Text>
+              <Text style={styles.clubBannerSub}>Descuentos exclusivos en comercios aliados</Text>
+            </View>
+            <Text style={styles.clubBannerArrow}>→</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* ── Recaudo Solidario (Venezuela) — botón principal grande ──
+           Gateado por RECAUDO_FOCUS: es el CTA focal del modo campaña (mismo flag que
+           oculta rifa/Mundial/Club). Al apagar RECAUDO_FOCUS el Home vuelve simétrico
+           a su layout normal sin este botón. */}
+        {RECAUDO_FOCUS && (
+          <TouchableOpacity
+            style={styles.recaudoBig}
+            activeOpacity={0.9}
+            onPress={() => navigation.navigate('Recaudo')}
+          >
+            <Text style={styles.recaudoBigHeart}>❤️🇻🇪</Text>
+            <Text style={styles.recaudoBigKicker}>RECAUDO SOLIDARIO</Text>
+            <Text style={styles.recaudoBigTitle}>YO APOYO A VENEZUELA</Text>
+            <View style={styles.recaudoNews}>
+              <Text style={styles.recaudoNewsText}>
+                🧾 ¡Buenas noticias! Ya compramos los primeros insumos médicos. Mirá la factura, las fotos y el fondo disponible. Seguimos toda la semana — aún faltan insumos. ¿Nos ayudás?
+              </Text>
+            </View>
+            <Text style={styles.recaudoBigSub}>Doná productos, dinero o ayudá con la recolección</Text>
+            <View style={styles.recaudoBigCta}>
+              <Text style={styles.recaudoBigCtaText}>VER DETALLES Y APOYAR  →</Text>
+            </View>
+          </TouchableOpacity>
+        )}
+      </>
+    );
+    return rise ? <View dataSet={{ t2Rise: rise }}>{content}</View> : content;
+  }
+
   // ═══ Tema2: rama de layout bento, SOLO JSX (mismos hooks/estado de arriba) ═══
   // No condicionar hooks acá — isTema2Active() solo decide qué árbol de JSX se
   // devuelve al final del componente (ver `return` más abajo).
@@ -325,149 +483,10 @@ export default function HomeScreen({ navigation }) {
             )}
           </View>
 
-          {/* ── Banners existentes: mismo contenido/condiciones que la rama clásica ──
-             No se migraron a estilo glass hoy (ver risks del handoff); se reutiliza
-             el JSX tal cual para no reescribir 6 banners en esta pasada. Se agrupan
-             en un solo View con t2Rise para que entren juntos (grupo, no individual). */}
-          <View dataSet={{ t2Rise: '4' }}>
-          {RAFFLE_ACTIVE && !RECAUDO_FOCUS && (
-            <TouchableOpacity
-              style={styles.raffleBanner}
-              activeOpacity={0.88}
-              onPress={() => navigation.navigate('Raffle', { eventId: '3293898c-a937-48e2-84f0-cf3fcc10e068' })}
-            >
-              <Text style={styles.raffleEmoji}>🎽</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.raffleKicker}>RIFA DE ANIVERSARIO</Text>
-                <Text style={styles.raffleTitle}>Camiseta Birrea2Play</Text>
-                <Text style={styles.raffleSub}>Presencial · jue 16 jul · $1 boleto</Text>
-              </View>
-              <View style={styles.rafflePriceBadge}>
-                <Text style={styles.rafflePriceAmt}>$1</Text>
-                <Text style={styles.rafflePriceLbl}>boleto</Text>
-              </View>
-            </TouchableOpacity>
-          )}
-
-          {WELCOME_BONUS_ENABLED && !bonusClaimed && (
-            bonusExpired ? (
-              <View style={[styles.bonusBanner, { borderColor: COLORS.gray, opacity: 0.75 }]}>
-                <Text style={styles.bonusBannerIcon}>⏰</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.bonusBannerTitle}>Recompensa vencida</Text>
-                  <Text style={styles.bonusBannerSub}>El período de la recompensa de bienvenida ya finalizó.</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={() => setBonusClaimed(true)}
-                  style={styles.bonusBannerCta}
-                  activeOpacity={0.8}
-                >
-                  <Text style={styles.bonusBannerCtaText}>OK</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <View style={[styles.bonusBanner, bonusSuccess && styles.bonusBannerSuccess]}>
-                <Text style={styles.bonusBannerIcon}>{bonusSuccess ? '✅' : '🎁'}</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.bonusBannerTitle}>
-                    {bonusSuccess ? '¡$1 acreditado en tu wallet!' : 'RECOMPENSA DE BIENVENIDA'}
-                  </Text>
-                  <Text style={styles.bonusBannerSub}>
-                    {bonusSuccess
-                      ? 'Ya podés usarlo en tu próxima birrea.'
-                      : bonusRemaining != null
-                        ? `Solo quedan ${bonusRemaining} — vence hoy al arrancar PAN 🆚 CRO`
-                        : 'Recibí $1 en tu wallet — vence hoy al arrancar PAN 🆚 CRO'}
-                  </Text>
-                  {bonusError ? (
-                    <Text style={{ color: BONUS_COLORS.error, fontSize: 11, marginTop: 4 }}>{bonusError}</Text>
-                  ) : null}
-                </View>
-                {!bonusSuccess && (
-                  bonusClaiming
-                    ? <ActivityIndicator size="small" color={COLORS.neon} style={{ marginLeft: 8 }} />
-                    : (
-                      <TouchableOpacity
-                        onPress={handleClaimBonus}
-                        style={styles.bonusBannerCta}
-                        activeOpacity={0.8}
-                      >
-                        <Text style={styles.bonusBannerCtaText}>COBRAR $1</Text>
-                      </TouchableOpacity>
-                    )
-                )}
-              </View>
-            )
-          )}
-
-          {(() => {
-            if (!user?.id) return null;
-            const localPart = (user.correo ?? '').split('@')[0];
-            const expectedFallback = localPart.charAt(0).toUpperCase() + localPart.slice(1);
-            const nombreEsFallback = !!user.nombre && user.nombre === expectedFallback;
-            const sinTelefono = !user.telefono || user.telefono.trim() === '';
-            if (!nombreEsFallback && !sinTelefono) return null;
-            return (
-              <TouchableOpacity
-                style={styles.profileBanner}
-                onPress={() => navigation.navigate('EditProfile')}
-                activeOpacity={0.85}
-              >
-                <Text style={styles.profileBannerIcon}>👤</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.profileBannerTitle}>Completá tu perfil</Text>
-                  <Text style={styles.profileBannerSub}>
-                    {nombreEsFallback && sinTelefono
-                      ? 'Falta tu nombre completo y teléfono.'
-                      : nombreEsFallback
-                        ? 'Tu nombre quedó como tu correo. Actualizalo.'
-                        : 'Falta tu número de teléfono.'}
-                  </Text>
-                </View>
-                <Text style={styles.profileBannerArrow}>→</Text>
-              </TouchableOpacity>
-            );
-          })()}
-
-          {mundialOn && !RECAUDO_FOCUS && <MundialQuickCard onPress={() => navigation.navigate('Mundial')} />}
-
-          {clubOn && !RECAUDO_FOCUS && (
-            <TouchableOpacity
-              style={styles.clubBanner}
-              activeOpacity={0.9}
-              onPress={() => navigation.navigate('Beneficios')}
-            >
-              <Text style={styles.clubBannerIcon}>🎁</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.clubBannerKicker}>CLUB BIRREOSO</Text>
-                <Text style={styles.clubBannerTitle}>BENEFICIOS DE SOCIO</Text>
-                <Text style={styles.clubBannerSub}>Descuentos exclusivos en comercios aliados</Text>
-              </View>
-              <Text style={styles.clubBannerArrow}>→</Text>
-            </TouchableOpacity>
-          )}
-
-          {RECAUDO_FOCUS && (
-            <TouchableOpacity
-              style={styles.recaudoBig}
-              activeOpacity={0.9}
-              onPress={() => navigation.navigate('Recaudo')}
-            >
-              <Text style={styles.recaudoBigHeart}>❤️🇻🇪</Text>
-              <Text style={styles.recaudoBigKicker}>RECAUDO SOLIDARIO</Text>
-              <Text style={styles.recaudoBigTitle}>YO APOYO A VENEZUELA</Text>
-              <View style={styles.recaudoNews}>
-                <Text style={styles.recaudoNewsText}>
-                  🧾 ¡Buenas noticias! Ya compramos los primeros insumos médicos. Mirá la factura, las fotos y el fondo disponible. Seguimos toda la semana — aún faltan insumos. ¿Nos ayudás?
-                </Text>
-              </View>
-              <Text style={styles.recaudoBigSub}>Doná productos, dinero o ayudá con la recolección</Text>
-              <View style={styles.recaudoBigCta}>
-                <Text style={styles.recaudoBigCtaText}>VER DETALLES Y APOYAR  →</Text>
-              </View>
-            </TouchableOpacity>
-          )}
-          </View>
+          {/* ── Banners compartidos (rifa, bono bienvenida, perfil, Mundial, club,
+             recaudo): mismo contenido/condiciones que la rama clásica, agrupados en
+             un View con t2Rise para que entren juntos (grupo, no individual). ── */}
+          {renderSharedBanners({ rise: '4' })}
 
           {/* ── Más eventos (el resto de la lista, después del hero) ── */}
           {!loading && !error && restoEventos.length > 0 && (
@@ -521,152 +540,9 @@ export default function HomeScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* ── Rifa Aniversario Birrea2Play ── */}
-        {RAFFLE_ACTIVE && !RECAUDO_FOCUS && (
-          <TouchableOpacity
-            style={styles.raffleBanner}
-            activeOpacity={0.88}
-            onPress={() => navigation.navigate('Raffle', { eventId: '3293898c-a937-48e2-84f0-cf3fcc10e068' })}
-          >
-            <Text style={styles.raffleEmoji}>🎽</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.raffleKicker}>RIFA DE ANIVERSARIO</Text>
-              <Text style={styles.raffleTitle}>Camiseta Birrea2Play</Text>
-              <Text style={styles.raffleSub}>Presencial · jue 16 jul · $1 boleto</Text>
-            </View>
-            <View style={styles.rafflePriceBadge}>
-              <Text style={styles.rafflePriceAmt}>$1</Text>
-              <Text style={styles.rafflePriceLbl}>boleto</Text>
-            </View>
-          </TouchableOpacity>
-        )}
-
-        {/* ── Banner $1 bienvenida — un solo uso, vence PAN vs CRO ── */}
-        {WELCOME_BONUS_ENABLED && !bonusClaimed && (
-          bonusExpired ? (
-            <View style={[styles.bonusBanner, { borderColor: COLORS.gray, opacity: 0.75 }]}>
-              <Text style={styles.bonusBannerIcon}>⏰</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.bonusBannerTitle}>Recompensa vencida</Text>
-                <Text style={styles.bonusBannerSub}>El período de la recompensa de bienvenida ya finalizó.</Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setBonusClaimed(true)}
-                style={styles.bonusBannerCta}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.bonusBannerCtaText}>OK</Text>
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <View style={[styles.bonusBanner, bonusSuccess && styles.bonusBannerSuccess]}>
-              <Text style={styles.bonusBannerIcon}>{bonusSuccess ? '✅' : '🎁'}</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.bonusBannerTitle}>
-                  {bonusSuccess ? '¡$1 acreditado en tu wallet!' : 'RECOMPENSA DE BIENVENIDA'}
-                </Text>
-                <Text style={styles.bonusBannerSub}>
-                  {bonusSuccess
-                    ? 'Ya podés usarlo en tu próxima birrea.'
-                    : bonusRemaining != null
-                      ? `Solo quedan ${bonusRemaining} — vence hoy al arrancar PAN 🆚 CRO`
-                      : 'Recibí $1 en tu wallet — vence hoy al arrancar PAN 🆚 CRO'}
-                </Text>
-                {bonusError ? (
-                  <Text style={{ color: BONUS_COLORS.error, fontSize: 11, marginTop: 4 }}>{bonusError}</Text>
-                ) : null}
-              </View>
-              {!bonusSuccess && (
-                bonusClaiming
-                  ? <ActivityIndicator size="small" color={COLORS.neon} style={{ marginLeft: 8 }} />
-                  : (
-                    <TouchableOpacity
-                      onPress={handleClaimBonus}
-                      style={styles.bonusBannerCta}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={styles.bonusBannerCtaText}>COBRAR $1</Text>
-                    </TouchableOpacity>
-                  )
-              )}
-            </View>
-          )
-        )}
-
-
-        {/* ── Banner: perfil incompleto ── */}
-        {(() => {
-          if (!user?.id) return null;
-          const localPart = (user.correo ?? '').split('@')[0];
-          const expectedFallback = localPart.charAt(0).toUpperCase() + localPart.slice(1);
-          const nombreEsFallback = !!user.nombre && user.nombre === expectedFallback;
-          const sinTelefono = !user.telefono || user.telefono.trim() === '';
-          if (!nombreEsFallback && !sinTelefono) return null;
-          return (
-            <TouchableOpacity
-              style={styles.profileBanner}
-              onPress={() => navigation.navigate('EditProfile')}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.profileBannerIcon}>👤</Text>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.profileBannerTitle}>Completá tu perfil</Text>
-                <Text style={styles.profileBannerSub}>
-                  {nombreEsFallback && sinTelefono
-                    ? 'Falta tu nombre completo y teléfono.'
-                    : nombreEsFallback
-                      ? 'Tu nombre quedó como tu correo. Actualizalo.'
-                      : 'Falta tu número de teléfono.'}
-                </Text>
-              </View>
-              <Text style={styles.profileBannerArrow}>→</Text>
-            </TouchableOpacity>
-          );
-        })()}
-
-        {mundialOn && !RECAUDO_FOCUS && <MundialQuickCard onPress={() => navigation.navigate('Mundial')} />}
-
-        {/* ── Banner Club de Beneficios (botón dorado) ── */}
-        {clubOn && !RECAUDO_FOCUS && (
-          <TouchableOpacity
-            style={styles.clubBanner}
-            activeOpacity={0.9}
-            onPress={() => navigation.navigate('Beneficios')}
-          >
-            <Text style={styles.clubBannerIcon}>🎁</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.clubBannerKicker}>CLUB BIRREOSO</Text>
-              <Text style={styles.clubBannerTitle}>BENEFICIOS DE SOCIO</Text>
-              <Text style={styles.clubBannerSub}>Descuentos exclusivos en comercios aliados</Text>
-            </View>
-            <Text style={styles.clubBannerArrow}>→</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* ── Recaudo Solidario (Venezuela) — botón principal grande ──
-           Gateado por RECAUDO_FOCUS: es el CTA focal del modo campaña (mismo flag que
-           oculta rifa/Mundial/Club). Al apagar RECAUDO_FOCUS el Home vuelve simétrico
-           a su layout normal sin este botón. */}
-        {RECAUDO_FOCUS && (
-          <TouchableOpacity
-            style={styles.recaudoBig}
-            activeOpacity={0.9}
-            onPress={() => navigation.navigate('Recaudo')}
-          >
-            <Text style={styles.recaudoBigHeart}>❤️🇻🇪</Text>
-            <Text style={styles.recaudoBigKicker}>RECAUDO SOLIDARIO</Text>
-            <Text style={styles.recaudoBigTitle}>YO APOYO A VENEZUELA</Text>
-            <View style={styles.recaudoNews}>
-              <Text style={styles.recaudoNewsText}>
-                🧾 ¡Buenas noticias! Ya compramos los primeros insumos médicos. Mirá la factura, las fotos y el fondo disponible. Seguimos toda la semana — aún faltan insumos. ¿Nos ayudás?
-              </Text>
-            </View>
-            <Text style={styles.recaudoBigSub}>Doná productos, dinero o ayudá con la recolección</Text>
-            <View style={styles.recaudoBigCta}>
-              <Text style={styles.recaudoBigCtaText}>VER DETALLES Y APOYAR  →</Text>
-            </View>
-          </TouchableOpacity>
-        )}
+        {/* ── Banners compartidos (rifa, bono bienvenida, perfil, Mundial, club,
+           recaudo) — ver renderSharedBanners() arriba, misma función que Tema2. ── */}
+        {renderSharedBanners()}
 
         {/* ── Próximos eventos: PRIMER bloque visible para foco en agenda ── */}
         <SectionHeader title="Próximos eventos" onPress={() => navigation.navigate('Eventos')} />

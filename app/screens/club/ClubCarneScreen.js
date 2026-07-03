@@ -297,6 +297,10 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.md,
     padding: SPACING.md,
     alignItems: 'center',
+    // Pinta ENCIMA del foil holo (::after sin z-index del wrapper tema2):
+    // garantiza QR 100% limpio para la cámara, sin depender del blend-mode.
+    position: 'relative',
+    zIndex: 1,
     marginHorizontal: SPACING.lg,
     ...SHADOWS.card,
   },

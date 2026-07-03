@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
-  View, Text, Modal, TouchableOpacity, StyleSheet, ActivityIndicator,
+  View, Text, TouchableOpacity, StyleSheet, ActivityIndicator,
 } from 'react-native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../constants/theme';
+import BottomSheetModal from './ui/BottomSheetModal';
 
 /**
  * CancelRegistrationModal
@@ -24,136 +25,131 @@ export default function CancelRegistrationModal({
   const refund50  = ((amount ?? 0) * 0.5).toFixed(2);
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.sheet} dataSet={{ t2Glass: '' }}>
-          <Text style={styles.title}>Cancelar Inscripción</Text>
-
-          {/* Refund info — el usuario ve el costo ANTES de confirmar */}
-          {canRefund ? (
-            isPaid ? (
-              <View style={styles.refundBox}>
-                <Text style={styles.refundText}>
-                  ✓  Se devuelven ${refund100} (100%) a tus créditos internos.
-                </Text>
-              </View>
-            ) : isCash ? (
-              <View style={styles.refundBox}>
-                <Text style={styles.refundText}>
-                  ✓  Si tu pago en efectivo ya fue recibido, se devuelven ${refund100} (100%) a tus créditos internos. Si aún no pagaste, no se hace cargo alguno.
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.noRefundBox}>
-                <Text style={styles.noRefundText}>No hay pagos registrados que devolver.</Text>
-              </View>
-            )
-          ) : isPaid ? (
-            <View style={styles.noRefundBox}>
-              <Text style={styles.noRefundText}>
-                ⚠️  Estás cancelando a menos de 48 horas del evento.{'\n'}
-                Se devuelve el 50% (${refund50}) a tus créditos internos; el resto se retiene como cargo por cancelación tardía.
+    <BottomSheetModal
+      visible={visible}
+      onClose={onClose}
+      title="Cancelar Inscripción"
+      // Modal de reembolso: el overlay actual no cerraba al tocar, y por regla
+      // los modales que disparan pagos/reembolsos siempre van con false.
+      dismissOnBackdrop={false}
+    >
+      <View style={{ gap: SPACING.md }}>
+        {/* Refund info — el usuario ve el costo ANTES de confirmar */}
+        {canRefund ? (
+          isPaid ? (
+            <View style={styles.refundBox}>
+              <Text style={styles.refundText}>
+                ✓  Se devuelven ${refund100} (100%) a tus créditos internos.
               </Text>
-              {refundDeadline && (
-                <Text style={styles.deadlineText}>
-                  Plazo para 100% venció: {new Date(refundDeadline).toLocaleString('es-PA')}
-                </Text>
-              )}
             </View>
           ) : isCash ? (
-            <View style={styles.noRefundBox}>
-              <Text style={styles.noRefundText}>
-                ⚠️  Estás cancelando a menos de 48 horas del evento.{'\n'}
-                Si tu pago en efectivo ya fue recibido, se devuelve el 50% (${refund50}) a tus créditos internos.{'\n'}
-                Si aún no pagaste, el pago en efectivo quedará bloqueado para futuros eventos.
+            <View style={styles.refundBox}>
+              <Text style={styles.refundText}>
+                ✓  Si tu pago en efectivo ya fue recibido, se devuelven ${refund100} (100%) a tus créditos internos. Si aún no pagaste, no se hace cargo alguno.
               </Text>
             </View>
           ) : (
             <View style={styles.noRefundBox}>
               <Text style={styles.noRefundText}>No hay pagos registrados que devolver.</Text>
             </View>
-          )}
-
-          {/* Guest section */}
-          {hasGuests ? (
-            <>
-              <View style={styles.guestInfoBox}>
-                <Text style={styles.guestInfoText}>
-                  👥  Tienes {guestCount} invitado(s) en este evento.{'\n'}¿Qué deseas cancelar?
-                </Text>
-              </View>
-
-              <View style={styles.btnsVertical}>
-                <TouchableOpacity
-                  style={[styles.btnOption, { borderColor: COLORS.red + '60' }]}
-                  onPress={() => onConfirm(false)}
-                  disabled={loading}
-                  dataSet={{ t2Press: '' }}
-                >
-                  {loading
-                    ? <ActivityIndicator color={COLORS.white} />
-                    : <>
-                        <Text style={styles.btnOptionTitle}>Solo yo</Text>
-                        <Text style={styles.btnOptionSub}>Mis invitados permanecen en el evento</Text>
-                      </>
-                  }
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[styles.btnOption, { borderColor: COLORS.red }]}
-                  onPress={() => onConfirm(true)}
-                  disabled={loading}
-                  dataSet={{ t2Press: '' }}
-                >
-                  {loading
-                    ? <ActivityIndicator color={COLORS.white} />
-                    : <>
-                        <Text style={styles.btnOptionTitle}>Yo y mis invitados</Text>
-                        <Text style={styles.btnOptionSub}>Cancela tu inscripción y la de tus {guestCount} invitado(s)</Text>
-                      </>
-                  }
-                </TouchableOpacity>
-              </View>
-
-              <Text style={styles.adminNote}>
-                📌 Para cancelar un invitado específico después, escribe al administrador.
+          )
+        ) : isPaid ? (
+          <View style={styles.noRefundBox}>
+            <Text style={styles.noRefundText}>
+              ⚠️  Estás cancelando a menos de 48 horas del evento.{'\n'}
+              Se devuelve el 50% (${refund50}) a tus créditos internos; el resto se retiene como cargo por cancelación tardía.
+            </Text>
+            {refundDeadline && (
+              <Text style={styles.deadlineText}>
+                Plazo para 100% venció: {new Date(refundDeadline).toLocaleString('es-PA')}
               </Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.confirm}>¿Deseas cancelar tu inscripción?</Text>
-              <View style={styles.btns}>
-                <TouchableOpacity style={styles.btnKeep} onPress={onClose} disabled={loading}>
-                  <Text style={styles.btnKeepText}>Mantener</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.btnCancel} onPress={() => onConfirm(false)} disabled={loading} dataSet={{ t2Press: '' }}>
-                  {loading
-                    ? <ActivityIndicator color={COLORS.white} />
-                    : <Text style={styles.btnCancelText}>Sí, cancelar</Text>
-                  }
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
+            )}
+          </View>
+        ) : isCash ? (
+          <View style={styles.noRefundBox}>
+            <Text style={styles.noRefundText}>
+              ⚠️  Estás cancelando a menos de 48 horas del evento.{'\n'}
+              Si tu pago en efectivo ya fue recibido, se devuelve el 50% (${refund50}) a tus créditos internos.{'\n'}
+              Si aún no pagaste, el pago en efectivo quedará bloqueado para futuros eventos.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.noRefundBox}>
+            <Text style={styles.noRefundText}>No hay pagos registrados que devolver.</Text>
+          </View>
+        )}
 
-          <TouchableOpacity style={styles.btnClose} onPress={onClose} disabled={loading}>
-            <Text style={styles.btnCloseText}>Mantener inscripción</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Guest section */}
+        {hasGuests ? (
+          <>
+            <View style={styles.guestInfoBox}>
+              <Text style={styles.guestInfoText}>
+                👥  Tienes {guestCount} invitado(s) en este evento.{'\n'}¿Qué deseas cancelar?
+              </Text>
+            </View>
+
+            <View style={styles.btnsVertical}>
+              <TouchableOpacity
+                style={[styles.btnOption, { borderColor: COLORS.red + '60' }]}
+                onPress={() => onConfirm(false)}
+                disabled={loading}
+                dataSet={{ t2Press: '' }}
+              >
+                {loading
+                  ? <ActivityIndicator color={COLORS.white} />
+                  : <>
+                      <Text style={styles.btnOptionTitle}>Solo yo</Text>
+                      <Text style={styles.btnOptionSub}>Mis invitados permanecen en el evento</Text>
+                    </>
+                }
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.btnOption, { borderColor: COLORS.red }]}
+                onPress={() => onConfirm(true)}
+                disabled={loading}
+                dataSet={{ t2Press: '' }}
+              >
+                {loading
+                  ? <ActivityIndicator color={COLORS.white} />
+                  : <>
+                      <Text style={styles.btnOptionTitle}>Yo y mis invitados</Text>
+                      <Text style={styles.btnOptionSub}>Cancela tu inscripción y la de tus {guestCount} invitado(s)</Text>
+                    </>
+                }
+              </TouchableOpacity>
+            </View>
+
+            <Text style={styles.adminNote}>
+              📌 Para cancelar un invitado específico después, escribe al administrador.
+            </Text>
+          </>
+        ) : (
+          <>
+            <Text style={styles.confirm}>¿Deseas cancelar tu inscripción?</Text>
+            <View style={styles.btns}>
+              <TouchableOpacity style={styles.btnKeep} onPress={onClose} disabled={loading}>
+                <Text style={styles.btnKeepText}>Mantener</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.btnCancel} onPress={() => onConfirm(false)} disabled={loading} dataSet={{ t2Press: '' }}>
+                {loading
+                  ? <ActivityIndicator color={COLORS.white} />
+                  : <Text style={styles.btnCancelText}>Sí, cancelar</Text>
+                }
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
+
+        <TouchableOpacity style={styles.btnClose} onPress={onClose} disabled={loading}>
+          <Text style={styles.btnCloseText}>Mantener inscripción</Text>
+        </TouchableOpacity>
       </View>
-    </Modal>
+    </BottomSheetModal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: { flex: 1, backgroundColor: '#000000BB', justifyContent: 'center', padding: SPACING.xl },
-  sheet: {
-    backgroundColor: COLORS.card2,
-    borderRadius: RADIUS.xl,
-    padding: SPACING.xl,
-    gap: SPACING.md,
-  },
-  title:        { fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white, letterSpacing: 2 },
   refundBox:    { backgroundColor: COLORS.green + '20', borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.green },
   refundText:   { fontFamily: FONTS.bodyMedium, color: COLORS.green, fontSize: 14 },
   noRefundBox:  { backgroundColor: COLORS.red + '20', borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.red },
