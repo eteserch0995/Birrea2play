@@ -29,6 +29,8 @@ import TimerBadge from '../../../components/TimerBadge';
 import { filterActiveEventGuests, getActiveRegistrationUserIds, isActiveEventGuest, computeEventCapacity, checkSpotAvailable } from '../../../lib/eventGuests';
 import { getTeamNameWithColor } from '../../../lib/teamWearColor';
 import ResponsiveContainer from '../../../components/ResponsiveContainer';
+import InstallGateSheet from '../../../components/InstallGateSheet';
+import { isMobileWeb, isStandaloneNow, getInstallGateFlags, hasEscapedGate } from '../../../lib/installGate';
 
 // Mapea errores técnicos de los flujos de pago Yappy a mensajes accionables
 // para el usuario. Sin teléfonos/canales inventados — solo lo que ya existe
@@ -72,6 +74,7 @@ export default function EventDetailScreen({ route, navigation }) {
 
   const [payModal,    setPayModal]    = useState(false);
   const [cancelModal, setCancelModal] = useState(false);
+  const [showInstallGate, setShowInstallGate] = useState(false);
   const [guestModal,  setGuestModal]  = useState(false);
   const [paying,      setPaying]      = useState(false);
   const [cancelling,  setCancelling]  = useState(false);
@@ -734,6 +737,22 @@ export default function EventDetailScreen({ route, navigation }) {
     setPayModal(true);
   };
 
+  // Gate por acción — SOLO en el CTA principal "Inscribirme" (navegador móvil,
+  // no instalada, kill switch encendido, sin escape de sesión). El resto de los
+  // flujos de pago (efectivo/wallet/yappy dentro del modal, "Pagar e inscribirme"
+  // de un cupo promovido) sigue intacto — ya pasó por acá una vez.
+  const handleInscribirmeCta = () => {
+    if (
+      Platform.OS === 'web' && typeof window !== 'undefined' &&
+      isMobileWeb() && !isStandaloneNow() &&
+      getInstallGateFlags().enabled && !hasEscapedGate()
+    ) {
+      setShowInstallGate(true);
+      return;
+    }
+    openPayModal();
+  };
+
   // ── Cancel registration ───────────────────────────────────────────────────
   const handleCancel = async (cancelGuests = false) => {
     if (!myReg?.id) {
@@ -1147,7 +1166,7 @@ export default function EventDetailScreen({ route, navigation }) {
             <Text style={styles.payTitle}>INSCRIPCIÓN — {(event.precio ?? 0) > 0 ? `$${(event.precio ?? 0).toFixed(2)}` : freeLabel(event.deporte)}</Text>
             <TouchableOpacity
               style={styles.btnPay}
-              onPress={openPayModal}
+              onPress={handleInscribirmeCta}
               disabled={paying || cancelling || yappyLoading}
             >
               <Text style={styles.btnPayText}>Inscribirse →</Text>
@@ -1265,6 +1284,12 @@ export default function EventDetailScreen({ route, navigation }) {
         eventGenero={event.genero}
         eventCuposHombres={event.cupos_hombres}
         eventCuposMujeres={event.cupos_mujeres}
+      />
+
+      <InstallGateSheet
+        visible={showInstallGate}
+        onClose={() => setShowInstallGate(false)}
+        reason="inscripcion"
       />
 
       {/* Yappy Botón — phone input + polling (same UI as WalletScreen) */}

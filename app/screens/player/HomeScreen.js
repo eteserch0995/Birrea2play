@@ -1,11 +1,11 @@
 import React, { useEffect, useCallback, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  ActivityIndicator, RefreshControl, Image,
+  ActivityIndicator, RefreshControl, Image, Platform, Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { COLORS, FONTS, SPACING, RADIUS, SHADOWS, TYPE } from '../../../constants/theme';
+import { COLORS, FONTS, SPACING, RADIUS, SHADOWS, TYPE, withAlpha } from '../../../constants/theme';
 import { isModo26Active } from '../../../lib/modo26';
 import { isTema2Active } from '../../../lib/tema2';
 import { IconWallet, IconCalendar, IconTrophy, IconField } from '../../../components/ui/TabIcons';
@@ -20,7 +20,10 @@ import MundialQuickCard from '../../../components/mundial/MundialQuickCard';
 import { useAppRefresh } from '../../../hooks/useAppRefresh';
 import ResponsiveContainer from '../../../components/ResponsiveContainer';
 import { freeLabel } from '../../../lib/eventHelpers';
-import { Card } from '../../../components/ui';
+import { Card, PressableScale } from '../../../components/ui';
+import { isStandaloneNow, fetchInstallGateFlags, logFunnel } from '../../../lib/installGate';
+
+const PWA_BONUS_CLAIMED_LS_KEY = 'b2p_pwa_bonus_claimed';
 
 // Colores propios del banner de rifa (morados), no forman parte de ningún theme.
 const RAFFLE_COLORS = { bg: '#1A0A2E', border: '#9B59B6', text: '#BB8FCE' };
@@ -61,6 +64,57 @@ export default function HomeScreen({ navigation }) {
   const [bonusError,      setBonusError]       = React.useState(null);
   const [bonusRemaining,  setBonusRemaining]   = React.useState(null); // cuántos quedan
   const [bonusExpired,    setBonusExpired]     = React.useState(false); // mostrar "Recompensa vencida"
+
+  // Banner del bono de instalación PWA (claim_pwa_install_bonus) — distinto del
+  // bono de bienvenida de arriba (WELCOME_BONUS_ENABLED, desactivado). Se apoya
+  // en la cache ya cargada de lib/installGate (sin fetch nuevo en este render).
+  const [showPwaBonusBanner, setShowPwaBonusBanner] = React.useState(false);
+  const [pwaBonusClaiming,   setPwaBonusClaiming]   = React.useState(false);
+  const pwaBonusClaimGuard = React.useRef(false);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    let cancelled = false;
+    // Async: la lectura sync cacheada corría contra el prefetch remoto y podía
+    // dejar el banner apagado toda la sesión (hallazgo del review).
+    fetchInstallGateFlags().then((flags) => {
+      if (cancelled) return;
+      const notifGranted = typeof Notification !== 'undefined' && Notification.permission === 'granted';
+      let alreadyClaimed = false;
+      try { alreadyClaimed = window.localStorage.getItem(PWA_BONUS_CLAIMED_LS_KEY) === '1'; } catch {}
+      setShowPwaBonusBanner(isStandaloneNow() && flags?.bonus === true && notifGranted && !alreadyClaimed);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleClaimPwaBonus = useCallback(async () => {
+    if (pwaBonusClaimGuard.current) return;
+    pwaBonusClaimGuard.current = true;
+    setPwaBonusClaiming(true);
+    try {
+      const { data, error } = await supabase.rpc('claim_pwa_install_bonus');
+      if (error) throw error;
+      // El RPC devuelve row-set: normalizar igual que el handler hermano del
+      // bono de bienvenida (hallazgo del review).
+      const row = Array.isArray(data) ? data[0] : data;
+      if (row?.granted === true) {
+        try { window.localStorage.setItem(PWA_BONUS_CLAIMED_LS_KEY, '1'); } catch {}
+        setShowPwaBonusBanner(false);
+        logFunnel('bonus_claimed', { source: 'home_banner' });
+        Alert.alert('¡$1 acreditado!', 'Ya está disponible en tu wallet.');
+      } else if (row?.already_claimed) {
+        // Idempotente: ya lo había reclamado antes (LS se había borrado) — silencioso.
+        try { window.localStorage.setItem(PWA_BONUS_CLAIMED_LS_KEY, '1'); } catch {}
+        setShowPwaBonusBanner(false);
+      }
+      // Otros errores (limite/expirado/etc): banner queda visible, el usuario puede reintentar.
+    } catch (_) {
+      // Fail-open — error de red no bloquea nada más en Home, solo no cobra ahora.
+    } finally {
+      setPwaBonusClaiming(false);
+      pwaBonusClaimGuard.current = false;
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setError(null);
@@ -265,6 +319,29 @@ export default function HomeScreen({ navigation }) {
               )}
             </View>
           )
+        )}
+
+        {/* ── Banner: bono $1 por instalar la app (embudo PWA) ── */}
+        {showPwaBonusBanner && (
+          <Card
+            variant="glass"
+            glow="subtle"
+            style={[styles.pwaBonusCard, { borderColor: withAlpha(COLORS.gold, '66') }]}
+          >
+            <View style={styles.pwaBonusRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.pwaBonusTitle}>RECLAMÁ TU $1 DE BONO</Text>
+                <Text style={styles.pwaBonusSub}>Instalaste la app y activaste notificaciones — tu recompensa te espera.</Text>
+              </View>
+              {pwaBonusClaiming ? (
+                <ActivityIndicator size="small" color={COLORS.gold} style={{ marginLeft: SPACING.sm }} />
+              ) : (
+                <PressableScale onPress={handleClaimPwaBonus} style={styles.pwaBonusCta}>
+                  <Text style={styles.pwaBonusCtaText}>RECLAMAR</Text>
+                </PressableScale>
+              )}
+            </View>
+          </Card>
         )}
 
         {/* ── Banner: perfil incompleto ── */}
@@ -720,6 +797,20 @@ const styles = StyleSheet.create({
   bonusBannerCtaText: {
     fontFamily: FONTS.bodyBold, fontSize: 12, color: BONUS_COLORS.ctaText,
   },
+  pwaBonusCard: {
+    marginHorizontal: SPACING.md, marginTop: SPACING.sm, marginBottom: SPACING.sm,
+  },
+  pwaBonusRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  pwaBonusTitle: {
+    fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.gold, letterSpacing: 0.5, marginBottom: 2,
+  },
+  pwaBonusSub: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2 },
+  pwaBonusCta: {
+    backgroundColor: COLORS.gold,
+    paddingHorizontal: 14, paddingVertical: 10, borderRadius: RADIUS.sm ?? 8,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  pwaBonusCtaText: { fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.bg },
   profileBanner: {
     marginHorizontal: SPACING.md, marginTop: SPACING.sm, marginBottom: SPACING.sm,
     backgroundColor: COLORS.gold + '20', borderWidth: 1, borderColor: COLORS.gold,

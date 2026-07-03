@@ -35,6 +35,8 @@ import NotificationPermissionModal from './components/NotificationPermissionModa
 import PlayerOnboardingModal from './components/PlayerOnboardingModal';
 import WCFlyerModal from './components/WCFlyerModal';
 import RecaudoFlyerModal from './components/RecaudoFlyerModal';
+import InstallCloud from './components/InstallCloud';
+import InstallHandoff from './components/InstallHandoff';
 import ErrorBoundary from './components/ErrorBoundary';
 import useWcStore from './store/wcStore';
 import { captureRefFromUrl } from './lib/referral';
@@ -487,6 +489,8 @@ export default function App() {
             onDismiss={dismissRecaudoFlyer}
             onOpen={recaudoVerMas}
           />
+          {Platform.OS === 'web' && <InstallCloud />}
+          {Platform.OS === 'web' && <InstallHandoff />}
         </SafeAreaProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>

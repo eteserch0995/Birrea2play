@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, KeyboardAvoidingView, Platform, Alert, ActivityIndicator,
@@ -9,6 +9,8 @@ import { signUp, signOut, createUserProfile, uploadAvatar } from '../../../lib/a
 import { logError, logWarn } from '../../../lib/logger';
 import { savePendingEventRefCode } from '../../../lib/referral';
 import ResponsiveContainer from '../../../components/ResponsiveContainer';
+import InstallGateSheet from '../../../components/InstallGateSheet';
+import { isMobileWeb, isStandaloneNow, fetchInstallGateFlags, hasEscapedGate } from '../../../lib/installGate';
 
 const DEPORTES = [
   'Fútbol', 'Fútbol 7', 'Fútbol Sala',
@@ -38,6 +40,18 @@ export default function RegisterScreen({ navigation }) {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [photoUri, setPhotoUri] = useState(null);
+  const [showInstallGate, setShowInstallGate] = useState(false);
+
+  // Gate por acción — solo navegador móvil, no instalada, sin escape de sesión
+  // y con el kill switch remoto encendido. Fail-open: si el fetch falla, el
+  // flag queda `enabled:false` y el formulario se usa normal, sin gate.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    if (!isMobileWeb() || isStandaloneNow() || hasEscapedGate()) return;
+    fetchInstallGateFlags().then((flags) => {
+      if (flags.enabled) setShowInstallGate(true);
+    });
+  }, []);
 
   const [form, setForm] = useState({
     nombre: '', correo: '', telefono: '',
@@ -262,6 +276,11 @@ export default function RegisterScreen({ navigation }) {
 
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+      <InstallGateSheet
+        visible={showInstallGate}
+        onClose={() => setShowInstallGate(false)}
+        reason="registro"
+      />
       <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       <ResponsiveContainer>
         {/* Step indicator */}
