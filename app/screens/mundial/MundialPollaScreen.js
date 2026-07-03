@@ -388,7 +388,7 @@ export default function MundialPollaScreen({ navigation }) {
     return (
       <MundialScreenFrame>
         <SafeAreaView style={styles.safe} edges={['top']}>
-          <View style={styles.notEnrolled}>
+          <View style={styles.notEnrolled} dataSet={{ t2Glass: '', t2Rise: '1' }}>
             <Text style={styles.notEnrolledTitle}>No estás inscrito a la Polla</Text>
             <Text style={styles.notEnrolledText}>
               Inscribite y predice los 104 partidos del Mundial.
@@ -413,7 +413,7 @@ export default function MundialPollaScreen({ navigation }) {
         contentContainerStyle={styles.scroll}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
       >
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.back}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.back} dataSet={{ t2Glass: '', t2Press: '' }}>
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
@@ -427,7 +427,7 @@ export default function MundialPollaScreen({ navigation }) {
             ? Number(poolStats.pozo)
             : (totalEnrolled * (pool?.polla_price ?? 15) * (1 - (pool?.fee_rate ?? 0.085)));
           return (
-            <View style={styles.pozoCard}>
+            <View style={styles.pozoCard} dataSet={{ t2Glass: '', t2Rise: '1' }}>
               <View style={styles.pozoLeft}>
                 <Text style={styles.pozoLabel}>POZO ACUMULADO</Text>
                 <Text style={styles.pozoValue}>
@@ -442,7 +442,7 @@ export default function MundialPollaScreen({ navigation }) {
           );
         })()}
 
-        <View style={styles.pointsCard}>
+        <View style={styles.pointsCard} dataSet={{ t2Glass: '', t2Rise: '2' }}>
           <Text style={styles.pointsLabel}>TUS PUNTOS</Text>
           <Text style={styles.pointsValue}>{enrollment.total_points}</Text>
           <View style={styles.pointsBreak}>
@@ -467,7 +467,7 @@ export default function MundialPollaScreen({ navigation }) {
           const pct = totalAll > 0 ? Math.round((filledAll / totalAll) * 100) : 0;
           const complete = filledAll === totalAll;
           return (
-            <View style={[styles.globalProgress, complete && styles.globalProgressDone]}>
+            <View style={[styles.globalProgress, complete && styles.globalProgressDone]} dataSet={{ t2Glass: '', t2Rise: '3' }}>
               <View style={styles.globalProgressRow}>
                 <Text style={styles.globalProgressLabel}>
                   {complete ? '✓ POLLA COMPLETA' : 'TU PROGRESO'}
@@ -514,7 +514,7 @@ export default function MundialPollaScreen({ navigation }) {
                 </View>
               );
             })()}
-            <Text style={styles.helpText}>
+            <Text style={styles.helpText} dataSet={{ t2Glass: '' }}>
               Predicí el marcador de los 72 partidos de grupos, organizados por jornada (fecha).
               Tocá una fecha para abrirla; "Llenar la jornada 1-0" llena rápido y vos editás.
             </Text>
@@ -602,7 +602,7 @@ export default function MundialPollaScreen({ navigation }) {
 
           return (
           <View>
-            <Text style={styles.helpText}>
+            <Text style={styles.helpText} dataSet={{ t2Glass: '' }}>
               Predicí quién avanza en cada partido de eliminatoria.
             </Text>
             {groupMatchesByDate(koMatches).map(({ key, label, items }) => {
@@ -657,7 +657,7 @@ export default function MundialPollaScreen({ navigation }) {
         })()}
 
         {tab === 'Ranking' && (
-          <View style={styles.rankCard}>
+          <View style={styles.rankCard} dataSet={{ t2Glass: '' }}>
             <Text style={styles.sectionTitle}>Top 50 de la Polla</Text>
             {ranking.map((r, i) => (
               <View key={r.user_id} style={[styles.rankRow, r.user_id === user.id && styles.rankRowMe]}>
@@ -674,7 +674,7 @@ export default function MundialPollaScreen({ navigation }) {
               </View>
             ))}
             {ranking.length === 0 && (
-              <Text style={styles.emptyText}>Aún no hay inscritos en la Polla.</Text>
+              <Text style={styles.emptyText} dataSet={{ t2Glass: '' }}>Aún no hay inscritos en la Polla.</Text>
             )}
             {myRank && !ranking.find(r => r.user_id === user.id) && (
               <View style={styles.myRankFooter}>
@@ -690,7 +690,7 @@ export default function MundialPollaScreen({ navigation }) {
           <View>
             <Text style={styles.sectionTitle}>Tus bonus pre-temporada</Text>
             {!bonus ? (
-              <Text style={styles.emptyText}>No tenés bonus picks cargados. Contactá al admin.</Text>
+              <Text style={styles.emptyText} dataSet={{ t2Glass: '' }}>No tenés bonus picks cargados. Contactá al admin.</Text>
             ) : (
               <View style={styles.bonusViewCard}>
                 <BonusViewRow label="🏆 Campeón (50)" value={teamsById[bonus.champion_team_id]?.name_es} correct={bonus.champion_correct} />
@@ -819,13 +819,16 @@ function PredictionRow({ match, prediction, userId, onSaved }) {
   };
 
   return (
-    <View style={[
-      styles.predCard,
-      finished && styles.predCardFinished,
-      prediction?.hit_level === 'exact' && { borderColor: COLORS.green },
-      prediction?.hit_level === 'winner_diff' && { borderColor: COLORS.neon },
-      prediction?.hit_level === 'winner' && { borderColor: COLORS.gold },
-    ]}>
+    <View
+      style={[
+        styles.predCard,
+        finished && styles.predCardFinished,
+        prediction?.hit_level === 'exact' && { borderColor: COLORS.green },
+        prediction?.hit_level === 'winner_diff' && { borderColor: COLORS.neon },
+        prediction?.hit_level === 'winner' && { borderColor: COLORS.gold },
+      ]}
+      dataSet={{ t2Glass: '' }}
+    >
       <View style={styles.predHead}>
         <Text style={styles.predNum}>M{match.match_number}</Text>
         <Text style={styles.predPhase}>
@@ -944,13 +947,16 @@ function BracketRow({ match, prediction, teamsById, blockedReason, userId, homeR
   };
 
   return (
-    <View style={[
-      styles.bracketRow,
-      finished && styles.bracketRowFinished,
-      prediction?.hit_level === 'winner' && { borderColor: COLORS.gold },
-      prediction?.hit_level === 'winner_diff' && { borderColor: COLORS.neon },
-      prediction?.hit_level === 'exact' && { borderColor: COLORS.green },
-    ]}>
+    <View
+      style={[
+        styles.bracketRow,
+        finished && styles.bracketRowFinished,
+        prediction?.hit_level === 'winner' && { borderColor: COLORS.gold },
+        prediction?.hit_level === 'winner_diff' && { borderColor: COLORS.neon },
+        prediction?.hit_level === 'exact' && { borderColor: COLORS.green },
+      ]}
+      dataSet={{ t2Glass: '' }}
+    >
       <View style={styles.bracketHead}>
         <Text style={styles.predNum}>M{match.match_number}</Text>
         <Text style={styles.predDate}>
@@ -1052,29 +1058,31 @@ const styles = StyleSheet.create({
   scroll: { padding: SPACING.md, paddingBottom: SPACING.xxl * 2 },
   back: {
     alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderColor: 'rgba(10,14,20,0.18)',
+    // Vidrio oscuro (era pastilla blanca) — texto pasa a claro para mantener contraste.
+    backgroundColor: 'rgba(10,14,20,0.85)',
+    borderColor: COLORS.line,
     borderWidth: 1,
     borderRadius: RADIUS.full,
     paddingHorizontal: 12,
     paddingVertical: 8,
     marginBottom: SPACING.sm,
   },
-  backLink: { color: COLORS.bg, fontFamily: FONTS.bodyBold, fontSize: 14 },
+  backLink: { color: COLORS.white, fontFamily: FONTS.bodyBold, fontSize: 14 },
 
   notEnrolled: {
     padding: SPACING.lg, marginTop: 40, alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.92)',
-    borderColor: 'rgba(10,14,20,0.16)',
+    // Vidrio oscuro (era card blanca) — títulos/texto pasan a claros.
+    backgroundColor: 'rgba(10,14,20,0.90)',
+    borderColor: COLORS.line,
     borderWidth: 1,
     borderRadius: RADIUS.lg,
   },
   notEnrolledTitle: {
-    fontFamily: FONTS.heading, fontSize: 24, color: COLORS.bg,
+    fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white,
     letterSpacing: 1, textAlign: 'center',
   },
   notEnrolledText: {
-    fontFamily: FONTS.body, fontSize: 14, color: COLORS.bg,
+    fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2,
     textAlign: 'center', marginTop: 8, marginBottom: SPACING.lg,
   },
   enrollBtn: {
@@ -1139,9 +1147,10 @@ const styles = StyleSheet.create({
   tabTextActive: { color: COLORS.white },
 
   helpText: {
-    fontFamily: FONTS.body, fontSize: 12, color: COLORS.bg,
-    backgroundColor: 'rgba(255,255,255,0.90)',
-    borderColor: 'rgba(10,14,20,0.14)',
+    // Vidrio oscuro (era pill blanca) — texto pasa a gray2 legible sobre oscuro.
+    fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2,
+    backgroundColor: 'rgba(10,14,20,0.85)',
+    borderColor: COLORS.line,
     borderWidth: 1,
     borderRadius: RADIUS.md,
     padding: SPACING.sm,
@@ -1378,9 +1387,10 @@ const styles = StyleSheet.create({
   rankPts:  { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.neon },
 
   emptyText: {
-    fontFamily: FONTS.body, fontSize: 13, color: COLORS.bg,
-    backgroundColor: 'rgba(255,255,255,0.90)',
-    borderColor: 'rgba(10,14,20,0.14)',
+    // Vidrio oscuro (era pill blanca) — texto pasa a gray2 legible sobre oscuro.
+    fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2,
+    backgroundColor: 'rgba(10,14,20,0.85)',
+    borderColor: COLORS.line,
     borderWidth: 1,
     borderRadius: RADIUS.md,
     padding: SPACING.sm,

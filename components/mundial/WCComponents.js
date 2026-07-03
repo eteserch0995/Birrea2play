@@ -43,18 +43,23 @@ export const WC_ALPHA = {
 };
 
 // ─── WCCard ──────────────────────────────────────────────────
-// variant: 'dark' (default) | 'light' | 'glow'
+// variant: 'dark' (default, token card oscuro) | 'light' | 'glow'
 // accent: 'gold' | 'magenta' | 'neon' | 'blue' | 'green' (border tint)
-export function WCCard({ children, variant = 'dark', accent, style }) {
+// dataSet: pass-through al View raíz (skin tema2, ej. t2Glass/t2Rise) — aditivo,
+// default undefined = comportamiento idéntico al de antes.
+export function WCCard({ children, variant = 'dark', accent, style, dataSet }) {
   const baseBg = variant === 'light' ? WC_ALPHA.cardLight : WC_ALPHA.cardDark;
   const borderColor = accent ? COLORS[accent] + '88' : (variant === 'light' ? WC_ALPHA.dividerDark : WC_ALPHA.divider);
   return (
-    <View style={[
-      cardStyles.base,
-      { backgroundColor: baseBg, borderColor },
-      variant === 'glow' && SHADOWS.glow,
-      style,
-    ]}>
+    <View
+      dataSet={dataSet}
+      style={[
+        cardStyles.base,
+        { backgroundColor: baseBg, borderColor },
+        variant === 'glow' && SHADOWS.glow,
+        style,
+      ]}
+    >
       {children}
     </View>
   );
@@ -88,7 +93,7 @@ export function WCButton({ label, onPress, variant = 'primary', size = 'lg', dis
       ]}
       onPress={onPress}
       disabled={disabled || loading}
-      {...(variant === 'primary' ? { dataSet: { m26Btn: 'primary' } } : {})}
+      {...(variant === 'primary' ? { dataSet: { m26Btn: 'primary', t2Press: '' } } : {})}
     >
       {loading ? (
         <ActivityIndicator color={color} size="small" />

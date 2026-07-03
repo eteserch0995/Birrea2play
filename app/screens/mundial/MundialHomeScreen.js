@@ -10,6 +10,8 @@ import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
+import TodayMatches from '../../../components/mundial/TodayMatches';
+import Card from '../../../components/ui/Card';
 import { shouldShowOnboarding } from './MundialOnboardingScreen';
 
 const mundialLogo = require('../../../assets/mundial/mundial-logo.png');
@@ -59,6 +61,8 @@ export default function MundialHomeScreen({ navigation }) {
     }
   };
 
+  const isPaid = pollaEnrollment?.payment_status === 'paid';
+
   if (loading && !pool) {
     return (
       <MundialScreenFrame>
@@ -81,39 +85,64 @@ export default function MundialHomeScreen({ navigation }) {
         >
           {/* Banner admin */}
           {isAdmin && pool && !pool.is_visible && (
-            <View style={s.adminBanner}>
+            <Card variant="glass" style={s.adminBanner}>
               <Text style={s.adminBannerLabel}>MODO ADMIN</Text>
               <Text style={s.adminBannerText}>
                 Este módulo está oculto a usuarios. Activá la visibilidad desde el panel de admin cuando quieras lanzar.
               </Text>
-            </View>
+            </Card>
           )}
 
-          {/* Logo / branding */}
-          <View style={s.headerCard}>
-            <Image source={mundialLogo} style={s.logo} resizeMode="contain" />
-            <Text style={s.kicker}>BIRREA2PLAY</Text>
-            <Text style={s.title}>MUNDIAL 2026</Text>
-            <Text style={s.subtitle}>USA · México · Canadá · 48 equipos</Text>
+          {/* Header compacto */}
+          <View dataSet={{ t2Rise: '1' }}>
+            <Card variant="glass" style={s.headerCard}>
+              <View style={s.headerRow}>
+                <Image source={mundialLogo} style={s.logo} resizeMode="contain" />
+                <View style={s.headerTextCol}>
+                  <Text style={s.kicker}>BIRREA2PLAY</Text>
+                  <Text style={s.title}>MUNDIAL 2026</Text>
+                  <Text style={s.subtitle}>USA · México · Canadá · 48 equipos</Text>
+                </View>
+              </View>
+            </Card>
           </View>
 
-          {/* Botones principales */}
-          <View style={s.quickRow}>
-            <TouchableOpacity style={[s.quickCard, s.quickCardPolla]} onPress={goToPolla} activeOpacity={0.85}>
-              <Text style={s.quickIcon}>🏆</Text>
-              <Text style={s.quickTitle}>POLLA{'\n'}MUNDIAL</Text>
-              <Text style={s.quickSub}>
-                {pollaEnrollment?.payment_status === 'paid'
-                  ? '✓ Ya inscrito\nTocá para jugar'
-                  : 'Predice marcadores\ny ganá el pozo'}
-              </Text>
-            </TouchableOpacity>
+          {/* Partidos de hoy */}
+          <View dataSet={{ t2Rise: '2' }} style={s.section}>
+            {/* TodayMatches ya trae su propio título "PARTIDOS DE HOY" adentro —
+                acá solo va el link a la vista completa, alineado a la derecha. */}
+            <View style={s.sectionHeaderRow}>
+              <View />
+              <TouchableOpacity onPress={() => navigation.navigate('MundialStandings')} activeOpacity={0.7}>
+                <Text style={s.sectionLink}>Ver todos →</Text>
+              </TouchableOpacity>
+            </View>
+            <TodayMatches />
+          </View>
 
-            <TouchableOpacity style={[s.quickCard, s.quickCardPartidos]} onPress={() => navigation.navigate('MundialStandings')} activeOpacity={0.85}>
-              <Text style={s.quickIcon}>🌍</Text>
-              <Text style={s.quickTitle}>PARTIDOS{'\n'}DEL MUNDIAL</Text>
-              <Text style={s.quickSub}>Hoy · Próximos{'\n'}Grupos · En vivo</Text>
-            </TouchableOpacity>
+          {/* Mi Polla — carta protagonista */}
+          <View dataSet={{ t2Rise: '3' }} style={s.section}>
+            <Card variant="holo" glow="hero" onPress={goToPolla} style={s.pollaCard}>
+              <Text style={s.pollaIcon}>🏆</Text>
+              <Text style={s.pollaTitle}>{isPaid ? 'MI POLLA MUNDIAL' : 'POLLA MUNDIAL'}</Text>
+              <Text style={s.pollaText}>
+                {isPaid
+                  ? 'Estás jugando — mirá tus pronósticos y el ranking'
+                  : 'Predice marcadores y ganá el pozo'}
+              </Text>
+              <Text style={s.pollaCta}>{isPaid ? 'Ver mis pronósticos →' : 'Inscribite ahora →'}</Text>
+            </Card>
+          </View>
+
+          {/* Accesos secundarios */}
+          <View dataSet={{ t2Rise: '4' }} style={s.tileRow}>
+            <Card variant="glass" style={s.tile} onPress={() => navigation.navigate('MundialStandings')}>
+              <Text style={s.tileIcon}>🌍</Text>
+              <Text style={s.tileTitle}>GRUPOS Y{'\n'}BRACKET</Text>
+            </Card>
+            <Card variant="glass" style={s.tile} onPress={() => navigation.navigate('MundialSurvivor')}>
+              <Text style={s.tileTitle}>SURVIVOR</Text>
+            </Card>
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -127,50 +156,49 @@ const s = StyleSheet.create({
 
   loadingWrap: {
     flex: 1, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.72)', margin: SPACING.lg, borderRadius: RADIUS.lg,
+    backgroundColor: 'transparent', margin: SPACING.lg,
   },
-  loadingText: { marginTop: SPACING.md, color: COLORS.bg, fontFamily: FONTS.body, fontSize: 14 },
+  loadingText: { marginTop: SPACING.md, color: COLORS.gray2, fontFamily: FONTS.body, fontSize: 14 },
 
   adminBanner: {
-    backgroundColor: 'rgba(255,255,255,0.90)',
-    borderColor: 'rgba(10,14,20,0.18)', borderWidth: 1,
-    borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.md,
+    marginBottom: SPACING.md,
   },
-  adminBannerLabel: { fontFamily: FONTS.heading, fontSize: 13, color: COLORS.bg, letterSpacing: 1.5, marginBottom: 4 },
-  adminBannerText:  { fontFamily: FONTS.body, fontSize: 13, color: COLORS.bg, lineHeight: 18 },
+  adminBannerLabel: { fontFamily: FONTS.heading, fontSize: 13, color: COLORS.gold, letterSpacing: 1.5, marginBottom: 4 },
+  adminBannerText:  { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, lineHeight: 18 },
 
   headerCard: {
-    alignItems: 'center',
-    paddingVertical: SPACING.lg, paddingHorizontal: SPACING.md,
     marginBottom: SPACING.md,
-    borderRadius: RADIUS.lg,
-    backgroundColor: 'rgba(255,255,255,0.88)',
-    borderWidth: 1, borderColor: 'rgba(10,14,20,0.12)',
   },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.md },
   logo: {
-    width: 132, height: 132, borderRadius: RADIUS.lg,
-    marginBottom: SPACING.md, borderWidth: 2, borderColor: COLORS.white,
-    backgroundColor: COLORS.white,
+    width: 44, height: 44, borderRadius: RADIUS.md,
   },
-  kicker:   { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.magentaText || COLORS.magenta, letterSpacing: 3, marginBottom: 4 },
-  title:    { fontFamily: FONTS.heading, fontSize: 44, color: COLORS.bg, letterSpacing: 2 },
-  subtitle: { fontFamily: FONTS.body, fontSize: 13, color: COLORS.bg, marginTop: 4 },
+  headerTextCol: { flex: 1 },
+  kicker:   { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.magentaText ?? COLORS.magenta, letterSpacing: 3, marginBottom: 2 },
+  title:    { fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white, letterSpacing: 1.5 },
+  subtitle: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2, marginTop: 2 },
 
-  quickRow: { flexDirection: 'row', gap: SPACING.sm },
-  quickCard: {
-    flex: 1, borderRadius: RADIUS.md,
-    paddingVertical: SPACING.lg, paddingHorizontal: SPACING.sm,
-    alignItems: 'center', borderWidth: 1.5,
+  section: { marginBottom: SPACING.md },
+  sectionHeaderRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: SPACING.xs, paddingHorizontal: SPACING.xs,
   },
-  quickCardPolla: {
-    backgroundColor: (COLORS.magenta ?? '#C026D3') + '18',
-    borderColor: COLORS.magenta ?? '#C026D3',
+  sectionLabel: { fontFamily: FONTS.heading, fontSize: 15, color: COLORS.white, letterSpacing: 1.2 },
+  sectionLink:  { fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.neon },
+
+  pollaCard: { alignItems: 'center', paddingVertical: SPACING.lg },
+  pollaIcon: { fontSize: 34, marginBottom: SPACING.xs },
+  pollaTitle: { fontFamily: FONTS.heading, fontSize: 26, color: COLORS.gold, letterSpacing: 1.5, textAlign: 'center' },
+  pollaText: {
+    fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, textAlign: 'center',
+    marginTop: SPACING.xs, lineHeight: 18, maxWidth: 280,
   },
-  quickCardPartidos: {
-    backgroundColor: (COLORS.blue2 ?? '#2563EB') + '18',
-    borderColor: COLORS.blue2 ?? '#2563EB',
+  pollaCta: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.neon, marginTop: SPACING.md, letterSpacing: 0.5 },
+
+  tileRow: { flexDirection: 'row', gap: SPACING.sm },
+  tile: {
+    flex: 1, alignItems: 'center', paddingVertical: SPACING.lg,
   },
-  quickIcon:  { fontSize: 32, marginBottom: 6 },
-  quickTitle: { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.white, letterSpacing: 1.5, marginBottom: 6, textAlign: 'center', lineHeight: 20 },
-  quickSub:   { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2 ?? COLORS.gray, textAlign: 'center', lineHeight: 16 },
+  tileIcon:  { fontSize: 26, marginBottom: 6 },
+  tileTitle: { fontFamily: FONTS.heading, fontSize: 15, color: COLORS.white, letterSpacing: 1.2, textAlign: 'center', lineHeight: 19 },
 });

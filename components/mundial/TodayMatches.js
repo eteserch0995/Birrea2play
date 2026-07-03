@@ -149,7 +149,7 @@ export default function TodayMatches({ enabled = true }) {
   // Carga inicial: placeholder minimo para no saltar el layout.
   if (loading && today.length === 0 && !next) {
     return (
-      <View style={styles.card}>
+      <View style={styles.card} dataSet={{ t2Glass: '' }}>
         <Header live={false} />
         <ActivityIndicator color={COLORS.neon} style={{ paddingVertical: SPACING.md }} />
       </View>
@@ -160,7 +160,7 @@ export default function TodayMatches({ enabled = true }) {
   if (today.length === 0) {
     if (!next) return null;
     return (
-      <View style={styles.card}>
+      <View style={styles.card} dataSet={{ t2Glass: '' }}>
         <Header live={false} title="MUNDIAL 2026" />
         <View style={styles.nextRow}>
           <Text style={styles.nextLabel}>PRÓXIMO PARTIDO</Text>
@@ -175,7 +175,7 @@ export default function TodayMatches({ enabled = true }) {
 
   const anyLive = today.some((m) => m.status === 'live');
   return (
-    <View style={styles.card}>
+    <View style={styles.card} dataSet={anyLive ? { t2Glass: '', t2Glow: 'mid' } : { t2Glass: '' }}>
       <Header live={anyLive} />
       {today.map((m, i) => (
         <MatchRow key={m.id} m={m} last={i === today.length - 1} />

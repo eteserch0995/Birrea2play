@@ -220,7 +220,7 @@ export default function MundialStandingsScreen({ navigation }) {
         <LiveBanner />
 
         {/* Pestañas */}
-        <View style={s.tabsRow}>
+        <View style={s.tabsRow} dataSet={{ t2Rise: '2' }}>
           {TABS.map(t => (
             <TouchableOpacity
               key={t.key}
@@ -244,7 +244,7 @@ export default function MundialStandingsScreen({ navigation }) {
               {/* ── HOY ── */}
               {activeTab === 'hoy' && (
                 <View>
-                  <View style={s.sectionHeader}>
+                  <View style={s.sectionHeader} dataSet={{ t2Rise: '3' }}>
                     <Text style={s.sectionTitle}>PARTIDOS DE HOY</Text>
                     {anyLive && (
                       <View style={s.liveChip}>
@@ -303,7 +303,7 @@ export default function MundialStandingsScreen({ navigation }) {
                   </View>
 
                   {/* Tabla */}
-                  <View style={s.table}>
+                  <View style={s.table} dataSet={{ t2Glass: '' }}>
                     <View style={[s.tableRow, s.tableHead]}>
                       <Text style={[s.col, s.colPos]}>#</Text>
                       <Text style={[s.col, s.colTeam]}>EQUIPO</Text>
@@ -367,7 +367,12 @@ function LiveBanner() {
   }, [pulse]);
 
   return (
-    <TouchableOpacity style={s.liveBanner} onPress={() => Linking.openURL(LIVE_URL)} activeOpacity={0.82}>
+    <TouchableOpacity
+      style={s.liveBanner}
+      onPress={() => Linking.openURL(LIVE_URL)}
+      activeOpacity={0.82}
+      dataSet={{ t2Rise: '1' }}
+    >
       <Animated.View style={[s.liveBannerPulse, { transform: [{ scale: pulse }] }]}>
         <View style={s.liveBannerDot} />
       </Animated.View>
@@ -395,7 +400,10 @@ function MatchCard({ m, goalsOpen, onToggle }) {
   const phaseLabel = m.phase === 'group' ? `Grupo ${m.group_letter}` : phaseStr(m.phase);
 
   return (
-    <View style={[s.card, isLive && s.cardLive]}>
+    <View
+      style={[s.card, isLive && s.cardLive]}
+      dataSet={isLive ? { t2Glass: '', t2Glow: 'mid' } : { t2Glass: '' }}
+    >
       <View style={s.matchRow}>
         <View style={[s.side, s.sideHome]}>
           <Text style={[s.teamCode, isFinished && sh < sa && s.teamLost]} numberOfLines={1}>

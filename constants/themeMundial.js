@@ -2,6 +2,13 @@
 // Tema visual Mundial 2026 — paleta basada en branding FIFA WC 2026.
 // Activo cuando useWCTheme() === true (admin siempre, resto desde 29-may).
 //
+// 2026-07-02: fondos alineados al skin "Estadio Nocturno + Holo" (tema2,
+// default de toda la app). Se oscurecen bg/bgDeep/bgCard/bgCard2/line para
+// matchear el negro profundo global (#05070B) — los acentos del módulo
+// (magenta/azul/lima/dorado y sus variantes) NO se tocan, son la identidad
+// Mundial y las notas WCAG siguen válidas (contraste sube al ser el fondo
+// aún más oscuro que antes).
+//
 // Reglas de contraste obligatorias (WCAG AA mínimo):
 // - Texto CLARO (white, white90) → SOLO sobre fondos OSCUROS (bg, bgDeep, primaryDark).
 // - Texto OSCURO (ink, ink70)    → SOLO sobre fondos CLAROS (white, lime, gold).
@@ -12,11 +19,11 @@
 // ============================================================
 
 export const COLORS_WC = {
-  // Fondos base
-  bg:        '#0A0E14',  // negro profundo (background principal)
+  // Fondos base (Estadio Nocturno)
+  bg:        '#05070B',  // negro profundo (background principal, igual al tema2)
   bgDeep:    '#000000',  // negro absoluto (modales, overlays)
-  bgCard:    '#141821',  // gris oscuro card primario
-  bgCard2:   '#1C2230',  // gris oscuro card secundario
+  bgCard:    '#10141C',  // card primario (vidrio oscuro tema2)
+  bgCard2:   '#161B25',  // card secundario (vidrio oscuro tema2)
   bgLight:   '#FFFFFF',  // blanco puro (cards luminosas, hero)
   bgLight2:  '#F4F6F9',  // gris claro (cards secundarias claras)
 
@@ -54,7 +61,7 @@ export const COLORS_WC = {
   ink50:      'rgba(10,14,20,0.50)',
 
   // Líneas y bordes
-  line:       '#2A3142',
+  line:       '#232B38',
   lineLight:  '#D8DDE5',
 };
 

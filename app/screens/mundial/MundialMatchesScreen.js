@@ -148,7 +148,7 @@ export default function MundialMatchesScreen({ navigation }) {
     <MundialScreenFrame>
       <SafeAreaView style={s.safe} edges={['top']}>
         {/* Header */}
-        <View style={s.header}>
+        <View style={s.header} dataSet={{ t2Rise: '1' }}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={s.back}>
             <Text style={s.backText}>‹</Text>
           </TouchableOpacity>
@@ -174,8 +174,8 @@ export default function MundialMatchesScreen({ navigation }) {
           ) : groups.length === 0 ? (
             <Text style={s.empty}>Sin partidos disponibles</Text>
           ) : (
-            groups.map(({ day, matches }) => (
-              <View key={day}>
+            groups.map(({ day, matches }, gi) => (
+              <View key={day} dataSet={gi < 2 ? { t2Rise: String(gi + 2) } : undefined}>
                 <View style={[s.dayHeader, day === todayKey && s.dayHeaderToday]}>
                   <Text style={[s.dayLabel, day === todayKey && s.dayLabelToday]}>{dayLabel(day)}</Text>
                 </View>
@@ -212,7 +212,10 @@ function MatchCard({ m, last, goalsOpen, onToggleGoals }) {
   const phaseLabel = m.phase === 'group' ? `Grupo ${m.group_letter}` : phaseStr(m.phase);
 
   return (
-    <View style={[s.card, !last && s.cardDivider, isLive && s.cardLive]}>
+    <View
+      style={[s.card, !last && s.cardDivider, isLive && s.cardLive]}
+      dataSet={isLive ? { t2Glass: '', t2Glow: 'mid' } : { t2Glass: '' }}
+    >
       <View style={s.matchRow}>
         {/* Home */}
         <View style={[s.side, s.sideHome]}>
