@@ -33,6 +33,27 @@ export default function GuestModal({
   const precio = Number(eventPrecio) || 0;
   const esPago = precio > 0;
 
+  // Gate de efectivo (igual que PaymentModal): >=3 birrias o forzado por admin, y no bloqueado.
+  const [efSt, setEfSt] = useState(null); // { allowed, eventos, min, bloqueado }
+  useEffect(() => {
+    if (!visible) { setEfSt(null); return; }   // reset al cerrar
+    let cancelled = false;
+    setEfSt(null);
+    (async () => {
+      const FALLBACK = { allowed: false, eventos: 0, min: 3, bloqueado: false, forzado: false };
+      try {
+        const { data, error } = await supabase.rpc('efectivo_status');
+        if (cancelled) return;
+        setEfSt(error || !data ? FALLBACK : data);
+      } catch (_) { if (!cancelled) setEfSt(FALLBACK); }
+    })();
+    return () => { cancelled = true; };
+  }, [visible]);
+  const efAllowed = !!efSt && efSt.allowed === true;
+  const efBloq = !!efSt && !!efSt.bloqueado;
+  const efMin = efSt?.min ?? 3;
+  const efEventos = efSt?.eventos ?? 0;
+
   // Cancelar polling Yappy si el modal se desmonta sin pasar por handleClose
   // (ej. el padre lo cierra con visible=false directamente).
   useEffect(() => () => {
@@ -470,18 +491,34 @@ export default function GuestModal({
                 </View>
               </TouchableOpacity>
 
-              {/* Efectivo */}
-              <TouchableOpacity
-                style={[styles.payBtn, styles.payBtnActive]}
-                onPress={payWithEfectivo}
-                disabled={loading}
-              >
-                <Text style={styles.payBtnIcon}>💵</Text>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.payBtnLabel}>Efectivo</Text>
-                  <Text style={styles.payBtnSub}>Paga directo al gestor</Text>
+              {/* Efectivo (gated por 3 birrias / admin) */}
+              {efSt === null ? (
+                <View style={{ padding: SPACING.md, alignItems: 'center' }}>
+                  <ActivityIndicator color={COLORS.gold} />
                 </View>
-              </TouchableOpacity>
+              ) : efAllowed ? (
+                <TouchableOpacity
+                  style={[styles.payBtn, styles.payBtnActive]}
+                  onPress={payWithEfectivo}
+                  disabled={loading}
+                >
+                  <Text style={styles.payBtnIcon}>💵</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.payBtnLabel}>Efectivo</Text>
+                    <Text style={styles.payBtnSub}>Paga directo al gestor</Text>
+                  </View>
+                </TouchableOpacity>
+              ) : efBloq ? (
+                <View style={{ backgroundColor: COLORS.red + '22', borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.red + '55' }}>
+                  <Text style={{ fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, textAlign: 'center' }}>🚫 Pago en efectivo no disponible</Text>
+                </View>
+              ) : (
+                <View style={{ backgroundColor: COLORS.gold + '14', borderRadius: RADIUS.md, padding: SPACING.md, borderWidth: 1, borderColor: COLORS.gold + '55' }}>
+                  <Text style={{ fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, textAlign: 'center', lineHeight: 18 }}>
+                    🔒 Necesitás haber participado en al menos {efMin} birrias para pagar en efectivo ({efEventos}/{efMin})
+                  </Text>
+                </View>
+              )}
 
               {loading && <ActivityIndicator color={COLORS.red} style={{ marginTop: SPACING.sm }} />}
 

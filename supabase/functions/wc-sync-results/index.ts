@@ -39,6 +39,7 @@ const API_KEY     = Deno.env.get('API_FOOTBALL_KEY') ?? Deno.env.get('RAPIDAPI_K
 const LEAGUE_ID   = Deno.env.get('WC_LEAGUE_ID') ?? '1';
 const SEASON      = Deno.env.get('WC_SEASON') ?? '2026';
 const SYNC_SECRET = Deno.env.get('WC_SYNC_SECRET') ?? '';
+const SYNC_TIMEZONE = Deno.env.get('WC_SYNC_TIMEZONE') ?? 'America/Panama';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SVC, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -78,6 +79,27 @@ async function apiGet(path: string): Promise<any> {
   return json;
 }
 
+function dateInTimezone(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function fixturesPath(params: Record<string, string>) {
+  const search = new URLSearchParams({
+    league: LEAGUE_ID,
+    season: SEASON,
+    timezone: SYNC_TIMEZONE,
+    ...params,
+  });
+  return `/fixtures?${search.toString()}`;
+}
+
 // ── Mapeo de estado del API -> enum interno ─────────────────
 // Codigos api-football v3: fixture.status.short
 function normalizeStatus(short: string): string {
@@ -108,35 +130,21 @@ function extractScore(fx: any) {
 
 // ============================================================
 // MODO SYNC — aplica resultados de una fecha
-// ============================================================
-async function runSync(source: string, dateOverride: string | null) {
-  const t0 = Date.now();
-  const detail: any[] = [];
+// ── Helper: procesa los fixtures de UNA fecha y acumula resultados ──
+async function syncDateFixtures(
+  date: string,
+  byApiId: Map<number, { id: string; phase: string; status: string }>,
+  detail: any[]
+) {
   let fixturesSeen = 0, matched = 0, finished = 0, pollaTotal = 0, surfDays = 0, errors = 0;
-
-  // Mapa api_football_id -> nuestro match.id (solo los ya backfilleados)
-  const { data: ourMatches, error: mErr } = await supabase
-    .from('wc_matches')
-    .select('id, api_football_id, phase, status')
-    .not('api_football_id', 'is', null);
-  if (mErr) throw new Error(`leyendo wc_matches: ${mErr.message}`);
-  const byApiId = new Map<number, { id: string; phase: string; status: string }>();
-  (ourMatches ?? []).forEach((m: any) => byApiId.set(m.api_football_id, m));
-
-  if (byApiId.size === 0) {
-    return { ok: false, note: 'No hay wc_matches con api_football_id. Corre mode=backfill primero.' };
-  }
-
-  // Ventana: por defecto la fecha de "hoy" en Panama (GMT-5). Acepta override.
-  const today = dateOverride ?? new Date(Date.now() - 5 * 3600 * 1000).toISOString().slice(0, 10);
-  const data = await apiGet(`/fixtures?league=${LEAGUE_ID}&season=${SEASON}&date=${today}`);
+  const data = await apiGet(fixturesPath({ date }));
   const fixtures: any[] = data?.response ?? [];
   fixturesSeen = fixtures.length;
 
   for (const fx of fixtures) {
     const apiId = fx?.fixture?.id;
     const our = apiId != null ? byApiId.get(apiId) : undefined;
-    if (!our) continue; // fixture que no es del Mundial / no mapeado
+    if (!our) continue;
     matched++;
 
     const short = fx?.fixture?.status?.short;
@@ -158,12 +166,61 @@ async function runSync(source: string, dateOverride: string | null) {
       if (newStatus === 'finished') finished++;
       pollaTotal += rpcRes?.polla_resolved ?? 0;
       if (rpcRes?.survivor_settled) surfDays++;
-      detail.push({ match: our.id, apiId, status: newStatus, ...rpcRes });
+      detail.push({ date, match: our.id, apiId, status: newStatus, ...rpcRes });
     } catch (e) {
       errors++;
-      detail.push({ match: our.id, apiId, error: (e as Error).message });
-      console.error('WC_SYNC_RPC_ERROR', { match: our.id, apiId, error: (e as Error).message });
+      detail.push({ date, match: our.id, apiId, error: (e as Error).message });
+      console.error('WC_SYNC_RPC_ERROR', { date, match: our.id, apiId, error: (e as Error).message });
     }
+  }
+  return { fixturesSeen, matched, finished, pollaTotal, surfDays, errors };
+}
+
+// ============================================================
+async function runSync(source: string, dateOverride: string | null) {
+  const t0 = Date.now();
+  const detail: any[] = [];
+  let fixturesSeen = 0, matched = 0, finished = 0, pollaTotal = 0, surfDays = 0, errors = 0;
+
+  // Mapa api_football_id -> nuestro match.id (solo los ya backfilleados)
+  const { data: ourMatches, error: mErr } = await supabase
+    .from('wc_matches')
+    .select('id, api_football_id, phase, status')
+    .not('api_football_id', 'is', null);
+  if (mErr) throw new Error(`leyendo wc_matches: ${mErr.message}`);
+  const byApiId = new Map<number, { id: string; phase: string; status: string }>();
+  (ourMatches ?? []).forEach((m: any) => byApiId.set(m.api_football_id, m));
+
+  if (byApiId.size === 0) {
+    return { ok: false, note: 'No hay wc_matches con api_football_id. Corre mode=backfill primero.' };
+  }
+
+  // Fecha primaria (hoy en zona configurada, o override manual).
+  const today = dateOverride ?? dateInTimezone(new Date(), SYNC_TIMEZONE);
+
+  // Fechas a sincronizar: hoy + cualquier jornada pasada no resuelta que ya empezó.
+  // Esto captura partidos nocturnos que cruzaron la medianoche (ej: Australia vs Turquía
+  // a las 11pm Panamá — la jornada del 13-jun sigue sin cerrarse a las 12:01am del 14-jun).
+  const datesToSync = new Set<string>([today]);
+  if (!dateOverride) {
+    const { data: staleDays } = await supabase
+      .from('wc_match_days')
+      .select('date')
+      .eq('is_settled', false)
+      .lte('first_kickoff_at', new Date().toISOString())
+      .lt('date', today);
+    (staleDays ?? []).forEach((d: any) => datesToSync.add(d.date));
+  }
+
+  // Sincronizar cada fecha
+  for (const date of datesToSync) {
+    const r = await syncDateFixtures(date, byApiId, detail);
+    fixturesSeen += r.fixturesSeen;
+    matched      += r.matched;
+    finished     += r.finished;
+    pollaTotal   += r.pollaTotal;
+    surfDays     += r.surfDays;
+    errors       += r.errors;
   }
 
   await supabase.from('wc_sync_logs').insert({
@@ -178,7 +235,7 @@ async function runSync(source: string, dateOverride: string | null) {
     duration_ms: Date.now() - t0,
   });
 
-  return { ok: true, date: today, fixturesSeen, matched, finished, pollaTotal, surfDays, errors };
+  return { ok: true, dates: [...datesToSync], timezone: SYNC_TIMEZONE, fixturesSeen, matched, finished, pollaTotal, surfDays, errors };
 }
 
 // ============================================================
@@ -285,6 +342,11 @@ serve(async (req) => {
   const dateOverride = url.searchParams.get('date') ?? body.date ?? null;
 
   try {
+    if (mode === 'status') {
+      // Diagnostico: plan + cupo diario y consumo actual del proveedor api-football.
+      const s = await apiGet('/status');
+      return ok({ ok: true, status: s?.response ?? s });
+    }
     if (mode === 'backfill') return ok(await runBackfill());
     return ok(await runSync(source, dateOverride));
   } catch (e) {

@@ -1,17 +1,20 @@
 import React, { useEffect } from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
-import { Text, Platform, View, StyleSheet, Image } from 'react-native';
+import { Text, Platform, View, StyleSheet, Image, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { COLORS, FONTS } from '../../constants/theme';
 import useAuthStore from '../../store/authStore';
 import useWcStore from '../../store/wcStore';
+import useClubStore from '../../store/clubStore';
+import { isSocialPreviewEnabled } from '../../lib/featureFlags';
 
 // ── Main screens ─────────────────────────────────────────────────────────────
 import HomeScreen           from '../screens/player/HomeScreen';
 import EventsScreen         from '../screens/player/EventsScreen';
 import EventDetailScreen    from '../screens/player/EventDetailScreen';
 import ActiveEventScreen    from '../screens/player/ActiveEventScreen';
+import LiveBoardScreen      from '../screens/player/LiveBoardScreen';
 import WalletScreen         from '../screens/wallet/WalletScreen';
 import StoreScreen          from '../screens/store/StoreScreen';
 import NewsScreen           from '../screens/news/NewsScreen';
@@ -26,12 +29,51 @@ import PrivacyPolicyScreen     from '../screens/legal/PrivacyPolicyScreen';
 import TermsScreen             from '../screens/legal/TermsScreen';
 // import AssistantScreen      from '../screens/assistant/AssistantScreen'; // deshabilitado 2026-05-29
 import EditEventScreen         from '../screens/event/EditEventScreen';
-import SlotsDisponiblesScreen  from '../screens/gestor/SlotsDisponiblesScreen';
+import RaffleScreen            from '../screens/raffle/RaffleScreen';
+import DonationCampaignScreen  from '../screens/donation/DonationCampaignScreen';
 import MundialNavigator        from './MundialNavigator';
+import ClubBeneficiosNavigator from './ClubBeneficiosNavigator';
 
 const Tab   = createBottomTabNavigator();
 const Stack = createStackNavigator();
 const mundialLogo = require('../../assets/mundial/mundial-logo.png');
+
+// ── Code splitting (ARQ-1): paneles pesados montados solo si el rol los usa.
+// React.lazy + Suspense a NIVEL DE MÓDULO (identidad estable) — jamás dentro
+// del render, o cada re-render del navigator remontaría el panel entero.
+const AdminPanelLazy         = React.lazy(() => import('../admin/AdminPanel'));
+const GestorPanelLazy        = React.lazy(() => import('../gestor/GestorPanel'));
+const CanchaPanelLazy        = React.lazy(() => import('../cancha/CanchaPanel'));
+const CanchaBookingScreenLazy = React.lazy(() => import('../cancha/CanchaBookingScreen'));
+const RotacionesScreenLazy   = React.lazy(() => import('../screens/gestor/RotacionesScreen'));
+
+function PanelLoading() {
+  return (
+    <View style={panelLoadingStyles.wrap}>
+      <ActivityIndicator color={COLORS.neon} />
+    </View>
+  );
+}
+
+function makeLazyScreen(Comp) {
+  return function LazyScreen(props) {
+    return (
+      <React.Suspense fallback={<PanelLoading />}>
+        <Comp {...props} />
+      </React.Suspense>
+    );
+  };
+}
+
+const AdminPanelScreen         = makeLazyScreen(AdminPanelLazy);
+const GestorPanelScreen        = makeLazyScreen(GestorPanelLazy);
+const CanchaPanelScreen        = makeLazyScreen(CanchaPanelLazy);
+const CanchaBookingScreenScreen = makeLazyScreen(CanchaBookingScreenLazy);
+const RotacionesScreenScreen   = makeLazyScreen(RotacionesScreenLazy);
+
+const panelLoadingStyles = StyleSheet.create({
+  wrap: { flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' },
+});
 
 const TAB_ICONS = {
   Inicio:    '🏠',
@@ -40,9 +82,9 @@ const TAB_ICONS = {
   Tienda:    '🛍',
   Noticias:  '📰',
   Mundial:   '🏆',
+  Beneficios:'🎁',
   Panel:     '⚙',
   Cancha:    '🏟',
-  Slots:     '🕒',
 };
 
 const TAB_LABELS = {
@@ -52,7 +94,7 @@ const TAB_LABELS = {
   Tienda:    'Tienda',
   Noticias:  'Noticias',
   Mundial:   'Mundial',
-  Slots:     'Slots',
+  Beneficios:'Club',
   Panel:     'Panel',
   Cancha:    'Cancha',
 };
@@ -70,24 +112,32 @@ function EventsStack() {
 
 // ── Bottom tabs ───────────────────────────────────────────────────────────────
 function MainTabs() {
-  const { user } = useAuthStore();
-  const { pool, loadPool } = useWcStore();
+  const user = useAuthStore((s) => s.user);
+  const pool = useWcStore((s) => s.pool);
+  const loadPool = useWcStore((s) => s.loadPool);
   const insets = useSafeAreaInsets();
   const role = user?.role ?? 'player';
-  const isPrivileged    = role === 'admin' || role === 'gestor' || role === 'cancha_admin';
-  const isGestorOrAdmin = role === 'gestor' || role === 'admin';
-  const isCanchaAdmin   = role === 'cancha_admin';
+  const isPrivileged = role === 'admin' || role === 'gestor';
+  const isCancha     = role === 'cancha_admin';
 
   // Mundial 2026: admin siempre lo ve; resto solo si is_visible=true en wc_pools
   useEffect(() => { loadPool(); }, [loadPool]);
   const showMundial = role === 'admin' || pool?.is_visible === true;
+
+  // Club de Beneficios: admin siempre; resto solo si club_settings.is_visible=true
+  const clubSettings   = useClubStore((s) => s.settings);
+  const loadClub       = useClubStore((s) => s.loadSettings);
+  const loadMyCompanies = useClubStore((s) => s.loadMyCompanies);
+  useEffect(() => { loadClub(); }, [loadClub]);
+  useEffect(() => { if (user?.id) loadMyCompanies(user.id); }, [user?.id, loadMyCompanies]);
+  const showClub = role === 'admin' || clubSettings?.is_visible === true;
 
   // bottomInset = espacio reservado para la barra de gestos del sistema (debajo de los iconos)
   const bottomInset = Math.max(insets.bottom, Platform.OS === 'android' ? 16 : 0);
 
   return (
     <Tab.Navigator
-      key={`${role}-${showMundial ? 'wc' : 'news'}`}
+      key={`${role}-${showMundial ? 'wc' : 'news'}-${showClub ? 'club' : 'x'}-${isCancha ? 'c' : 'x'}`}
       safeAreaInsets={{ bottom: 0 }}
       screenOptions={({ route }) => ({
         headerShown: false,
@@ -168,18 +218,21 @@ function MainTabs() {
         <Tab.Screen name="Noticias" component={NewsScreen} />
       )}
 
-      {isGestorOrAdmin && (
-        <Tab.Screen name="Slots" component={SlotsDisponiblesScreen} />
+      {showClub && (
+        <Tab.Screen name="Beneficios" component={ClubBeneficiosNavigator} />
+      )}
+
+      {isCancha && (
+        <Tab.Screen
+          name="Cancha"
+          component={CanchaPanelScreen}
+        />
       )}
 
       {isPrivileged && (
         <Tab.Screen
-          name={isCanchaAdmin ? 'Cancha' : 'Panel'}
-          component={
-            role === 'admin'         ? require('../admin/AdminPanel').default :
-            role === 'cancha_admin'  ? require('../cancha/CanchaPanel').default :
-                                       require('../gestor/GestorPanel').default
-          }
+          name="Panel"
+          component={role === 'admin' ? AdminPanelScreen : GestorPanelScreen}
         />
       )}
     </Tab.Navigator>
@@ -230,9 +283,17 @@ const tabStyles = StyleSheet.create({
 
 // ── Root navigator ────────────────────────────────────────────────────────────
 export default function AppNavigator() {
+  const { user } = useAuthStore();
   return (
     <Stack.Navigator screenOptions={{ headerShown: false }}>
       <Stack.Screen name="MainTabs"          component={MainTabs} />
+
+      {/* Preview NO destructivo del muro social. Gateado (admin/__DEV__/flag local).
+          Pantalla aparte, root push: no entra a MainTabs ni agrega tabs. Revertir = borrar
+          este bloque + el import de isSocialPreviewEnabled + el launcher en AdminPanel. */}
+      {isSocialPreviewEnabled(user) && (
+        <Stack.Screen name="SocialPreview" component={require('../screens/social/SocialPreviewScreen').default} />
+      )}
 
       {/* Profile stack */}
       <Stack.Screen name="Profile"           component={ProfileScreen} />
@@ -243,6 +304,7 @@ export default function AppNavigator() {
       {/* Event standalone (from HomeScreen deep link) */}
       <Stack.Screen name="EventDetail"       component={EventDetailScreen} />
       <Stack.Screen name="ActiveEvent"       component={ActiveEventScreen} />
+      <Stack.Screen name="LiveBoard"         component={LiveBoardScreen} />
 
       {/* Store */}
       <Stack.Screen name="Cart"              component={CartScreen} />
@@ -253,6 +315,18 @@ export default function AppNavigator() {
 
       {/* Event edit */}
       <Stack.Screen name="EditEvent"        component={EditEventScreen} />
+
+      {/* Cancha booking (gestores) */}
+      <Stack.Screen name="CanchaBooking"    component={CanchaBookingScreenScreen} />
+
+      {/* Rotaciones por tiempo (gestor/admin — amistosos con suplentes) */}
+      <Stack.Screen name="Rotaciones"       component={RotacionesScreenScreen} />
+
+      {/* Rifa */}
+      <Stack.Screen name="Raffle"           component={RaffleScreen} />
+
+      {/* Recaudo Solidario (Venezuela) */}
+      <Stack.Screen name="Recaudo"          component={DonationCampaignScreen} />
 
       {/* Legal */}
       <Stack.Screen name="PrivacyPolicy"    component={PrivacyPolicyScreen} />

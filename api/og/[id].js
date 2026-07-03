@@ -82,7 +82,7 @@ function buildOgHtml(ev, redirectUrl) {
     lines.push(formatDateLong(ev.fecha, ev.hora));
     if (ev.lugar) lines.push(`📍 ${ev.lugar}`);
     if ((ev.precio ?? 0) > 0) lines.push(`💵 $${Number(ev.precio).toFixed(2)} por jugador`);
-    else lines.push('💵 GRATIS');
+    else lines.push(`💵 ${(ev.deporte ?? '').trim().toLowerCase() === 'otro' ? 'Entrada Free' : 'FREE'}`);
     if (ev.cupos_ilimitado) {
       lines.push(`👥 Cupos ilimitados (${ev.inscritos} inscritos)`);
     } else if (ev.cupos_total) {

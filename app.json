@@ -27,7 +27,7 @@
       "bundleIdentifier": "com.birrea2play.app",
       "privacyPolicyUrl": "https://www.birrea2play.com/privacidad.html",
       "infoPlist": {
-        "NSCameraUsageDescription": "Birrea2Play necesita acceso a tu cámara para tu foto de perfil.",
+        "NSCameraUsageDescription": "Birrea2Play necesita acceso a tu cámara para escanear códigos QR de reservas y para tu foto de perfil.",
         "NSPhotoLibraryUsageDescription": "Birrea2Play necesita acceso a tus fotos para tu foto de perfil.",
         "NSMicrophoneUsageDescription": "Birrea2Play necesita acceso al micrófono para funciones de audio en eventos en vivo.",
         "NSAppTransportSecurity": {
@@ -54,7 +54,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#07080B"
+        "backgroundColor": "#000000"
       },
       "package": "com.birrea2play.app",
       "versionCode": 22,
@@ -86,6 +86,12 @@
         "expo-image-picker",
         {
           "photosPermission": "Birrea2Play necesita acceso a tus fotos para tu foto de perfil."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Birrea2Play necesita acceso a tu cámara para escanear códigos QR de reservas y para tu foto de perfil."
         }
       ],
       "expo-font",

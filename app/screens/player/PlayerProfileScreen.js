@@ -6,6 +6,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
 
 export default function PlayerProfileScreen({ route, navigation }) {
   // Defensa contra deep links malformados o navegación sin params.
@@ -77,6 +78,7 @@ export default function PlayerProfileScreen({ route, navigation }) {
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView showsVerticalScrollIndicator={false}>
+      <ResponsiveContainer>
         {/* Header */}
         <View style={styles.topBar}>
           <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -141,6 +143,7 @@ export default function PlayerProfileScreen({ route, navigation }) {
         )}
 
         <View style={{ height: SPACING.xxl }} />
+      </ResponsiveContainer>
       </ScrollView>
     </SafeAreaView>
   );

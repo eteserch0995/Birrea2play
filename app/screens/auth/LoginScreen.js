@@ -7,6 +7,7 @@ import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
 import { setPendingDeepLink } from '../../../lib/pendingDeepLink';
 import { logError } from '../../../lib/logger';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
 
 export default function LoginScreen({ navigation, route }) {
   const [email, setEmail] = useState('');
@@ -57,6 +58,7 @@ export default function LoginScreen({ navigation, route }) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
+      <ResponsiveContainer style={{ justifyContent: 'center' }}>
         <View style={styles.brandMark}>
           <Text style={styles.brandMarkText}>B2P</Text>
         </View>
@@ -114,6 +116,7 @@ export default function LoginScreen({ navigation, route }) {
             <Text style={styles.link}>¿Olvidaste tu contraseña? <Text style={styles.linkAccent}>Recupérala</Text></Text>
           </TouchableOpacity>
         </View>
+      </ResponsiveContainer>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -156,7 +159,7 @@ const styles = StyleSheet.create({
   form: { gap: SPACING.md },
   input: {
     backgroundColor: COLORS.card,
-    borderRadius: RADIUS.sm,
+    borderRadius: RADIUS.md,
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.md,
     color: COLORS.white,

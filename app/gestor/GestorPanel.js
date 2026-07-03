@@ -2,7 +2,7 @@ import React, { useEffect, useCallback, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
   Alert, ActivityIndicator, TextInput, Modal, Image,
-  KeyboardAvoidingView, Platform,
+  KeyboardAvoidingView, Platform, Linking, FlatList,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -14,6 +14,7 @@ import Constants from 'expo-constants';
 const APP_VERSION = Constants.expoConfig?.version ?? Constants.manifest?.version ?? '1.1.3';
 const BUILD_NUMBER = Constants.nativeBuildVersion ?? '14';
 import { supabase } from '../../lib/supabase';
+import { getScoringTerms } from '../../lib/sportTerms';
 import { sendLocalNotification, sendPushNotificationsToEventPlayers } from '../../lib/notifications';
 import useAuthStore from '../../store/authStore';
 import { DateField, TimeField } from '../../components/DateTimeField';
@@ -22,6 +23,8 @@ import { processEventImage } from '../../lib/processEventImage';
 import { shareEvent } from '../../lib/shareEvent';
 import { filterActiveEventGuests } from '../../lib/eventGuests';
 import GananciaCard from '../../components/GananciaCard';
+import MatchTimer from '../../components/MatchTimer';
+import TeamMark from '../../components/TeamMark';
 import {
   generateLigaFixture,
   generateGroupStageFixture,
@@ -38,6 +41,8 @@ import {
   isGroupStageComplete,
   getTournamentWinner,
   TEAM_COLORS,
+  WC_SELECCIONES,
+  flagUrl,
   calcTeams,
 } from '../../lib/eventHelpers';
 
@@ -54,7 +59,7 @@ const PHASE_LABELS = {
 
 // ── Dashboard Gestor ───────────────────────────────────────────────────────
 function GestorDashboard({ navigation }) {
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const [events,          setEvents]          = useState([]);
   const [selectedEvent,   setSelectedEvent]   = useState(null);
   const [loading,         setLoading]         = useState(true);
@@ -100,8 +105,12 @@ function GestorDashboard({ navigation }) {
     try {
       const { data, error } = await supabase
         .from('events')
-        .select('*')
-        .eq('created_by', user.id)           // solo eventos propios
+        .select(`
+          *,
+          cancha:cancha_id ( id, nombre, telefono ),
+          cancha_slot:cancha_slot_id ( id, fecha, hora_inicio, hora_fin, precio_hora )
+        `)
+        .eq('created_by', user.id)
         .in('status', ['draft', 'open', 'active'])
         .order('fecha', { ascending: true });
       if (error) throw error;
@@ -119,6 +128,7 @@ function GestorDashboard({ navigation }) {
     { label: 'Equipos',    icon: '🎽', route: 'GestorTeams'        },
     { label: 'Jornadas',   icon: '📆', route: 'GestorMatches'       },
     { label: 'Resultados', icon: '⚽', route: 'GestorResults'       },
+    { label: 'Rotaciones', icon: '⏱', route: 'Rotaciones'          },
     { label: 'MVP',        icon: '🏆', route: 'GestorMvp'           },
     { label: 'Config',     icon: '⚙️', route: 'GestorConfig'        },
     { label: 'Ventas',     icon: '💵', route: 'GestorVentas'        },
@@ -139,6 +149,19 @@ function GestorDashboard({ navigation }) {
           </TouchableOpacity>
         </View>
 
+        {/* Acceso rápido a reservar cancha */}
+        <TouchableOpacity
+          style={{ marginHorizontal: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.card, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.red, flexDirection: 'row', alignItems: 'center', padding: SPACING.md, gap: SPACING.sm }}
+          onPress={() => navigation.navigate('CanchaBooking')}
+        >
+          <Text style={{ fontSize: 20 }}>🏟</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.white, fontSize: 14 }}>Reservar cancha</Text>
+            <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>Ver disponibilidad y solicitar un espacio</Text>
+          </View>
+          <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.red, fontSize: 16 }}>→</Text>
+        </TouchableOpacity>
+
         {/* Acceso rápido a pagos en efectivo pendientes */}
         <TouchableOpacity
           style={{ marginHorizontal: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.card, borderRadius: RADIUS.md, borderWidth: 1, borderColor: cashPending > 0 ? COLORS.gold : COLORS.navy, flexDirection: 'row', alignItems: 'center', padding: SPACING.md, gap: SPACING.sm }}
@@ -157,6 +180,15 @@ function GestorDashboard({ navigation }) {
             </View>
           )}
         </TouchableOpacity>
+
+        {/* Alertas de confirmación de cancha pendientes */}
+        {events.filter(ev => ev.cancha_confirmacion_pendiente && !ev.cancha_pagada).map(ev => (
+          <CanchaPendingBanner
+            key={ev.id + '_cancha'}
+            event={ev}
+            onResolved={fetchEvents}
+          />
+        ))}
 
         {loading ? (
           <ActivityIndicator color={COLORS.red} style={{ margin: SPACING.xl }} />
@@ -188,7 +220,7 @@ function GestorDashboard({ navigation }) {
                 onPress={async () => {
                   const [{ data: regs }, { data: gs }] = await Promise.all([
                     supabase.from('event_registrations').select('users(nombre, genero)').eq('event_id', selectedEvent.id).eq('status', 'confirmed'),
-                    supabase.from('event_guests').select('nombre').eq('event_id', selectedEvent.id).eq('status', 'confirmed'),
+                    supabase.from('event_guests').select('nombre, genero').eq('event_id', selectedEvent.id).eq('status', 'confirmed'),
                   ]);
                   const jugadores = [
                     ...(regs ?? []).filter(r => r.users?.nombre).map(r => ({ nombre: r.users.nombre, genero: r.users.genero })),
@@ -238,9 +270,12 @@ function GestorDashboard({ navigation }) {
 
 // ── Crear Evento (gestor) ──────────────────────────────────────────────────
 function GestorCreateEvent({ navigation }) {
-  const { user } = useAuthStore();
-  const [saving, setSaving]           = useState(false);
-  const [canchaImageUri, setCanchaUri] = useState(null);
+  const user = useAuthStore((s) => s.user);
+  const [saving, setSaving]                 = useState(false);
+  const [canchaImageUri, setCanchaUri]      = useState(null);
+  const [canchaVinculada, setCanchaVinculada] = useState(null);  // { id, nombre, telefono }
+  const [slotSeleccionado, setSlotSeleccionado] = useState(null); // slot obj
+  const [showCanchaSlotPicker, setShowCanchaSlotPicker] = useState(false);
   const [form, setForm] = useState({
     nombre: '', formato: 'Liga', deporte: 'Fútbol 7', fecha: '', hora: '',
     lugar: '', direccion: '', precio: '0', cupos_total: '', cupos_ilimitado: false,
@@ -306,6 +341,27 @@ function GestorCreateEvent({ navigation }) {
     if (isNaN(precioVal) || precioVal < 0) {
       Alert.alert('Precio inválido', 'El precio debe ser 0 (gratis) o un monto positivo.'); return;
     }
+    // Cuota mínima si hay cancha vinculada y el gestor no está exento
+    if (slotSeleccionado && !form.cupos_ilimitado && cuposNum > 0 && !user?.is_fee_exempt) {
+      const iniParts = (slotSeleccionado.hora_inicio ?? '').split(':');
+      const finParts = (slotSeleccionado.hora_fin ?? '').split(':');
+      const iniMin = parseInt(iniParts[0] ?? 0) * 60 + parseInt(iniParts[1] ?? 0);
+      const finMin = parseInt(finParts[0] ?? 0) * 60 + parseInt(finParts[1] ?? 0);
+      const durHoras = (finMin - iniMin) / 60;
+      const totalCancha = (Number(slotSeleccionado.precio_hora) || 0) * durHoras;
+      const cuotaMin = totalCancha / cuposNum + 0.50;
+      if (precioVal < cuotaMin) {
+        Alert.alert(
+          'Cuota muy baja',
+          `La cuota mínima por jugador es $${cuotaMin.toFixed(2)}:\n\n` +
+          `• Cancha: $${totalCancha.toFixed(2)} ÷ ${cuposNum} jugadores = $${(totalCancha / cuposNum).toFixed(2)}\n` +
+          `• Fee app: $0.50\n\n` +
+          `Podés subir la cuota para obtener ganancia propia.`
+        );
+        setSaving(false);
+        return;
+      }
+    }
     // Cupos must be exact multiple of jugadores_por_equipo — HARD BLOCK
     if (teamCalc && !teamCalc.esExacto) {
       const jpq  = form.jugadores_por_equipo;
@@ -346,8 +402,31 @@ function GestorCreateEvent({ navigation }) {
         ida_y_vuelta:        form.ida_y_vuelta,
         maps_url:            form.maps_url.trim() || null,
         vidas_por_equipo:    form.formato === '2 Vidas' ? (form.vidas_por_equipo ?? 3) : null,
+        cancha_id:           canchaVinculada?.id ?? null,
+        cancha_slot_id:      slotSeleccionado?.id ?? null,
+        app_fee_per_player:  user?.is_fee_exempt ? 0 : 0.50,
       }).select('id').single();
       if (error) throw error;
+
+      // Si hay slot seleccionado, reclamarlo atómicamente
+      if (slotSeleccionado?.id && created?.id) {
+        try {
+          const { error: claimErr } = await supabase.rpc('claim_cancha_slot', {
+            p_slot_id: slotSeleccionado.id,
+          });
+          if (claimErr) {
+            // El evento fue creado pero el slot falló (ya reclamado por otro)
+            await supabase.from('events').update({ cancha_id: null, cancha_slot_id: null }).eq('id', created.id);
+            Alert.alert('Aviso', `El evento fue creado pero el slot de cancha ya no estaba disponible. Vincula otra cancha desde la Config del evento.\n\nError: ${claimErr.message}`);
+          } else {
+            // Actualizar la reserva con el event_id
+            await supabase
+              .from('cancha_slot_reservas')
+              .update({ event_id: created.id })
+              .eq('slot_id', slotSeleccionado.id);
+          }
+        } catch (_) {}
+      }
 
       // Upload court photo if selected
       if (canchaImageUri && created?.id) {
@@ -549,6 +628,64 @@ function GestorCreateEvent({ navigation }) {
           onChangeText={(v) => upd('descripcion', v)}
         />
 
+        {/* Vincular cancha (opcional) */}
+        <Text style={[styles.fieldLabel, { marginTop: SPACING.md }]}>Vincular cancha (opcional)</Text>
+        <TouchableOpacity
+          style={[styles.input, { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44 }]}
+          onPress={() => setShowCanchaSlotPicker(true)}
+        >
+          <View style={{ flex: 1 }}>
+            {slotSeleccionado ? (
+              <>
+                <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 13 }}>
+                  {canchaVinculada?.nombre ?? 'Cancha'}
+                </Text>
+                <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>
+                  {slotSeleccionado.fecha} · {slotSeleccionado.hora_inicio?.slice(0,5)}–{slotSeleccionado.hora_fin?.slice(0,5)}
+                  {slotSeleccionado.precio_hora ? ` · $${Number(slotSeleccionado.precio_hora).toFixed(2)}` : ''}
+                </Text>
+              </>
+            ) : (
+              <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, fontSize: 14 }}>
+                Seleccionar cancha y horario
+              </Text>
+            )}
+          </View>
+          {slotSeleccionado && (
+            <TouchableOpacity
+              onPress={() => { setCanchaVinculada(null); setSlotSeleccionado(null); }}
+              style={{ paddingHorizontal: 8 }}
+            >
+              <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.red, fontSize: 16 }}>×</Text>
+            </TouchableOpacity>
+          )}
+        </TouchableOpacity>
+        {slotSeleccionado && (() => {
+          const iniParts = (slotSeleccionado.hora_inicio ?? '').split(':');
+          const finParts = (slotSeleccionado.hora_fin ?? '').split(':');
+          const durHoras = (parseInt(finParts[0]??0)*60+parseInt(finParts[1]??0) - parseInt(iniParts[0]??0)*60 - parseInt(iniParts[1]??0)) / 60;
+          const totalCancha = (Number(slotSeleccionado.precio_hora)||0) * durHoras;
+          const appFee = user?.is_fee_exempt ? 0 : 0.50;
+          const cuposN = parseInt(form.cupos_total) || 0;
+          const cuotaMin = cuposN > 0 ? (totalCancha / cuposN + appFee) : null;
+          return (
+            <View style={{ backgroundColor: COLORS.card, borderRadius: 8, padding: SPACING.sm, marginTop: 6, borderWidth: 1, borderColor: COLORS.gold + '44' }}>
+              <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.gold, fontSize: 11 }}>
+                Costo total cancha: ${totalCancha.toFixed(2)} ({durHoras}h)
+              </Text>
+              {cuotaMin != null && (
+                <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 11, marginTop: 2 }}>
+                  Cuota mínima por jugador: ${cuotaMin.toFixed(2)}
+                  {!user?.is_fee_exempt ? ' (incluye $0.50 fee app)' : ''}
+                </Text>
+              )}
+              <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 10, marginTop: 3 }}>
+                Podés cobrar más para obtener ganancia. El pago de la cancha se gestiona automático 24h antes.
+              </Text>
+            </View>
+          );
+        })()}
+
         <TouchableOpacity
           style={[styles.btn, { backgroundColor: COLORS.blue, marginTop: SPACING.md }]}
           onPress={saveEvent}
@@ -556,12 +693,264 @@ function GestorCreateEvent({ navigation }) {
         >
           {saving
             ? <ActivityIndicator color={COLORS.white} size="small" />
-            : <Text style={styles.btnText}>✓ Crear evento</Text>
+            : <Text style={styles.btnText}>Crear evento</Text>
           }
         </TouchableOpacity>
       </ScrollView>
       </KeyboardAvoidingView>
+
+      <CanchaSlotPickerModal
+        visible={showCanchaSlotPicker}
+        onClose={() => setShowCanchaSlotPicker(false)}
+        fechaEvento={form.fecha || null}
+        onPick={(cancha, slot) => {
+          setCanchaVinculada(cancha);
+          setSlotSeleccionado(slot);
+          setShowCanchaSlotPicker(false);
+        }}
+      />
     </SafeAreaView>
+  );
+}
+
+// ── Banner: cancha con confirmación pendiente ──────────────────────────────
+function CanchaPendingBanner({ event, onResolved }) {
+  const [loading, setLoading] = useState(false);
+
+  const fmtDate = (d) => {
+    if (!d) return '';
+    return new Date(d + 'T00:00:00').toLocaleDateString('es-PA', { weekday: 'short', day: '2-digit', month: 'short' });
+  };
+
+  async function handleConfirmar() {
+    setLoading(true);
+    try {
+      const { data, error } = await Promise.resolve(
+        supabase.rpc('cancha_auto_pay', { p_event_id: event.id })
+      );
+      if (error) throw error;
+      if (data?.ok) {
+        Alert.alert('Cancha pagada', `Se pagaron $${Number(data.monto_pagado).toFixed(2)} a ${data.cancha ?? 'la cancha'} del pool de inscripciones.`);
+        onResolved();
+      } else {
+        Alert.alert('No se pudo pagar', data?.msg ?? 'Verifica los pagos del evento.');
+      }
+    } catch (e) {
+      Alert.alert('Error', e.message ?? 'No se pudo confirmar la cancha');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleLiberar() {
+    Alert.alert(
+      'Liberar cancha',
+      `¿Confirmas liberar el slot de ${event.cancha?.nombre ?? 'la cancha'}? El horario quedará disponible para otros.`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Liberar',
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            try {
+              const { error } = await supabase.rpc('gestor_liberar_cancha', { p_event_id: event.id });
+              if (error) throw error;
+              onResolved();
+            } catch (e) {
+              Alert.alert('Error', e.message ?? 'No se pudo liberar');
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  function handleWhatsApp() {
+    const tel = event.cancha?.telefono;
+    if (!tel) { Alert.alert('Sin teléfono', 'La cancha no tiene teléfono registrado.'); return; }
+    const num = tel.replace(/\D/g, '');
+    const fecha = fmtDate(event.cancha_slot?.fecha ?? event.fecha);
+    const hora  = event.cancha_slot?.hora_inicio?.slice(0,5) ?? '';
+    const msg = `Hola, te escribo por el evento "${event.nombre}" del ${fecha}${hora ? ' a las ' + hora : ''}. La birrea no esta llena aun, confirmas igual el slot?`;
+    const url = `https://wa.me/${num.startsWith('507') ? '' : '507'}${num}?text=${encodeURIComponent(msg)}`;
+    Linking.openURL(url).catch(() => Alert.alert('Error', 'No se pudo abrir WhatsApp'));
+  }
+
+  return (
+    <View style={{
+      marginHorizontal: SPACING.md, marginBottom: SPACING.sm,
+      backgroundColor: COLORS.card, borderRadius: RADIUS.md,
+      borderWidth: 1, borderColor: COLORS.gold,
+      padding: SPACING.md,
+    }}>
+      <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.gold, fontSize: 12, marginBottom: 4 }}>
+        CANCHA PENDIENTE DE CONFIRMACION
+      </Text>
+      <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 14 }}>
+        {event.nombre}
+      </Text>
+      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12, marginBottom: SPACING.sm }}>
+        {event.cancha?.nombre ?? 'Cancha desconocida'}
+        {event.cancha_slot ? ` · ${fmtDate(event.cancha_slot.fecha)} ${event.cancha_slot.hora_inicio?.slice(0,5)}–${event.cancha_slot.hora_fin?.slice(0,5)}` : ''}
+        {event.cancha_slot?.precio_hora ? ` · $${Number(event.cancha_slot.precio_hora).toFixed(2)}` : ''}
+      </Text>
+      {loading ? (
+        <ActivityIndicator color={COLORS.gold} size="small" />
+      ) : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm }}>
+          <TouchableOpacity
+            style={{ backgroundColor: COLORS.green, borderRadius: RADIUS.sm, paddingVertical: 7, paddingHorizontal: 12 }}
+            onPress={handleConfirmar}
+          >
+            <Text style={{ fontFamily: FONTS.bodyBold, color: '#fff', fontSize: 12 }}>Confirmar y pagar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ backgroundColor: '#25D366', borderRadius: RADIUS.sm, paddingVertical: 7, paddingHorizontal: 12 }}
+            onPress={handleWhatsApp}
+          >
+            <Text style={{ fontFamily: FONTS.bodyBold, color: '#fff', fontSize: 12 }}>WhatsApp cancha</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={{ borderWidth: 1, borderColor: COLORS.red, borderRadius: RADIUS.sm, paddingVertical: 7, paddingHorizontal: 12 }}
+            onPress={handleLiberar}
+          >
+            <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.red, fontSize: 12 }}>Liberar slot</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
+  );
+}
+
+// ── Modal: selector de cancha + slot para evento ───────────────────────────
+function CanchaSlotPickerModal({ visible, onClose, fechaEvento, onPick }) {
+  const [canchas, setCanchas]           = useState([]);
+  const [selectedCancha, setSelectedCancha] = useState(null);
+  const [slots, setSlots]               = useState([]);
+  const [loading, setLoading]           = useState(false);
+  const [loadingSlots, setLoadingSlots] = useState(false);
+
+  useEffect(() => {
+    if (!visible) { setSelectedCancha(null); setSlots([]); return; }
+    setLoading(true);
+    supabase
+      .from('canchas')
+      .select('id, nombre, telefono, direccion, precio_hora')
+      .eq('activa', true)
+      .order('nombre', { ascending: true })
+      .then(({ data, error }) => {
+        if (error) Alert.alert('Error', error.message);
+        else setCanchas(data ?? []);
+        setLoading(false);
+      });
+  }, [visible]);
+
+  useEffect(() => {
+    if (!selectedCancha) { setSlots([]); return; }
+    setLoadingSlots(true);
+    let q = supabase
+      .from('cancha_slots')
+      .select('id, fecha, hora_inicio, hora_fin, precio_hora, notas')
+      .eq('cancha_id', selectedCancha.id)
+      .eq('status', 'available')
+      .in('visibility', ['public'])
+      .order('fecha', { ascending: true })
+      .order('hora_inicio', { ascending: true });
+    if (fechaEvento) q = q.eq('fecha', fechaEvento);
+    Promise.resolve(q).then(({ data, error }) => {
+      if (error) Alert.alert('Error', error.message);
+      else setSlots(data ?? []);
+      setLoadingSlots(false);
+    });
+  }, [selectedCancha, fechaEvento]);
+
+  const fmtDate = (d) => {
+    if (!d) return '';
+    return new Date(d + 'T00:00:00').toLocaleDateString('es-PA', { weekday: 'short', day: '2-digit', month: 'short' });
+  };
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: COLORS.bg2, borderTopLeftRadius: RADIUS.lg, borderTopRightRadius: RADIUS.lg, padding: SPACING.lg, maxHeight: '80%' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.md }}>
+            {selectedCancha && (
+              <TouchableOpacity onPress={() => setSelectedCancha(null)} style={{ marginRight: SPACING.sm }}>
+                <Text style={{ fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white }}>←</Text>
+              </TouchableOpacity>
+            )}
+            <Text style={{ fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white, flex: 1, letterSpacing: 1 }}>
+              {selectedCancha ? selectedCancha.nombre : 'Elegir cancha'}
+            </Text>
+            <TouchableOpacity onPress={onClose}>
+              <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.gray, fontSize: 14 }}>Cerrar</Text>
+            </TouchableOpacity>
+          </View>
+
+          {!selectedCancha ? (
+            loading ? (
+              <ActivityIndicator color={COLORS.red} style={{ marginVertical: SPACING.lg }} />
+            ) : (
+              <FlatList
+                data={canchas}
+                keyExtractor={c => c.id}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    style={{ padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.card2 }}
+                    onPress={() => setSelectedCancha(item)}
+                  >
+                    <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 14 }}>{item.nombre}</Text>
+                    {!!item.direccion && (
+                      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>{item.direccion}</Text>
+                    )}
+                    {item.precio_hora != null && (
+                      <Text style={{ fontFamily: FONTS.body, color: COLORS.gold, fontSize: 12 }}>${Number(item.precio_hora).toFixed(2)} / hora</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+                ListEmptyComponent={
+                  <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, textAlign: 'center', padding: SPACING.lg }}>
+                    No hay canchas disponibles.
+                  </Text>
+                }
+              />
+            )
+          ) : loadingSlots ? (
+            <ActivityIndicator color={COLORS.red} style={{ marginVertical: SPACING.lg }} />
+          ) : slots.length === 0 ? (
+            <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, textAlign: 'center', padding: SPACING.lg }}>
+              {fechaEvento
+                ? `Sin slots disponibles para el ${fmtDate(fechaEvento)}. Cambia la fecha del evento o pide a la cancha que publique un slot.`
+                : 'Sin slots disponibles para esta cancha.'}
+            </Text>
+          ) : (
+            <FlatList
+              data={slots}
+              keyExtractor={s => s.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={{ padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.card2 }}
+                  onPress={() => onPick(selectedCancha, item)}
+                >
+                  <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 14 }}>
+                    {fmtDate(item.fecha)} · {item.hora_inicio?.slice(0,5)}–{item.hora_fin?.slice(0,5)}
+                  </Text>
+                  {item.precio_hora != null && (
+                    <Text style={{ fontFamily: FONTS.body, color: COLORS.gold, fontSize: 12 }}>${Number(item.precio_hora).toFixed(2)} / hora</Text>
+                  )}
+                  {!!item.notas && (
+                    <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>{item.notas}</Text>
+                  )}
+                </TouchableOpacity>
+              )}
+            />
+          )}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -574,12 +963,13 @@ function GestorTeams({ route }) {
   const [mixModal,        setMixModal]        = useState(false);
   const [chicasPorEquipo, setChicasPorEquipo] = useState('1');
   const [editTeamModal,   setEditTeamModal]   = useState(null); // null | team obj
-  const [editTeamForm,    setEditTeamForm]    = useState({ nombre: '', color: '' });
+  const [editTeamForm,    setEditTeamForm]    = useState({ nombre: '', color: '', logo_url: null });
   const [assignExpanded,  setAssignExpanded]  = useState(null); // userId being assigned
   const [addPlayerModal,  setAddPlayerModal]  = useState(false);
   const [addPlayerNombre, setAddPlayerNombre] = useState('');
   const [addPlayerGenero, setAddPlayerGenero] = useState(null);
   const [addPlayerSaving, setAddPlayerSaving] = useState(false);
+  const [rivalName,       setRivalName]       = useState('');
 
   // Refresh every time the screen comes into focus so new guests appear immediately
   useFocusEffect(useCallback(() => { if (eventId) fetchData(); }, [eventId]));
@@ -593,9 +983,6 @@ function GestorTeams({ route }) {
         supabase.from('event_guests').select('id, nombre, genero, status, invited_by').eq('event_id', eventId).in('status', ['confirmed', 'pending_payment']),
       ]);
 
-      console.log('[GestorTeams] EVENT ID:', eventId);
-      console.log('[GestorTeams] REGISTRATIONS RAW:', regs);
-      console.log('[GestorTeams] GUESTS RAW:', gs);
       if (regsErr) console.warn('[GestorTeams] regs error:', regsErr.message);
       if (gsErr)   console.warn('[GestorTeams] guests error:', gsErr.message);
 
@@ -621,14 +1008,6 @@ function GestorTeams({ route }) {
       }));
 
       const unified = [...regPlayers, ...guestPlayers];
-      console.log('[GestorTeams] REGISTERED PLAYERS:', regPlayers);
-      console.log('[GestorTeams] GUEST PLAYERS:', guestPlayers);
-      console.log('[GestorTeams] PLAYERS UNIFIED:', unified);
-      console.log('[GestorTeams] PLAYERS UNIFIED COUNT:', unified.length);
-      console.log('[GestorTeams] TEAMS RAW:', t);
-      const allTp = (t ?? []).flatMap(team => team.team_players ?? []);
-      console.log('[GestorTeams] TEAM PLAYERS RAW:', allTp);
-      console.log('[GestorTeams] TEAM PLAYERS WITHOUT USER OR GUEST:', allTp.filter(tp => !tp.user_id && !tp.guest_id));
       setPlayers(unified);
     } catch (e) {
       console.warn('[GestorTeams] fetchData error:', e.message);
@@ -696,6 +1075,55 @@ function GestorTeams({ route }) {
       ? `\n⚠️ Solo ${players.length} inscritos — faltan jugadores para llenar todos los cupos.`
       : '';
     Alert.alert('¡Listo!', `${numEquipos} equipos creados.${warn}`);
+  }
+
+  // Amistoso vs rival EXTERNO: 2 equipos (todos los inscritos al local; el rival
+  // queda sin jugadores, solo para el marcador) + 1 partido. Salta la regla de
+  // cupos múltiplo de jugadores_por_equipo, que aplica a birreas internas.
+  async function crearAmistosoExterno() {
+    const rival = rivalName.trim();
+    if (!rival) { Alert.alert('Rival', 'Escribe el nombre del equipo rival.'); return; }
+    if (teams.length > 0) {
+      const ok = await new Promise(res =>
+        Alert.alert('Equipos existentes', `Ya hay ${teams.length} equipo(s). ¿Reemplazarlos por el amistoso vs ${rival}? (borra también los partidos)`, [
+          { text: 'Cancelar', style: 'cancel', onPress: () => res(false) },
+          { text: 'Reemplazar', style: 'destructive', onPress: () => res(true) },
+        ])
+      );
+      if (!ok) return;
+      // Orden importa: matches referencia a teams (FK) → borrar primero
+      await supabase.from('matches').delete().eq('event_id', eventId);
+      for (const t of teams) {
+        await supabase.from('team_players').delete().eq('team_id', t.id);
+      }
+      await supabase.from('teams').delete().in('id', teams.map(t => t.id));
+    }
+    const { data: newTeams, error: tErr } = await supabase.from('teams').insert([
+      { event_id: eventId, nombre: 'Panamá Birreas', color: TEAM_COLORS[0].color, grupo: 'A' },
+      { event_id: eventId, nombre: rival, color: TEAM_COLORS[1].color, grupo: 'A' },
+    ]).select('id, nombre');
+    if (tErr || (newTeams ?? []).length !== 2) {
+      Alert.alert('Error', tErr?.message ?? 'No se pudieron crear los equipos.'); return;
+    }
+    const away = newTeams.find(t => t.nombre === rival) ?? newTeams[1];
+    const home = newTeams.find(t => t.id !== away.id) ?? newTeams[0];
+    const tpInserts = players.map((p) => ({
+      team_id: home.id,
+      ...(p.isGuest ? { guest_id: p.guest_id } : { user_id: p.user_id }),
+    }));
+    if (tpInserts.length > 0) {
+      const { error: tpErr } = await supabase.from('team_players').insert(tpInserts);
+      if (tpErr) Alert.alert('Aviso', `Equipos creados pero falló asignar jugadores: ${tpErr.message}`);
+    }
+    const { error: mErr } = await supabase.from('matches').insert({
+      event_id: eventId, jornada: 1, team_home_id: home.id, team_away_id: away.id,
+      fase: 'grupos', grupo: null, equipo_local: null, equipo_visitante: null,
+      seed_home: null, seed_away: null, status: 'pending',
+    });
+    if (mErr) { Alert.alert('Error al crear el partido', mErr.message); return; }
+    setRivalName('');
+    fetchData();
+    Alert.alert('¡Listo!', `Amistoso creado: Panamá Birreas vs ${rival}.\n${tpInserts.length} jugadores en tu equipo. Marca goles en Resultados y proyecta la Pantalla en Vivo.`);
   }
 
   function requestAutoAssign() {
@@ -774,7 +1202,11 @@ function GestorTeams({ route }) {
 
   async function saveTeamEdit() {
     if (!editTeamModal || !editTeamForm.nombre.trim()) return;
-    const { error } = await supabase.from('teams').update({ nombre: editTeamForm.nombre.trim(), color: editTeamForm.color }).eq('id', editTeamModal.id);
+    const { error } = await supabase.from('teams').update({
+      nombre:   editTeamForm.nombre.trim(),
+      color:    editTeamForm.color,
+      logo_url: editTeamForm.logo_url ?? null,
+    }).eq('id', editTeamModal.id);
     if (error) { Alert.alert('Error', error.message); return; }
     setEditTeamModal(null);
     fetchData();
@@ -815,8 +1247,6 @@ function GestorTeams({ route }) {
     }).filter(Boolean)
   );
   const unassigned = players.filter(p => !assignedActiveKeys.has(p.participantKey));
-  console.log('[GestorTeams] assignedKeys:', [...assignedActiveKeys]);
-  console.log('[GestorTeams] unassigned:', unassigned.length, unassigned);
   const activeTeamPlayers = (team) => (team.team_players ?? []).filter((tp) => {
     if (tp.user_id) return playerMap.has(tp.user_id);
     if (tp.guest_id) return playerMap.has(tp.guest_id);
@@ -862,6 +1292,24 @@ function GestorTeams({ route }) {
           <Text style={styles.btnText}>🎲 Asignar aleatoria</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Amistoso vs equipo externo (no participa en la app) */}
+      <View style={{ marginHorizontal: SPACING.md, marginBottom: SPACING.sm, backgroundColor: COLORS.card, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.orange, padding: SPACING.sm, gap: SPACING.sm }}>
+        <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.orange, letterSpacing: 1 }}>⚔️ AMISTOSO VS RIVAL EXTERNO</Text>
+        <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+          <TextInput
+            style={{ flex: 1, minHeight: 40, backgroundColor: COLORS.card2, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: COLORS.navy, color: COLORS.white, paddingHorizontal: SPACING.sm, fontFamily: FONTS.body, fontSize: 13 }}
+            placeholder="Nombre del rival (ej. Prom 13)"
+            placeholderTextColor={COLORS.gray}
+            value={rivalName}
+            onChangeText={setRivalName}
+          />
+          <TouchableOpacity style={[styles.btn, { backgroundColor: COLORS.orange, flex: 0, paddingHorizontal: SPACING.md }]} onPress={crearAmistosoExterno}>
+            <Text style={styles.btnText}>Crear</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={{ fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray }}>Crea tu equipo con todos los inscritos + el rival (solo marcador) + el partido único.</Text>
+      </View>
       <View style={{ paddingHorizontal: SPACING.md, marginBottom: SPACING.sm }}>
         <TouchableOpacity
           style={{ backgroundColor: COLORS.green + 'CC', borderRadius: RADIUS.sm, padding: SPACING.sm, alignItems: 'center' }}
@@ -886,7 +1334,7 @@ function GestorTeams({ route }) {
           <View key={t.id} style={[styles.card, { borderLeftWidth: 4, borderLeftColor: t.color ?? COLORS.blue }]}>
             {/* Cabecera */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }}>
-              {t.color && <View style={{ width: 14, height: 14, borderRadius: 7, backgroundColor: t.color }} />}
+              {(t.logo_url || t.color) && <TeamMark team={t} size={16} />}
               <Text style={[styles.cardName, { flex: 1 }]}>{t.nombre}</Text>
               {t.grupo && (
                 <View style={styles.grupoBadge}>
@@ -896,7 +1344,7 @@ function GestorTeams({ route }) {
               <Text style={styles.cardSub}>{activeTeamPlayers(t).length} jug.</Text>
               <TouchableOpacity
                 style={[styles.btnSmall, { backgroundColor: COLORS.blue + '40' }]}
-                onPress={() => { setEditTeamModal(t); setEditTeamForm({ nombre: t.nombre, color: t.color ?? '' }); }}
+                onPress={() => { setEditTeamModal(t); setEditTeamForm({ nombre: t.nombre, color: t.color ?? '', logo_url: t.logo_url ?? null }); }}
               >
                 <Text style={styles.btnSmallText}>✏️</Text>
               </TouchableOpacity>
@@ -1032,11 +1480,41 @@ function GestorTeams({ route }) {
               {TEAM_COLORS.map((c) => (
                 <TouchableOpacity
                   key={c.color}
-                  style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: c.color, borderWidth: editTeamForm.color === c.color ? 3 : 1, borderColor: editTeamForm.color === c.color ? COLORS.white : COLORS.navy }}
-                  onPress={() => setEditTeamForm(f => ({ ...f, color: c.color }))}
+                  style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: c.color, borderWidth: (editTeamForm.color === c.color && !editTeamForm.logo_url) ? 3 : 1, borderColor: (editTeamForm.color === c.color && !editTeamForm.logo_url) ? COLORS.white : COLORS.navy }}
+                  onPress={() => setEditTeamForm(f => ({ ...f, color: c.color, logo_url: null }))}
                 />
               ))}
             </View>
+
+            {/* 🌍 Selección (Mundial) — opcional: setea país + color de peto + bandera */}
+            <Text style={styles.modalSub}>🌍 Selección (Mundial) — opcional</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginVertical: SPACING.sm }}>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {WC_SELECCIONES.map((s) => {
+                  const url = flagUrl(s.code);
+                  const active = editTeamForm.logo_url === url;
+                  return (
+                    <TouchableOpacity
+                      key={s.code}
+                      style={{ alignItems: 'center', width: 50 }}
+                      onPress={() => setEditTeamForm(f => ({ ...f, nombre: s.nombre, color: s.color, logo_url: url }))}
+                    >
+                      <Image
+                        source={{ uri: url }}
+                        style={{ width: 36, height: 36, borderRadius: 18, borderWidth: active ? 3 : 1, borderColor: active ? COLORS.white : COLORS.navy, backgroundColor: COLORS.card }}
+                        resizeMode="cover"
+                      />
+                      <Text numberOfLines={1} style={{ fontFamily: FONTS.body, fontSize: 9, color: active ? COLORS.white : COLORS.gray2, marginTop: 2, width: 50, textAlign: 'center' }}>{s.nombre}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+            {editTeamForm.logo_url ? (
+              <TouchableOpacity onPress={() => setEditTeamForm(f => ({ ...f, logo_url: null }))} style={{ alignSelf: 'flex-start', marginBottom: SPACING.xs }}>
+                <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.blue2 }}>✕ Quitar bandera (usar solo color)</Text>
+              </TouchableOpacity>
+            ) : null}
             <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
               <TouchableOpacity style={[styles.btn, { flex: 1, backgroundColor: COLORS.gray }]} onPress={() => setEditTeamModal(null)}>
                 <Text style={styles.btnText}>Cancelar</Text>
@@ -1197,13 +1675,18 @@ function GestorMatches({ route }) {
     }
 
     const inserts = fixtures.map((f) => ({
-      event_id:     eventId,
-      jornada:      f.jornada ?? f.round ?? 1,
-      team_home_id: f.home?.id ?? null,
-      team_away_id: f.away?.id ?? null,
-      fase:         f.fase ?? 'grupos',
-      grupo:        f.grupo ?? null,
-      status:       'pending',
+      event_id:         eventId,
+      jornada:          f.jornada ?? f.round ?? 1,
+      team_home_id:     f.home?.id ?? null,
+      team_away_id:     f.away?.id ?? null,
+      fase:             f.fase ?? 'grupos',
+      grupo:            f.grupo ?? null,
+      // Rótulos de las llaves knockout (los partidos de grupo no los traen).
+      equipo_local:     f.equipo_local ?? null,
+      equipo_visitante: f.equipo_visitante ?? null,
+      seed_home:        f.seed_home ?? null,
+      seed_away:        f.seed_away ?? null,
+      status:           'pending',
     }));
 
     const { error } = await supabase.from('matches').insert(inserts);
@@ -1253,11 +1736,14 @@ function GestorMatches({ route }) {
 // ── Resultados ─────────────────────────────────────────────────────────────
 function GestorResults({ route }) {
   const { eventId } = route.params ?? {};
+  const user = useAuthStore((s) => s.user); // auditoría: quién carga cada resultado
   const [event,   setEvent]   = useState(null);
   const [matches, setMatches] = useState([]);
   const [teams,   setTeams]   = useState([]);
   const [scores,  setScores]  = useState({});
   const [saving,  setSaving]  = useState(null);
+  const [liveSaving, setLiveSaving] = useState(null); // partido con update de gol en vivo en curso
+  const scoring = getScoringTerms(event?.deporte ?? 'Fútbol'); // gol/punto/carrera según deporte
   const [inscritosCount, setInscritosCount] = useState(0);
   const [gestorEnEvento, setGestorEnEvento] = useState(true);
 
@@ -1266,7 +1752,7 @@ function GestorResults({ route }) {
     Promise.all([
       supabase.from('events').select('id, status, formato, vidas_por_equipo, num_grupos, precio, cupos_total, cupos_ilimitado, cancha_costo, tarifa_app_por_jugador, gestor_juega, created_by').eq('id', eventId).single(),
       supabase.from('matches')
-        .select('*, home:team_home_id(nombre,color), away:team_away_id(nombre,color)')
+        .select('*, home:team_home_id(nombre,color), away:team_away_id(nombre,color), cargador:resultado_por(nombre)')
         .eq('event_id', eventId)
         .not('team_home_id', 'is', null)
         .order('jornada'),
@@ -1294,6 +1780,42 @@ function GestorResults({ route }) {
   }, [eventId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Marcador EN VIVO: suma/resta goles sin cerrar el partido. Alimenta la
+  // "Pantalla en Vivo" (poll 10s) para proyectar gol a gol; el partido se
+  // cierra igual que siempre con "Guardar resultado".
+  async function bumpLiveGoal(match, side, delta) {
+    if (liveSaving) return;
+    if (event?.status === 'finished') {
+      Alert.alert('Evento finalizado', 'No se pueden editar resultados de un evento finalizado.'); return;
+    }
+    const col = side === 'home' ? 'goles_home' : 'goles_away';
+    const next = Math.max(0, (match[col] ?? 0) + delta);
+    setLiveSaving(match.id);
+    try {
+      const { data, error } = await supabase.from('matches')
+        .update({ [col]: next, resultado_por: user?.id ?? null })
+        .eq('id', match.id)
+        .select('id');
+      if (error || !data?.length) {
+        Alert.alert('Error', error?.message ?? 'No se pudo actualizar el marcador en vivo.');
+        return;
+      }
+      setMatches((prev) => prev.map((x) => x.id === match.id ? { ...x, [col]: next } : x));
+      // Sincronizar los inputs del resultado final para que "Guardar resultado"
+      // ya traiga el marcador en vivo cargado (el gestor no lo re-teclea).
+      const other = side === 'home' ? 'away' : 'home';
+      const otherCol = side === 'home' ? 'goles_away' : 'goles_home';
+      setScores((s) => {
+        const cur = s[match.id] ?? {};
+        const otherVal = (cur[other] === undefined || cur[other] === '')
+          ? String(match[otherCol] ?? 0) : cur[other];
+        return { ...s, [match.id]: { ...cur, [side]: String(next), [other]: otherVal } };
+      });
+    } finally {
+      setLiveSaving(null);
+    }
+  }
 
   async function saveResult(match) {
     if (saving === match.id) return;
@@ -1341,6 +1863,7 @@ function GestorResults({ route }) {
         fue_a_penales:  fuePenales,
         status:         'finished',
         finished_at:    now,
+        resultado_por:  user?.id ?? null,
       }).eq('id', match.id);
       if (error) { Alert.alert('Error', error.message); return; }
       const updatedMatch = {
@@ -1393,7 +1916,7 @@ function GestorResults({ route }) {
             ['octavos','cuartos','semis'].includes(m.fase) && (m.team_home_id || m.team_away_id)
           );
           if (!koAlreadyPopulated) {
-            const standings = computeStandingsFromMatches(allMatchesUpdated, teams);
+            const standings = computeStandingsFromMatches(allMatchesUpdated, teams, event?.deporte ?? 'Fútbol');
             const numGrupos = parseInt(event?.num_grupos ?? '2', 10) || 2;
             const avanzan = numGrupos === 1 ? teams.length : 2;
             const conflicts = detectGroupTiesNeedingDecision(standings, avanzan);
@@ -1441,7 +1964,7 @@ function GestorResults({ route }) {
   const shouldShowAdvanceButton = isTorneo && groupComplete && !koPopulated && !eventLocked;
 
   async function handleAdvanceToKnockout() {
-    const standings = computeStandingsFromMatches(matches, teams);
+    const standings = computeStandingsFromMatches(matches, teams, event?.deporte ?? 'Fútbol');
     // Grupo único: TODOS los equipos avanzan a knockout
     // Múltiples grupos: top 2 por grupo
     const numGrupos = parseInt(event?.num_grupos ?? '2', 10) || 2;
@@ -1467,7 +1990,7 @@ function GestorResults({ route }) {
   }
 
   async function confirmAdvanceWithOverrides() {
-    const standings = tieModal?.standings ?? computeStandingsFromMatches(matches, teams);
+    const standings = tieModal?.standings ?? computeStandingsFromMatches(matches, teams, event?.deporte ?? 'Fútbol');
     const avanzan = tieModal?.avanzan ?? 2;
     const qualified = getQualifiedTeams(standings, avanzan, tieOverrides);
     const result = await populateKnockoutFromGroups({ supabase, eventId, qualifiedByGroup: qualified });
@@ -1480,6 +2003,7 @@ function GestorResults({ route }) {
   return (
     <SafeAreaView style={styles.safe}>
       <Text style={styles.title}>RESULTADOS</Text>
+      <MatchTimer eventId={eventId} mode="control" style={{ marginHorizontal: SPACING.md, marginBottom: SPACING.sm }} />
       {eventLocked && (
         <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.gold, textAlign:'center', marginBottom: SPACING.sm }}>
           🔒 Evento finalizado — resultados bloqueados
@@ -1539,6 +2063,23 @@ function GestorResults({ route }) {
                 {m.away?.color && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.away.color, marginLeft: 6 }} />}
               </View>
             </View>
+            {/* Marcador EN VIVO — se proyecta en la Pantalla en Vivo sin cerrar el partido */}
+            <View style={styles.liveGoalRow}>
+              <TouchableOpacity style={styles.liveGoalMinus} onPress={() => bumpLiveGoal(m, 'home', -1)} disabled={liveSaving === m.id}>
+                <Text style={styles.liveGoalMinusText}>−</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.liveGoalPlus} onPress={() => bumpLiveGoal(m, 'home', +1)} disabled={liveSaving === m.id}>
+                <Text style={styles.liveGoalPlusText}>{scoring.icon} +1</Text>
+              </TouchableOpacity>
+              <Text style={styles.liveGoalScore}>{m.goles_home ?? 0} : {m.goles_away ?? 0}</Text>
+              <TouchableOpacity style={styles.liveGoalPlus} onPress={() => bumpLiveGoal(m, 'away', +1)} disabled={liveSaving === m.id}>
+                <Text style={styles.liveGoalPlusText}>+1 {scoring.icon}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.liveGoalMinus} onPress={() => bumpLiveGoal(m, 'away', -1)} disabled={liveSaving === m.id}>
+                <Text style={styles.liveGoalMinusText}>−</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.liveGoalHint}>{`🔴 EN VIVO · el ${scoring.unidad} sale en la Pantalla en Vivo · el partido se cierra con "Guardar resultado"`}</Text>
             {showPenInputs && (
               <View style={[styles.resultRow, { marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.navy }]}>
                 <Text style={[styles.cardSub, { flex: 1, color: COLORS.gold }]}>🎯 Penales</Text>
@@ -1559,7 +2100,7 @@ function GestorResults({ route }) {
             <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.green, marginTop: SPACING.md, marginBottom: 4 }}>REGISTRADOS ({finishedMatches.length})</Text>
             {finishedMatches.map((m) => (
               <View key={m.id} style={[styles.card, { borderColor: '#2DC65340' }]}>
-                <Text style={styles.cardSub}>Jornada {m.jornada} · {(m.fase ?? 'grupos').toUpperCase()} ✓</Text>
+                <Text style={styles.cardSub}>Jornada {m.jornada} · {(m.fase ?? 'grupos').toUpperCase()} ✓{m.cargador?.nombre ? ` · cargó ${m.cargador.nombre}` : ''}</Text>
                 <View style={styles.resultRow}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
                     {m.home?.color && <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: m.home.color, marginRight: 6 }} />}
@@ -1760,16 +2301,8 @@ function GestorMvp({ route }) {
 
     await supabase.from('events').update({ mvp_voting_open: false }).eq('id', eventId);
 
-    try {
-      await supabase.rpc('credit_wallet', {
-        p_user_id:     winnerId,
-        p_monto:       1.00,
-        p_tipo:        'mvp_premio',
-        p_descripcion: 'Premio MVP del evento',
-      });
-    } catch (e) {
-      console.warn('credit_wallet error:', e.message);
-    }
+    // El premio MVP ($1) lo acredita el trigger trg_award_mvp_prize al insertar mvp_results
+    // (server-side, idempotente). credit_wallet ya NO es invocable desde el cliente.
 
     const winner = regPlayers.find((p) => p.user_id === winnerId);
     Alert.alert('🏆 MVP Definido', `${winner?.users?.nombre ?? 'Jugador'} con ${winnerVotes} voto(s). +$1 acreditado.`);
@@ -1970,6 +2503,14 @@ function GestorConfig({ route, navigation }) {
       return;
     }
     if (newStatus === 'active' && event?.status === 'finished') {
+      const ok = Platform.OS === 'web'
+        ? (typeof window !== 'undefined' && window.confirm('¿Reactivar el evento? Volverá a ACTIVO y dejará de contar como birria jugada para los participantes (afecta su acceso al pago en efectivo).'))
+        : await new Promise((res) => Alert.alert(
+            'Reactivar evento',
+            'Volverá a ACTIVO y dejará de contar como birria jugada para los participantes (afecta su acceso al pago en efectivo).',
+            [{ text: 'Cancelar', style: 'cancel', onPress: () => res(false) },
+             { text: 'Reactivar', style: 'destructive', onPress: () => res(true) }]));
+      if (!ok) return;
       // Reactivar: limpiar event_finished_at para que no se auto-oculte
       const { error } = await supabase.from('events').update({ status: 'active', event_finished_at: null }).eq('id', eventId);
       if (error) { Alert.alert('Error', error.message); return; }
@@ -2195,7 +2736,7 @@ function GestorConfig({ route, navigation }) {
 
 // ── Ventas / Comisiones ────────────────────────────────────────────────────
 function GestorVentas() {
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const [orders,  setOrders]  = useState([]);
   const [loading, setLoading] = useState(true);
   const [total,   setTotal]   = useState(0);
@@ -2252,7 +2793,7 @@ function GestorVentas() {
 
 // ── Pagos en efectivo (aprobación del gestor) ─────────────────────────────
 function GestorCashApprovals({ route, navigation }) {
-  const { user } = useAuthStore();
+  const user = useAuthStore((s) => s.user);
   const eventId  = route?.params?.eventId;
 
   const [requests,  setRequests]  = useState([]);
@@ -2323,19 +2864,10 @@ function GestorCashApprovals({ route, navigation }) {
   async function approve(r) {
     setProcessing(r.id);
     try {
-      const { error } = await supabase.from('event_registrations').upsert({
-        event_id:     r.event_id,
-        user_id:      r.user_id,
-        metodo_pago:  'efectivo',
-        monto_pagado: r.amount,
-        status:       'confirmed',
-      }, { onConflict: 'event_id,user_id' });
+      // RPC atómico: valida expiración + confirma inscripción + aprueba la
+      // solicitud en una sola transacción (antes eran 2 writes sin check).
+      const { error } = await supabase.rpc('admin_approve_cash_request', { p_request_id: r.id });
       if (error) throw error;
-
-      await supabase
-        .from('cash_payment_requests')
-        .update({ status: 'approved', gestor_id: user.id })
-        .eq('id', r.id);
 
       fetchRequests();
       Alert.alert('✅ Aprobado', `${r.user?.nombre} ha sido inscrito.`);
@@ -2348,10 +2880,15 @@ function GestorCashApprovals({ route, navigation }) {
 
   async function reject(r) {
     setProcessing(r.id);
-    await supabase
-      .from('cash_payment_requests')
-      .update({ status: 'rejected', gestor_id: user.id })
-      .eq('id', r.id);
+    try {
+      // RPC atómico: rechaza la solicitud Y cancela la inscripción 'pending'
+      // (libera el cupo + promueve waitlist). Antes solo se marcaba la
+      // solicitud y la inscripción quedaba zombie ocupando cupo invisible.
+      const { error } = await supabase.rpc('admin_reject_cash_request', { p_request_id: r.id });
+      if (error) throw error;
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    }
     fetchRequests();
     setProcessing(null);
   }
@@ -2531,13 +3068,20 @@ const styles = StyleSheet.create({
   cardSub:        { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray },
   playerItem:     { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, paddingLeft: SPACING.sm },
   btnRow:         { flexDirection: 'row', gap: SPACING.sm, flexWrap: 'wrap', padding: SPACING.md },
-  btn:            { flex: 1, borderRadius: RADIUS.sm, padding: SPACING.sm, alignItems: 'center' },
-  btnText:        { fontFamily: FONTS.bodyMedium, fontSize: 13, color: COLORS.white },
+  btn:            { flex: 1, borderRadius: RADIUS.sm, padding: SPACING.sm, alignItems: 'center', overflow: 'hidden', justifyContent: 'center' },
+  btnText:        { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white, textAlign: 'center' },
   roundTitle:     { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.gold, letterSpacing: 2, marginBottom: SPACING.sm, marginTop: SPACING.md },
   matchCard:      { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: COLORS.bg2 ?? COLORS.navy, borderRadius: RADIUS.sm, padding: SPACING.sm, marginBottom: SPACING.sm },
   matchTeam:      { fontFamily: FONTS.bodyMedium, fontSize: 13, color: COLORS.white, flex: 1, textAlign: 'center' },
   matchVs:        { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.gray, marginHorizontal: SPACING.sm },
   resultRow:      { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm },
+  liveGoalRow:    { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: SPACING.sm, marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: 1, borderTopColor: COLORS.navy },
+  liveGoalPlus:   { backgroundColor: COLORS.green, borderRadius: RADIUS.sm, paddingVertical: 10, paddingHorizontal: 14, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  liveGoalPlusText: { fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.bg },
+  liveGoalMinus:  { backgroundColor: COLORS.navy, borderRadius: RADIUS.sm, paddingVertical: 10, paddingHorizontal: 12, minHeight: 44, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.line },
+  liveGoalMinusText: { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.gray2, lineHeight: 20 },
+  liveGoalScore:  { fontFamily: FONTS.heading, fontSize: 24, color: COLORS.gold, minWidth: 64, textAlign: 'center' },
+  liveGoalHint:   { fontFamily: FONTS.body, fontSize: 10, color: COLORS.gray, textAlign: 'center', marginTop: 4 },
   teamName:       { fontFamily: FONTS.bodyMedium, fontSize: 12, color: COLORS.white, flex: 1 },
   scoreInput:     { width: 48, height: 48, backgroundColor: COLORS.navy, borderRadius: RADIUS.sm, textAlign: 'center', fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white, borderWidth: 1, borderColor: COLORS.blue },
   vsText:         { fontFamily: FONTS.heading, fontSize: 20, color: COLORS.gray },

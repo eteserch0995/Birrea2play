@@ -12,6 +12,7 @@ import { updateUserProfile, uploadAvatar } from '../../../lib/auth';
 import SportChips from '../../../components/SportChips';
 import { getSportTerms } from '../../../lib/sportTerms';
 import AvatarCropModal from '../../../components/AvatarCropModal';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
 
 const NIVELES  = ['Recreativo', 'Amateur', 'Semi-profesional', 'Profesional'];
 const GENEROS  = ['Masculino', 'Femenino'];
@@ -248,6 +249,7 @@ export default function EditProfileScreen({ navigation }) {
     <SafeAreaView style={styles.safe}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ResponsiveContainer style={{ gap: SPACING.sm }}>
           {/* Header */}
           <View style={styles.header}>
             <TouchableOpacity onPress={() => navigation.goBack()}>
@@ -357,6 +359,7 @@ export default function EditProfileScreen({ navigation }) {
               : <Text style={styles.btnText}>GUARDAR CAMBIOS</Text>
             }
           </TouchableOpacity>
+        </ResponsiveContainer>
         </ScrollView>
       </KeyboardAvoidingView>
 

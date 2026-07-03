@@ -7,6 +7,7 @@ import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
 import { useAppRefresh } from '../../../hooks/useAppRefresh';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
 
 const TYPE_ICON = {
   evento:    '📅',
@@ -60,28 +61,30 @@ export default function NotificationsScreen({ navigation }) {
         )}
       </View>
 
-      <FlatList
-        data={notifications}
-        keyExtractor={(i) => i.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={<Text style={styles.empty}>Sin notificaciones</Text>}
-        renderItem={({ item }) => (
-          <TouchableOpacity
-            style={[styles.item, !item.leida && styles.itemUnread]}
-            onPress={() => markRead(item.id)}
-          >
-            <Text style={styles.icon}>{TYPE_ICON[item.tipo] ?? '🔔'}</Text>
-            <View style={styles.content}>
-              <Text style={styles.mensaje}>{item.mensaje}</Text>
-              <Text style={styles.date}>
-                {new Date(item.created_at).toLocaleString('es-PA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-              </Text>
-            </View>
-            {!item.leida && <View style={styles.dot} />}
-          </TouchableOpacity>
-        )}
-      />
+      <ResponsiveContainer>
+        <FlatList
+          data={notifications}
+          keyExtractor={(i) => i.id}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={<Text style={styles.empty}>Sin notificaciones</Text>}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.item, !item.leida && styles.itemUnread]}
+              onPress={() => markRead(item.id)}
+            >
+              <Text style={styles.icon}>{TYPE_ICON[item.tipo] ?? '🔔'}</Text>
+              <View style={styles.content}>
+                <Text style={styles.mensaje}>{item.mensaje}</Text>
+                <Text style={styles.date}>
+                  {new Date(item.created_at).toLocaleString('es-PA', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </Text>
+              </View>
+              {!item.leida && <View style={styles.dot} />}
+            </TouchableOpacity>
+          )}
+        />
+      </ResponsiveContainer>
     </SafeAreaView>
   );
 }

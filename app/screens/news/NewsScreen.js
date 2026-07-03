@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
 import { useAppRefresh } from '../../../hooks/useAppRefresh';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
 
 const FILTERS = ['Todo', 'Noticia', 'Resultados', 'MVP', 'Torneo'];
 
@@ -48,6 +49,7 @@ export default function NewsScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <ResponsiveContainer>
       <Text style={styles.title}>NOTICIAS</Text>
 
       {/* Filter chips */}
@@ -133,6 +135,7 @@ export default function NewsScreen() {
           />
         )
       }
+      </ResponsiveContainer>
     </SafeAreaView>
   );
 }

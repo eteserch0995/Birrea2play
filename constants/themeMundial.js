@@ -59,11 +59,11 @@ export const COLORS_WC = {
 };
 
 export const FONTS_WC = {
-  heading:      'BebasNeue_400Regular',   // bold, condensed — para títulos grandes
-  body:         'Barlow_400Regular',
-  bodyMedium:   'Barlow_500Medium',
-  bodySemiBold: 'Barlow_600SemiBold',
-  bodyBold:     'Barlow_700Bold',
+  heading:      'Anton_400Regular',       // bold, condensed — para títulos grandes
+  body:         'Archivo_400Regular',
+  bodyMedium:   'Archivo_500Medium',
+  bodySemiBold: 'Archivo_600SemiBold',
+  bodyBold:     'Archivo_700Bold',
 };
 
 export const SPACING_WC = {

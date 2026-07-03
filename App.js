@@ -1,4 +1,5 @@
 import 'react-native-url-polyfill/auto';
+import './lib/installPrompt'; // captura beforeinstallprompt antes del primer render
 import React, { useEffect, useState, useRef } from 'react';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -10,6 +11,13 @@ import {
   Barlow_600SemiBold,
   Barlow_700Bold,
 } from '@expo-google-fonts/barlow';
+import { Anton_400Regular } from '@expo-google-fonts/anton';
+import {
+  Archivo_400Regular,
+  Archivo_500Medium,
+  Archivo_600SemiBold,
+  Archivo_700Bold,
+} from '@expo-google-fonts/archivo';
 import * as SplashScreen from 'expo-splash-screen';
 import { View, ActivityIndicator } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -20,15 +28,23 @@ import useAuthStore from './store/authStore';
 import AuthNavigator from './app/navigation/AuthNavigator';
 import AppNavigator from './app/navigation/AppNavigator';
 import ResetPasswordScreen from './app/screens/auth/ResetPasswordScreen';
+import SocialPreviewScreen from './app/screens/social/SocialPreviewScreen';
 import { COLORS } from './constants/theme';
 import { registerForPushNotifications } from './lib/notifications';
 import NotificationPermissionModal from './components/NotificationPermissionModal';
 import PlayerOnboardingModal from './components/PlayerOnboardingModal';
+import WCFlyerModal from './components/WCFlyerModal';
+import RecaudoFlyerModal from './components/RecaudoFlyerModal';
+import WorldCupSplash from './components/WorldCupSplash';
 import ErrorBoundary from './components/ErrorBoundary';
+import useWcStore from './store/wcStore';
+import { captureRefFromUrl } from './lib/referral';
 import { linking } from './lib/navigationLinking';
 import { getPendingDeepLink, clearPendingDeepLink } from './lib/pendingDeepLink';
 import { logWarn } from './lib/logger';
 import { initRemoteLogger, setRemoteLogUser } from './lib/remoteLogger';
+import { applyModo26DomAttribute } from './lib/modo26';
+import { requestCameraPermissionWeb } from './lib/cameraPermissionWeb';
 
 // Instala captura global de errores y flush periódico hacia Supabase client_logs.
 // Idempotente. Llamar antes del primer render para no perder errores tempranos.
@@ -43,8 +59,46 @@ function detectRecoveryFromUrl() {
   return path.startsWith('/reset-password') || /type=recovery/i.test(hash);
 }
 
-const NOTIF_ASKED_KEY = 'birrea_notif_asked';
+// DEV-only: permite ver el prototipo del muro social SIN login abriendo
+// localhost con ?preview=social. Gateado por __DEV__: nunca afecta produccion.
+function detectSocialPreviewFromUrl() {
+  if (typeof __DEV__ === 'undefined' || !__DEV__) return false;
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
+  const search = window.location.search || '';
+  const hash = window.location.hash || '';
+  return /preview=social/.test(search) || /preview=social/.test(hash);
+}
+
 const ONBOARDING_KEY_PREFIX = 'birrea_player_onboarding_seen_v1';
+const WC_FLYER_KEY = 'birrea_wc_flyer_ts'; // epoch ms de la última vez mostrado
+const WC_FLYER_INTERVAL_MS = 3 * 60 * 60 * 1000; // mostrar como máximo cada 3 horas
+const RECAUDO_FLYER_KEY_PREFIX = 'b2p_recaudo_flyer_day'; // flyer de arranque: Recaudo Solidario (Venezuela)
+
+// Detecta si la app está corriendo como PWA instalada (standalone).
+function getPwaStandalone() {
+  if (Platform.OS !== 'web' || typeof window === 'undefined') return false;
+  return (
+    window.matchMedia?.('(display-mode: standalone)').matches ||
+    window.navigator?.standalone === true
+  );
+}
+
+function getPanamaDayKey() {
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Panama',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  } catch {
+    return new Date().toISOString().slice(0, 10);
+  }
+}
+
+// Captura el ?ref=CODE del link de invitación apenas carga la app (web).
+// Idempotente; se consume al inscribirse al Mundial.
+captureRefFromUrl();
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -64,12 +118,22 @@ export default function App() {
     Barlow_500Medium,
     Barlow_600SemiBold,
     Barlow_700Bold,
+    Anton_400Regular,
+    Archivo_400Regular,
+    Archivo_500Medium,
+    Archivo_600SemiBold,
+    Archivo_700Bold,
   });
   const fontsReady = fontsLoaded;
   const [authReady,    setAuthReady]    = useState(false);
   const [showNotifModal, setShowNotifModal] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [onboardingReady, setOnboardingReady] = useState(false);
+  const [showFlyer, setShowFlyer] = useState(false);
+  const [showRecaudoFlyer, setShowRecaudoFlyer] = useState(false);
+  const [flyerPozos, setFlyerPozos] = useState({ survivor: null, polla: null });
+  const wcPool = useWcStore((s) => s.pool);
+  const loadWcPool = useWcStore((s) => s.loadPool);
   // BLOQUEO DE RECOVERY: si la URL es de reset, fuerza ResetPasswordScreen
   // por encima de cualquier otra cosa (evita que la sesión de recovery dé
   // acceso directo a la cuenta sin cambiar password).
@@ -79,6 +143,13 @@ export default function App() {
   const user            = useAuthStore((s) => s.user);
   const navigationRef   = useNavigationContainerRef();
   const wasAuthenticatedRef = useRef(isAuthenticated);
+  // Si el flyer del Mundial llegó a mostrarse en ESTE arranque, no abrimos otro flyer
+  // encima (ni al cerrarlo): el Recaudo queda para un próximo arranque. Determinista,
+  // independiente del timing de AsyncStorage (ver effect del flyer Recaudo).
+  const wcFlyerShownRef = useRef(false);
+
+  // Aplica data-modo26 en <html> al montar (web). Sin deps: solo se corre una vez.
+  useEffect(() => { applyModo26DomAttribute(); }, []);
 
   // Suscripción única a auth events: evita doble loadProfile (race condition)
   // que generaba escrituras simultáneas al store de usuario.
@@ -195,12 +266,134 @@ export default function App() {
       .finally(() => setOnboardingReady(true));
   }, [user?.id, user?.role]);
 
+  // Re-registrar web push en cada arranque para usuarios que YA dieron permiso.
+  // Tras el cambio de Service Worker (killswitch -> SW solo-push), las
+  // suscripciones viejas quedaron muertas porque el SW anterior se desregistraba.
+  // Esto las renueva bajo el SW nuevo SIN volver a mostrar el modal de permiso.
   useEffect(() => {
-    if (!user?.id || !onboardingReady || showOnboarding) return;
-    AsyncStorage.getItem(NOTIF_ASKED_KEY).then((asked) => {
-      if (!asked) setShowNotifModal(true);
-    });
-  }, [user?.id, onboardingReady, showOnboarding]);
+    if (!user?.id) return;
+    if (Platform.OS !== 'web') return;
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    registerForPushNotifications(user.id).catch(() => {});
+  }, [user?.id]);
+
+  // Solicitar permiso de cámara en web al arrancar la app (sin requerir login).
+  // getUserMedia dispara el diálogo nativo de Chrome ("¿Permitir cámara?").
+  // requestCameraPermissionWeb() guarda 'granted' en localStorage y cierra
+  // el stream inmediatamente; si ya fue pedido, sale sin volver a llamar.
+  useEffect(() => {
+    if (!authReady || Platform.OS !== 'web') return;
+    requestCameraPermissionWeb();
+  }, [authReady]);
+
+  // Acceso liberado (2026-06-29): se removió el bloqueo obligatorio de
+  // instalar la app / activar notificaciones / reclamar recompensa (PWAGate).
+  // Las notificaciones ya NO son requeridas: el modal forzado quedó desactivado
+  // para que cualquiera pueda usar la app directo desde el navegador, sin muros.
+  // Los usuarios que ya dieron permiso siguen recibiendo push (re-registro arriba).
+
+  // Cargar config del Mundial (para el flyer) cuando hay usuario.
+  useEffect(() => {
+    if (user?.id) loadWcPool();
+  }, [user?.id, loadWcPool]);
+
+  // Flyer del Mundial: como máximo cada 3 h mientras el módulo esté visible y
+  // dentro de la ventana flyer_until. No se muestra encima del onboarding/notif.
+  useEffect(() => {
+    if (!user?.id || !onboardingReady || showOnboarding || showNotifModal) return;
+    if (!wcPool?.is_visible) return;
+    const until = wcPool.flyer_until ? new Date(wcPool.flyer_until).getTime() : 0;
+    if (!until || Date.now() > until) return;
+    (async () => {
+      const last = Number(await AsyncStorage.getItem(WC_FLYER_KEY)) || 0;
+      if (Date.now() - last < WC_FLYER_INTERVAL_MS) return;
+      try {
+        const { data: stats } = await supabase.rpc('wc_pool_stats');
+        const m = { survivor: null, polla: null };
+        (stats ?? []).forEach((s) => { m[s.mode] = s.pozo; });
+        setFlyerPozos(m);
+      } catch (_) { /* el flyer igual se muestra sin pozos */ }
+      setShowFlyer(true);
+    })();
+  }, [user?.id, user?.role, onboardingReady, showOnboarding, showNotifModal, wcPool?.is_visible, wcPool?.flyer_until]);
+
+  // Marca que el flyer del Mundial se mostró en este arranque (lo lee el effect del Recaudo).
+  useEffect(() => { if (showFlyer) wcFlyerShownRef.current = true; }, [showFlyer]);
+
+  // Recaudo Solidario (Venezuela): flyer de arranque para usuarios logueados en web,
+  // como máximo una vez por día calendario de Panamá, sin encimarse al onboarding,
+  // al permiso de notificaciones ni al flyer del Mundial.
+  useEffect(() => {
+    if (!user?.id || !onboardingReady || showOnboarding || showNotifModal || showFlyer) return;
+    if (Platform.OS !== 'web') return;
+    // Si el Mundial ya tuvo su flyer en este arranque, no encimamos el Recaudo (ni al
+    // cerrar aquel: el cambio de showFlyer re-dispara este effect). Determinista: no
+    // depende de releer WC_FLYER_KEY (que dismissFlyer acaba de escribir con `now`).
+    if (wcFlyerShownRef.current) return;
+
+    let cancelled = false;
+    (async () => {
+      // No encimarse al flyer del Mundial. showFlyer se setea de forma asíncrona en su
+      // propio effect (tras awaits), así que leerlo aquí da un valor obsoleto y ambos
+      // flyers podrían apilarse. Evaluamos nosotros la elegibilidad del flyer WC con los
+      // mismos signos (read-only) y, si va a salir, le cedemos el turno al Mundial.
+      if (wcPool?.is_visible) {
+        const until = wcPool.flyer_until ? new Date(wcPool.flyer_until).getTime() : 0;
+        if (until && Date.now() <= until) {
+          const last = Number(await AsyncStorage.getItem(WC_FLYER_KEY)) || 0;
+          if (Date.now() - last >= WC_FLYER_INTERVAL_MS) return; // el flyer WC va a mostrarse
+        }
+      }
+      if (cancelled) return;
+
+      const storageKey = `${RECAUDO_FLYER_KEY_PREFIX}:${user.id}`;
+      const lastDay = await AsyncStorage.getItem(storageKey).catch(() => null);
+      if (cancelled) return;
+      if (lastDay !== getPanamaDayKey()) setShowRecaudoFlyer(true);
+    })();
+
+    return () => { cancelled = true; };
+  }, [user?.id, onboardingReady, showOnboarding, showNotifModal, showFlyer, wcPool?.is_visible, wcPool?.flyer_until]);
+
+  async function dismissRecaudoFlyer() {
+    setShowRecaudoFlyer(false);
+    if (!user?.id) return;
+    try {
+      await AsyncStorage.setItem(
+        `${RECAUDO_FLYER_KEY_PREFIX}:${user.id}`,
+        getPanamaDayKey(),
+      );
+    } catch {}
+  }
+
+  function recaudoVerMas() {
+    dismissRecaudoFlyer();
+    const go = (attempt = 0) => {
+      if (navigationRef.isReady()) {
+        try { navigationRef.navigate('Recaudo'); } catch (_) {}
+      } else if (attempt < 20) {
+        setTimeout(() => go(attempt + 1), 50);
+      }
+    };
+    go();
+  }
+
+  async function dismissFlyer() {
+    setShowFlyer(false);
+    try { await AsyncStorage.setItem(WC_FLYER_KEY, String(Date.now())); } catch (_) {}
+  }
+
+  function flyerVerMas() {
+    dismissFlyer();
+    const go = (attempt = 0) => {
+      if (navigationRef.isReady()) {
+        try { navigationRef.navigate('Mundial'); } catch (_) {}
+      } else if (attempt < 20) {
+        setTimeout(() => go(attempt + 1), 50);
+      }
+    };
+    go();
+  }
 
   async function handleFinishOnboarding() {
     if (user?.id) {
@@ -211,19 +404,24 @@ export default function App() {
 
   async function handleAllowNotifications() {
     setShowNotifModal(false);
-    await AsyncStorage.setItem(NOTIF_ASKED_KEY, 'true');
     registerForPushNotifications(user.id).catch(() => {});
-  }
-
-  async function handleSkipNotifications() {
-    setShowNotifModal(false);
-    await AsyncStorage.setItem(NOTIF_ASKED_KEY, 'true');
   }
 
   // Solo bloqueamos el render hasta authReady (necesario para decidir qué
   // navigator montar). Las fonts NO bloquean: RN-Web re-aplica los estilos
   // cuando Barlow carga, mientras tanto usa el system font del SO. Esto le
   // quita 1-2s de pantalla blanca/spinner en Android 4G.
+  // DEV-only: prototipo del muro social sin login (localhost/?preview=social).
+  if (detectSocialPreviewFromUrl()) {
+    return (
+      <SafeAreaProvider>
+        <SocialPreviewScreen
+          navigation={{ goBack: () => { if (typeof window !== 'undefined') window.history.back(); } }}
+        />
+      </SafeAreaProvider>
+    );
+  }
+
   if (!authReady) {
     return (
       <View style={{ flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' }}>
@@ -256,6 +454,7 @@ export default function App() {
     <ErrorBoundary>
       <GestureHandlerRootView style={{ flex: 1 }}>
         <SafeAreaProvider>
+          {Platform.OS === 'web' && <WorldCupSplash />}
           {/* key forzando remount al cambiar auth state — esto re-evalúa el linking
               config y, si la URL es /evento/:id, abre EventDetail tanto en
               AuthNavigator (vista pública) como en AppNavigator (con inscripción). */}
@@ -274,7 +473,18 @@ export default function App() {
           <NotificationPermissionModal
             visible={showNotifModal}
             onAllow={handleAllowNotifications}
-            onSkip={handleSkipNotifications}
+          />
+          <WCFlyerModal
+            visible={showFlyer}
+            onVerMas={flyerVerMas}
+            onDismiss={dismissFlyer}
+            survivorPozo={flyerPozos.survivor}
+            pollaPozo={flyerPozos.polla}
+          />
+          <RecaudoFlyerModal
+            visible={showRecaudoFlyer}
+            onDismiss={dismissRecaudoFlyer}
+            onOpen={recaudoVerMas}
           />
         </SafeAreaProvider>
       </GestureHandlerRootView>

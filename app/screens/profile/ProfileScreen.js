@@ -1,10 +1,20 @@
-import React, { useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ScrollView, RefreshControl, ActivityIndicator } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ScrollView, RefreshControl, Linking } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
 import { supabase } from '../../../lib/supabase';
+import {
+  getReferralStatus,
+  applyReferralCode,
+  getPendingEventRefCode,
+  clearPendingEventRefCode,
+  shareEventReferral,
+} from '../../../lib/referral';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
+import ReferralCard from '../../../components/ReferralCard';
+import StatBox from '../../../components/StatBox';
 
 const ROLE_COLOR = {
   admin:  COLORS.purple,
@@ -20,34 +30,66 @@ const ROLE_LABEL = {
 
 export default function ProfileScreen({ navigation }) {
   const { user, walletBalance, logout, refreshProfile } = useAuthStore();
-  const [refreshing,   setRefreshing]   = React.useState(false);
-  const [mvpCount,     setMvpCount]     = React.useState(0);
-  const [totalEvents,  setTotalEvents]  = React.useState(0);
+  const [refreshing,    setRefreshing]    = useState(false);
+  const [mvpCount,      setMvpCount]      = useState(0);
+  const [totalEvents,   setTotalEvents]   = useState(0);
+  const [referralData,  setReferralData]  = useState(null);
+  const [sharingCode,   setSharingCode]   = useState(false);
 
-  // Silent refresh every time the screen focuses (e.g. returning from EditProfile)
+  const loadReferral = useCallback(async () => {
+    const data = await getReferralStatus();
+    setReferralData(data);
+  }, []);
+
+  // Aplica código pendiente guardado durante el registro (una sola vez)
+  const applyPendingCode = useCallback(async () => {
+    const code = await getPendingEventRefCode();
+    if (!code) return;
+    const result = await applyReferralCode(code);
+    await clearPendingEventRefCode();
+    if (result.ok) {
+      Alert.alert(
+        '¡Código aplicado!',
+        `Código de ${result.referrer ?? 'tu amigo/a'} activado. Cuando completes tu primer evento, los dos ganan $1 en créditos.`
+      );
+      loadReferral();
+    }
+    // Si falla (código inválido, ya usado, cuenta vieja) simplemente ignoramos —
+    // el usuario ya completó el registro correctamente.
+  }, [loadReferral]);
+
   useFocusEffect(
     useCallback(() => {
       refreshProfile();
+      applyPendingCode();
+      loadReferral();
       if (user?.id) {
         supabase.from('mvp_results').select('id', { count: 'exact', head: true }).eq('user_id', user.id)
           .then(({ count }) => setMvpCount(count ?? 0));
         supabase.from('event_registrations').select('id', { count: 'exact', head: true }).eq('user_id', user.id).eq('status', 'confirmed')
           .then(({ count }) => setTotalEvents(count ?? 0));
       }
-    }, [refreshProfile, user?.id])
+    }, [refreshProfile, applyPendingCode, loadReferral, user?.id])
   );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refreshProfile();
+    await Promise.all([refreshProfile(), loadReferral()]);
     setRefreshing(false);
-  }, [refreshProfile]);
+  }, [refreshProfile, loadReferral]);
 
   const handleLogout = () => {
     Alert.alert('Cerrar sesión', '¿Seguro que deseas salir?', [
       { text: 'Cancelar', style: 'cancel' },
       { text: 'Salir', style: 'destructive', onPress: logout },
     ]);
+  };
+
+  const handleShare = async () => {
+    if (!referralData?.code) return;
+    setSharingCode(true);
+    await shareEventReferral({ code: referralData.code });
+    setSharingCode(false);
   };
 
   const role = user?.role ?? 'player';
@@ -69,7 +111,8 @@ export default function ProfileScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
       >
-        {/* Avatar section */}
+      <ResponsiveContainer>
+        {/* Avatar */}
         <View style={styles.avatarSection}>
           {user?.foto_url
             ? <Image source={{ uri: user.foto_url }} style={styles.avatar} />
@@ -110,10 +153,17 @@ export default function ProfileScreen({ navigation }) {
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatBox icon="⚽" value={user?.actividades_completadas ?? 0} label="Actividades" />
-          <StatBox icon="📅" value={totalEvents} label="Eventos" />
-          <StatBox icon="🏆" value={mvpCount} label="MVPs" />
+          <StatBox size="sm" icon="⚽" value={user?.actividades_completadas ?? 0} label="Actividades" />
+          <StatBox size="sm" icon="📅" value={totalEvents} label="Eventos" />
+          <StatBox size="sm" icon="🏆" value={mvpCount} label="MVPs" />
         </View>
+
+        {/* Invita y Gana */}
+        <ReferralCard
+          data={referralData}
+          onShare={handleShare}
+          sharing={sharingCode}
+        />
 
         {/* Actions */}
         <View style={styles.actions}>
@@ -128,6 +178,7 @@ export default function ProfileScreen({ navigation }) {
           )}
 
           <ActionBtn icon="🔔" label="Notificaciones" onPress={() => navigation.navigate('Notifications')} />
+          <ActionBtn icon="💬" label="Necesito ayuda" onPress={() => Linking.openURL('https://wa.me/50761222854')} />
           <ActionBtn icon="🔒" label="Política de privacidad" onPress={() => navigation.navigate('PrivacyPolicy')} />
           <ActionBtn icon="📄" label="Términos y condiciones" onPress={() => navigation.navigate('Terms')} />
 
@@ -135,10 +186,13 @@ export default function ProfileScreen({ navigation }) {
         </View>
 
         <View style={{ height: SPACING.xxl }} />
+      </ResponsiveContainer>
       </ScrollView>
     </SafeAreaView>
   );
 }
+
+// ─── Sub-componentes ──────────────────────────────────────────────────────────
 
 function InfoRow({ label, value, accent }) {
   if (!value) return null;
@@ -146,16 +200,6 @@ function InfoRow({ label, value, accent }) {
     <View style={rowStyles.row}>
       <Text style={rowStyles.label}>{label}</Text>
       <Text style={[rowStyles.value, accent && { color: COLORS.gold }]}>{value}</Text>
-    </View>
-  );
-}
-
-function StatBox({ icon, value, label }) {
-  return (
-    <View style={statStyles.box}>
-      <Text style={statStyles.icon}>{icon}</Text>
-      <Text style={statStyles.value}>{value}</Text>
-      <Text style={statStyles.label}>{label}</Text>
     </View>
   );
 }
@@ -173,17 +217,12 @@ function ActionBtn({ icon, label, onPress, danger }) {
   );
 }
 
+// ─── Estilos ──────────────────────────────────────────────────────────────────
+
 const rowStyles = StyleSheet.create({
   row:   { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: SPACING.sm, borderBottomWidth: 1, borderColor: COLORS.line },
   label: { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray },
   value: { fontFamily: FONTS.bodyMedium, fontSize: 13, color: COLORS.white, maxWidth: '60%', textAlign: 'right' },
-});
-
-const statStyles = StyleSheet.create({
-  box:   { flex: 1, backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center', borderWidth: 1, borderColor: COLORS.line },
-  icon:  { fontSize: 22, marginBottom: 4 },
-  value: { fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white },
-  label: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 },
 });
 
 const styles = StyleSheet.create({

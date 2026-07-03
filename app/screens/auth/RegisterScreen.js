@@ -7,6 +7,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { signUp, signOut, createUserProfile, uploadAvatar } from '../../../lib/auth';
 import { logError, logWarn } from '../../../lib/logger';
+import { savePendingEventRefCode } from '../../../lib/referral';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
 
 const DEPORTES = [
   'Fútbol', 'Fútbol 7', 'Fútbol Sala',
@@ -40,7 +42,8 @@ export default function RegisterScreen({ navigation }) {
   const [form, setForm] = useState({
     nombre: '', correo: '', telefono: '',
     password: '', confirmPassword: '',
-    residencia: '', contacto_emergencia: '',
+    residencia: '', contacto_emergencia: '', refCode: '',
+    genero: '',
     deportes: [], otroDeporte: '', nivel: 'Recreativo', posicion: '',
     terminos: false,
   });
@@ -83,6 +86,10 @@ export default function RegisterScreen({ navigation }) {
       }
       if (!/^\+?\d{7,15}$/.test(tel)) {
         Alert.alert('Teléfono inválido', 'Usa solo números (7 a 15 dígitos). Puedes incluir el código de país: +507...');
+        return;
+      }
+      if (!form.genero) {
+        Alert.alert('Falta el sexo', 'Seleccioná tu sexo (Masculino o Femenino). Es necesario para inscribirte en eventos mixtos o por categoría.');
         return;
       }
     }
@@ -165,8 +172,14 @@ export default function RegisterScreen({ navigation }) {
         nivel: form.nivel,
         posicion: form.posicion || null,
         foto_url,
+        genero: form.genero || null,
       });
       profileCreated = true;
+
+      // Guardar código de referido para aplicarlo después del primer login
+      if (form.refCode.trim()) {
+        await savePendingEventRefCode(form.refCode.trim());
+      }
 
       // Si Supabase tiene confirm-email activado, signUp NO devuelve session.
       // En ese caso el usuario NO puede loguearse hasta confirmar correo.
@@ -250,6 +263,7 @@ export default function RegisterScreen({ navigation }) {
   return (
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ResponsiveContainer>
         {/* Step indicator */}
         <View style={styles.stepRow}>
           {[1, 2, 3, 4, 5].map((n) => (
@@ -286,6 +300,13 @@ export default function RegisterScreen({ navigation }) {
               keyboardType="phone-pad"
               returnKeyType="done"
             />
+            <Text style={styles.label}>Sexo *</Text>
+            <Chips
+              options={['Masculino', 'Femenino']}
+              selected={form.genero}
+              onSelect={(v) => update('genero', v)}
+            />
+            <Text style={styles.hint}>Si te equivocás, luego podés pedir el cambio desde tu perfil.</Text>
           </View>
         )}
 
@@ -314,6 +335,15 @@ export default function RegisterScreen({ navigation }) {
           <View style={styles.form}>
             <Field label="Residencia" value={form.residencia} onChangeText={(v) => update('residencia', v)} />
             <Field label="Contacto de emergencia" value={form.contacto_emergencia} onChangeText={(v) => update('contacto_emergencia', v)} keyboardType="phone-pad" />
+            <Text style={styles.label}>¿Alguien te invitó? (opcional)</Text>
+            <Field
+              label="Código de invitación"
+              value={form.refCode}
+              onChangeText={(v) => update('refCode', v.toUpperCase().replace(/\s/g, ''))}
+              autoCapitalize="characters"
+              autoCorrect={false}
+            />
+            <Text style={styles.hint}>Si un amigo/a te compartió su código, ingrésalo aquí y los dos ganan $1 en créditos cuando completes tu primer evento.</Text>
           </View>
         )}
 
@@ -406,6 +436,7 @@ export default function RegisterScreen({ navigation }) {
         <TouchableOpacity onPress={() => navigation.goBack()}>
           <Text style={styles.link}>¿Ya tienes cuenta? <Text style={styles.linkAccent}>Inicia sesión</Text></Text>
         </TouchableOpacity>
+      </ResponsiveContainer>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -448,7 +479,7 @@ const fieldStyles = StyleSheet.create({
     fontFamily: FONTS.body,
     fontSize: 16,
     borderWidth: 1,
-    borderColor: COLORS.navy,
+    borderColor: COLORS.line,
     marginBottom: SPACING.sm,
   },
 });

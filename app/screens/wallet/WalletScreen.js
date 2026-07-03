@@ -111,6 +111,24 @@ export default function WalletScreen() {
         const parsed = new URL(url.replace('birrea2play://', 'https://app/'));
         const status = parsed.searchParams.get('status');
         const amount = parsed.searchParams.get('amount');
+        const donacion = parsed.searchParams.get('donacion');
+
+        // Recaudo Solidario: el retorno de una donación con tarjeta cae aquí (web-only),
+        // pero NO acredita wallet. Mostrar el agradecimiento correcto y NO el mensaje de créditos.
+        if (donacion === '1') {
+          if (status === 'success') {
+            Alert.alert(
+              '❤️ ¡Gracias por tu donación!',
+              'Tu aporte por Venezuela quedó registrado. El 100% se usa en compra de insumos y publicamos la factura en el grupo de WhatsApp.'
+            );
+          } else if (status === 'failed') {
+            const razon = parsed.searchParams.get('razon') ?? 'Pago rechazado';
+            Alert.alert('Donación no completada', decodeURIComponent(razon));
+          } else if (status === 'error') {
+            Alert.alert('Donación no completada', 'Ocurrió un error procesando la donación. Si el cobro fue aplicado, contacta soporte.');
+          }
+          return;
+        }
 
         if (status === 'success') {
           if (fetchDataRef.current) fetchDataRef.current();

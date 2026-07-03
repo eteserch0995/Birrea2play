@@ -15,7 +15,11 @@ import useAuthStore from '../../../store/authStore';
 import { logWarn } from '../../../lib/logger';
 import PlayerAvatar from '../../../components/PlayerAvatar';
 import TeamBadge from '../../../components/TeamBadge';
+import TeamMark from '../../../components/TeamMark';
 import WinnerBanner from '../../../components/WinnerBanner';
+import MatchTimer from '../../../components/MatchTimer';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
+import EmptyState from '../../../components/EmptyState';
 
 // Formatos que tienen tabla de posiciones
 const FORMATS_WITH_TABLE = ['Liga', 'Torneo'];
@@ -56,7 +60,7 @@ export default function ActiveEventScreen({ route, navigation }) {
         supabase.from('events').select('*').eq('id', eventId).single(),
         supabase.from('teams').select('*').eq('event_id', eventId),
         supabase.from('matches')
-          .select('*, home:team_home_id(nombre,color), away:team_away_id(nombre,color)')
+          .select('*, home:team_home_id(nombre,color,logo_url), away:team_away_id(nombre,color,logo_url)')
           .eq('event_id', eventId)
           .order('jornada'),
         supabase.from('event_registrations')
@@ -128,22 +132,15 @@ export default function ActiveEventScreen({ route, navigation }) {
     setMvpVoteCount((c) => c + 1);
   }
 
-  // Compute standings from matches when DB standings are empty
-  const computedStandings = useCallback(() => {
-    const table = {};
-    teams.forEach((t) => {
-      table[t.id] = { equipo: t.nombre, grupo: t.grupo ?? 'A', pj: 0, pg: 0, pe: 0, pp: 0, gf: 0, gc: 0, pts: 0 };
-    });
-    matches.filter((m) => m.status === 'finished').forEach((m) => {
-      const gh = m.goles_home ?? 0;
-      const ga = m.goles_away ?? 0;
-      const h = table[m.team_home_id];
-      const a = table[m.team_away_id];
-      if (h) { h.pj++; h.gf += gh; h.gc += ga; if (gh > ga) { h.pg++; h.pts += 3; } else if (gh === ga) { h.pe++; h.pts += 1; } else h.pp++; }
-      if (a) { a.pj++; a.gf += ga; a.gc += gh; if (ga > gh) { a.pg++; a.pts += 3; } else if (gh === ga) { a.pe++; a.pts += 1; } else a.pp++; }
-    });
-    return Object.values(table).sort((a, b) => b.pts - a.pts || (b.gf - b.gc) - (a.gf - a.gc));
-  }, [teams, matches]);
+  // Tabla SIEMPRE calculada de los partidos (fuente de verdad, misma que la
+  // Pantalla en Vivo): puntos por deporte (volley V=2/D=1, fútbol 3/1/0) y
+  // desempate determinístico pts→DG→GF. La tabla `standings` de la DB no la
+  // mantiene nadie (quedaba stale y desalineaba las pantallas); solo se usa
+  // como fallback si aún no hay ningún partido jugado.
+  const computedStandings = useCallback(
+    () => computeStandingsFromMatches(matches, teams, event?.deporte ?? 'Fútbol'),
+    [teams, matches, event?.deporte],
+  );
 
   if (loading) return (
     <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg, alignItems: 'center', justifyContent: 'center' }}>
@@ -173,7 +170,8 @@ export default function ActiveEventScreen({ route, navigation }) {
     ? ['Partidos', 'Tabla', 'MVP', 'Jugadores']
     : ['Partidos', 'MVP', 'Jugadores'];
 
-  const tableData  = standings.length > 0 ? standings : computedStandings();
+  const liveTable  = computedStandings();
+  const tableData  = liveTable.some((r) => r.pj > 0) ? liveTable : (standings.length > 0 ? standings : liveTable);
   const grupos     = [...new Set(tableData.map((r) => r.grupo ?? 'A'))];
   const multiGroup = grupos.length > 1;
 
@@ -218,12 +216,28 @@ export default function ActiveEventScreen({ route, navigation }) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
         contentContainerStyle={styles.content}
       >
+      <ResponsiveContainer style={{ gap: SPACING.sm }}>
+        {/* Pantalla en Vivo — tablero proyectable con el marcador gigante */}
+        <TouchableOpacity
+          style={styles.liveBoardBtn}
+          onPress={() => navigation.navigate('LiveBoard', { eventId })}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.liveBoardBtnText}>📺 PANTALLA EN VIVO</Text>
+          <Text style={styles.liveBoardBtnSub}>Marcador gigante para proyectar · gira a pantalla completa</Text>
+        </TouchableOpacity>
+
+        {/* Cronómetro del partido (solo lectura para jugadores) */}
+        <MatchTimer eventId={eventId} mode="view" />
 
         {/* ══════════════ PARTIDOS ══════════════ */}
         {tab === 'Partidos' && (() => {
           const winner = getTournamentWinner(matches, teams);
+          // Grupo único → avanzan TODOS; múltiples grupos → top 2 por grupo
+          // (igual que la lógica de avance del panel del gestor/admin).
+          const avanzanKO = (parseInt(event.num_grupos ?? '2', 10) || 2) === 1 ? teams.length : 2;
           const advanced = event.formato === 'Torneo' && isGroupStageComplete(matches)
-            ? getQualifiedTeams(computeStandingsFromMatches(matches, teams), 2)
+            ? getQualifiedTeams(computeStandingsFromMatches(matches, teams, event?.deporte ?? 'Fútbol'), avanzanKO)
             : null;
           const is2Vidas = event.formato === '2 Vidas';
           const liveTeams = is2Vidas
@@ -272,7 +286,7 @@ export default function ActiveEventScreen({ route, navigation }) {
               )}
 
               {Object.keys(byJornada).length === 0
-                ? <Text style={styles.empty}>No hay partidos generados aún</Text>
+                ? <EmptyState icon="⚽" title="No hay partidos generados aún" />
                 : Object.entries(byJornada).map(([jornada, rMatches]) => (
                 <View key={jornada}>
                   <View style={styles.jornadaHeader}>
@@ -291,7 +305,7 @@ export default function ActiveEventScreen({ route, navigation }) {
                     <View key={m.id} style={[styles.matchCard, m.status === 'finished' && styles.matchCardDone]}>
                       <View style={styles.matchRow}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
-                          {m.home?.color && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: m.home.color, marginRight: 4 }} />}
+                          {(m.home?.logo_url || m.home?.color) && <TeamMark team={m.home} size={14} style={{ marginRight: 4 }} />}
                           <Text style={styles.teamName} numberOfLines={1}>{m.home?.nombre ?? m.equipo_local}</Text>
                         </View>
                         <View style={styles.scoreWrap}>
@@ -310,7 +324,7 @@ export default function ActiveEventScreen({ route, navigation }) {
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
                           <Text style={[styles.teamName, { textAlign: 'right' }]} numberOfLines={1}>{m.away?.nombre ?? m.equipo_visitante}</Text>
-                          {m.away?.color && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: m.away.color, marginLeft: 4 }} />}
+                          {(m.away?.logo_url || m.away?.color) && <TeamMark team={m.away} size={14} style={{ marginLeft: 4 }} />}
                         </View>
                       </View>
                       {m.status === 'finished' && (
@@ -401,6 +415,7 @@ export default function ActiveEventScreen({ route, navigation }) {
         )}
 
         <View style={{ height: SPACING.xxl }} />
+      </ResponsiveContainer>
       </ScrollView>
 
       {/* ══════════════ MODAL VOTAR MVP ══════════════ */}
@@ -519,6 +534,9 @@ const styles = StyleSheet.create({
   tabText:        { fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 13, lineHeight: 18, includeFontPadding: false, textAlignVertical: 'center' },
   tabTextActive:  { color: COLORS.white, fontFamily: FONTS.bodyMedium },
   content:        { paddingHorizontal: SPACING.md, gap: SPACING.sm, paddingBottom: SPACING.xl },
+  liveBoardBtn:   { backgroundColor: COLORS.red, borderRadius: RADIUS.md, paddingVertical: SPACING.sm + 2, paddingHorizontal: SPACING.md, alignItems: 'center' },
+  liveBoardBtnText: { fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 2 },
+  liveBoardBtnSub:  { fontFamily: FONTS.body, fontSize: 11, color: COLORS.white + 'CC', marginTop: 1 },
   jornadaHeader:  { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: SPACING.sm, marginBottom: 4 },
   jornadaTitle:   { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.gold, letterSpacing: 2 },
   faseBadge:      { paddingHorizontal: 8, paddingVertical: 2, borderRadius: RADIUS.full },

@@ -38,14 +38,14 @@ serve(async (req) => {
     });
   }
 
-  let body: { userId: string; amount: number; descripcion?: string; tipo?: string; wc_enrollment_id?: string };
+  let body: { userId: string; amount: number; descripcion?: string; tipo?: string; wc_enrollment_id?: string; cancha_reserva_id?: string; credito_monto?: number };
   try { body = await req.json(); } catch {
     return new Response(JSON.stringify({ error: 'Body inválido' }), {
       status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
     });
   }
 
-  const { userId, amount, descripcion = 'Recarga Birrea2Play', tipo = 'recarga_tarjeta', wc_enrollment_id = null } = body;
+  const { userId, amount, descripcion = 'Recarga Birrea2Play', tipo = 'recarga_tarjeta', wc_enrollment_id = null, cancha_reserva_id = null, credito_monto = null } = body;
   if (!userId || !amount || amount < 1) {
     return new Response(JSON.stringify({ error: 'Monto mínimo $1.00' }), {
       status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
@@ -55,6 +55,27 @@ serve(async (req) => {
     return new Response(JSON.stringify({ error: 'wc_enrollment_id requerido para tipo=wc_enrollment' }), {
       status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
     });
+  }
+  if (tipo === 'abono_cancha' && !cancha_reserva_id) {
+    return new Response(JSON.stringify({ error: 'cancha_reserva_id requerido para tipo=abono_cancha' }), {
+      status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
+    });
+  }
+  // Donación: credito_monto es la base que cuenta para el termómetro público.
+  // Debe existir, ser > 0 y NUNCA exceder el monto realmente cobrado (amount),
+  // de lo contrario un cliente podría inflar el recaudo pagando $1.
+  // Tope server-side anti fat-finger (espejo del cardMax=2000 del cliente, que no
+  // es confiable): ni la base ni el total cobrado pueden exceder el máximo.
+  if (tipo === 'donacion') {
+    const DONACION_MAX = 2000; // espejo de RECAUDO.cardMax (lib/donaciones.js)
+    const DONACION_MIN = 1;    // espejo de RECAUDO.min: la base debe ser >= $1, no solo > 0.
+    const base = Number(credito_monto);
+    if (!Number.isFinite(base) || base < DONACION_MIN || base > amount
+        || base > DONACION_MAX || amount > DONACION_MAX) {
+      return new Response(JSON.stringify({ error: 'Monto de donación inválido' }), {
+        status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
+      });
+    }
   }
 
   // Verificar JWT
@@ -74,16 +95,51 @@ serve(async (req) => {
     });
   }
 
+  // INTERIM (mientras pf-webhook no tenga verificacion S2S de PagueloFacil): el callback de
+  // retorno de PF es forjable, asi que TOPAMOS la recarga de wallet con tarjeta para acotar
+  // el abuso. Se remueve al habilitar el webhook server-to-server de PagueloFacil.
+  if (tipo === 'recarga_tarjeta') {
+    const MAX_TX = 50, MAX_DAY = 100;
+    if (amount > MAX_TX) {
+      return new Response(JSON.stringify({ error: `Recarga con tarjeta limitada a $${MAX_TX} por transacción (temporal).` }), {
+        status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
+      });
+    }
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: recientes } = await supabase
+      .from('pf_pending_payments')
+      .select('amount')
+      .eq('user_id', userId).eq('tipo', 'recarga_tarjeta').eq('procesado', true)
+      .gte('created_at', since);
+    const sumDia = (recientes ?? []).reduce((s: number, r: { amount: number }) => s + Number(r.amount), 0);
+    if (sumDia + amount > MAX_DAY) {
+      return new Response(JSON.stringify({ error: `Límite diario de recarga con tarjeta ($${MAX_DAY}) alcanzado (temporal).` }), {
+        status: 400, headers: { ...CORS, 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
   // Crear registro de pago pendiente para idempotencia
   const ordenId = `pf-${userId.slice(0, 8)}-${Date.now()}`;
-  await supabase.from('pf_pending_payments').insert({
-    orden_id:    ordenId,
-    user_id:     userId,
+  const { error: insErr } = await supabase.from('pf_pending_payments').insert({
+    orden_id:          ordenId,
+    user_id:           userId,
     amount,
     tipo,
-    descripcion: descripcion.substring(0, 150),
-    wc_enrollment_id: tipo === 'wc_enrollment' ? wc_enrollment_id : null,
+    descripcion:       descripcion.substring(0, 150),
+    credito_monto:     credito_monto ?? null,
+    wc_enrollment_id:  tipo === 'wc_enrollment' ? wc_enrollment_id   : null,
+    cancha_reserva_id: tipo === 'abono_cancha'  ? cancha_reserva_id  : null,
   });
+  // Sin la fila pending NO hay idempotencia ni credito_monto (base del termómetro):
+  // si el insert falla, NO generar el enlace de pago (el donante quedaría cobrado sin
+  // registro, porque pf-webhook respondería orden_no_existe).
+  if (insErr) {
+    console.error('pf-create-link insert error:', insErr.message);
+    return new Response(JSON.stringify({ error: 'No se pudo iniciar el pago' }), {
+      status: 500, headers: { ...CORS, 'Content-Type': 'application/json' },
+    });
+  }
 
   // Generar enlace PágueloFácil
   const params = new URLSearchParams({

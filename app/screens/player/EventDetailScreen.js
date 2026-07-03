@@ -7,9 +7,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
+import { isModo26Active } from '../../../lib/modo26';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
-import { getRefundStatus, getEventStatusInfo, getTournamentWinner } from '../../../lib/eventHelpers';
+import { getRefundStatus, getEventStatusInfo, getTournamentWinner, freeLabel } from '../../../lib/eventHelpers';
 import WinnerBanner from '../../../components/WinnerBanner';
 import EventDetailSkeleton from '../../../components/EventDetailSkeleton';
 import { shareEvent } from '../../../lib/shareEvent';
@@ -21,9 +22,31 @@ import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 import PaymentModal from '../../../components/PaymentModal';
 import CancelRegistrationModal from '../../../components/CancelRegistrationModal';
 import GuestModal from '../../../components/GuestModal';
+import CashPendingBanner from '../../../components/CashPendingBanner';
 import PlayerAvatar from '../../../components/PlayerAvatar';
+import TeamMark from '../../../components/TeamMark';
 import TimerBadge from '../../../components/TimerBadge';
 import { filterActiveEventGuests, getActiveRegistrationUserIds, isActiveEventGuest, computeEventCapacity, checkSpotAvailable } from '../../../lib/eventGuests';
+import { getTeamNameWithColor } from '../../../lib/teamWearColor';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
+
+// Mapea errores técnicos de los flujos de pago Yappy a mensajes accionables
+// para el usuario. Sin teléfonos/canales inventados — solo lo que ya existe
+// en el resto de la pantalla (mensaje de error en efectivo referencia al
+// gestor por su cuenta, no lo repetimos acá).
+function friendlyPayError(e) {
+  const msg = e?.message ?? '';
+  if (/timeout/i.test(msg)) {
+    return 'La confirmación tardó demasiado. Verificá en tu app de Yappy si el pago salió antes de reintentar.';
+  }
+  if (/network|fetch/i.test(msg)) {
+    return 'Problema de conexión. Revisá tu red e intentá de nuevo.';
+  }
+  if (/cancel/i.test(msg)) {
+    return 'Pago cancelado.';
+  }
+  return `No se pudo completar el pago. Intentá de nuevo${msg ? ` (${msg.slice(0, 120)})` : ''}.`;
+}
 
 export default function EventDetailScreen({ route, navigation }) {
   // Defensa: en deep links el param puede llegar bajo `id` (path legacy) o
@@ -35,6 +58,7 @@ export default function EventDetailScreen({ route, navigation }) {
   const [event,        setEvent]        = useState(null);
   const [registrations,setRegistrations]= useState([]);
   const [participantRegs, setParticipantRegs] = useState([]);
+  const [waitlistRegs,   setWaitlistRegs]    = useState([]);
   const [guests,       setGuests]       = useState([]);
   const [teams,        setTeams]        = useState([]);
   const [matches,      setMatches]      = useState([]);
@@ -58,6 +82,9 @@ export default function EventDetailScreen({ route, navigation }) {
   const [yappyStep,     setYappyStep]           = useState('idle'); // 'idle' | 'phone' | 'polling'
   const [yappyPhone,    setYappyPhone]          = useState('');
   const [yappyProgress, setYappyProgress]       = useState({ attempts: 0, maxAttempts: 60 });
+  // Pago mixto
+  const [mixtoWallet, setMixtoWallet] = useState(0);
+  const [mixtoYappy,  setMixtoYappy]  = useState(0);
 
   const checkCapacity = async () => {
     if (event?.cupos_ilimitado) return true;
@@ -127,7 +154,7 @@ export default function EventDetailScreen({ route, navigation }) {
         supabase.from('event_registrations')
           .select('*, users(id, nombre, foto_url, genero)')
           .eq('event_id', eventId)
-          .in('status', ['confirmed', 'pending']),
+          .in('status', ['confirmed', 'pending', 'waitlist']),
         // Only show confirmed/pending_payment guests (not cancelled)
         supabase.from('event_guests')
           .select('*')
@@ -136,7 +163,7 @@ export default function EventDetailScreen({ route, navigation }) {
         // Equipos armados por el gestor + jugadores (usuarios E invitados)
         supabase.from('teams')
           .select(`
-            id, nombre, color, grupo, vidas_iniciales, vidas_actuales,
+            id, nombre, color, logo_url, grupo, vidas_iniciales, vidas_actuales,
             team_players(
               id, user_id, guest_id,
               users:user_id(id, nombre, foto_url),
@@ -185,7 +212,8 @@ export default function EventDetailScreen({ route, navigation }) {
         },
       });
       setEvent(ev);
-      setParticipantRegs(regs ?? []);
+      setParticipantRegs(regs?.filter(r => r.status !== 'waitlist') ?? []);
+      setWaitlistRegs(regs?.filter(r => r.status === 'waitlist') ?? []);
       // For the player list, only show confirmed registrations
       setRegistrations(regs?.filter((r) => r.status === 'confirmed') ?? []);
       setGuests(activeGuests);
@@ -340,13 +368,28 @@ export default function EventDetailScreen({ route, navigation }) {
           monto:       -precio,
           descripcion: `Inscripción: ${event.nombre}`,
         });
-        await supabase.from('event_registrations').upsert({
+        const { error: regErr } = await supabase.from('event_registrations').upsert({
           event_id:     event.id,
           user_id:      user.id,
           metodo_pago:  'wallet',
           monto_pagado: precio,
           status:       'confirmed',
         }, { onConflict: 'event_id,user_id' });
+        if (regErr) {
+          // El trigger de capacidad pudo rechazar (evento lleno): revertir el
+          // débito para no dejar al usuario sin cupo Y sin saldo.
+          try {
+            await supabase.from('wallets').update({ balance: wallet.balance })
+              .eq('id', wallet.id).eq('balance', newBalance);
+            await supabase.from('wallet_transactions').insert({
+              wallet_id:   wallet.id,
+              tipo:        'inscripcion',
+              monto:       precio,
+              descripcion: `Reverso inscripción (sin cupo): ${event.nombre}`,
+            });
+          } catch {}
+          throw new Error(regErr.message);
+        }
         setWalletBalance(newBalance);
       } else if (error) {
         throw error;
@@ -386,6 +429,66 @@ export default function EventDetailScreen({ route, navigation }) {
     setYappyStep('phone');
   };
 
+  // Pago mixto: wallet cubre la parte mayor, Yappy el resto
+  const payMixto = (walletMonto, yappyMonto) => {
+    setPayModal(false);
+    setMixtoWallet(walletMonto);
+    setMixtoYappy(yappyMonto);
+    setYappyPhone('');
+    setYappyStep('phone_mixto');
+  };
+
+  const confirmarYappyMixto = async () => {
+    const phone = yappyPhone.replace(/\D/g, '');
+    if (phone.length < 7) { Alert.alert('Error', 'Ingresá un número Yappy válido'); return; }
+    if (!(await checkCapacity())) { setYappyStep('idle'); await fetchEvent(); return; }
+    setYappyLoading(true);
+    let orderId;
+    try {
+      const result = await iniciarBotonYappy({
+        phone, amount: mixtoYappy, tipo: 'mixto', event_id: event.id,
+      });
+      orderId = result.orderId;
+    } catch (e) {
+      setYappyLoading(false);
+      setYappyStep('idle');
+      Alert.alert('Error Yappy', friendlyPayError(e));
+      return;
+    }
+    setYappyStep('polling_mixto');
+    setYappyProgress({ attempts: 0, maxAttempts: 60 });
+    const { promise, cancel } = pollBotonOrder({ orderId, onProgress: (p) => setYappyProgress(p) });
+    yappyCancelRef.current = cancel;
+    promise
+      .then(async () => {
+        yappyCancelRef.current = null;
+        // Yappy cobró — ahora debitar wallet y confirmar inscripción
+        const { error } = await Promise.resolve(
+          supabase.rpc('inscribir_mixto', {
+            p_event_id:     event.id,
+            p_wallet_monto: mixtoWallet,
+            p_yappy_monto:  mixtoYappy,
+          })
+        );
+        setYappyStep('idle');
+        setYappyLoading(false);
+        if (error) {
+          Alert.alert('Error al confirmar inscripción', error.message + '\n\nContactá al admin — tu pago Yappy fue procesado.');
+          return;
+        }
+        const precio = (mixtoWallet + mixtoYappy).toFixed(2);
+        Alert.alert('¡Inscrito!', `Pago mixto de $${precio} confirmado ($${mixtoWallet.toFixed(2)} créditos + $${mixtoYappy.toFixed(2)} Yappy). ¡Estás inscrito!`, [
+          { text: 'OK', onPress: fetchEvent },
+        ]);
+      })
+      .catch((e) => {
+        yappyCancelRef.current = null;
+        setYappyStep('idle');
+        setYappyLoading(false);
+        if (e.message !== 'cancelled') Alert.alert('Pago no completado', friendlyPayError(e));
+      });
+  };
+
   const confirmarYappyBoton = async () => {
     const phone  = yappyPhone.replace(/\D/g, '');
     const precio = event?.precio ?? 0;
@@ -394,13 +497,59 @@ export default function EventDetailScreen({ route, navigation }) {
     if (!(await checkCapacity())) { setYappyStep('idle'); await fetchEvent(); return; }
 
     setYappyLoading(true);
+
+    // RESERVA del cupo mientras paga — la valida el trigger server-side con
+    // lock por evento: dos pagos simultáneos ya no toman el mismo cupo, el
+    // segundo recibe el error AQUÍ, antes de cobrar (bug 2026-06-04: dos
+    // Yappy con 25 seg de diferencia dejaron 21/20). El IPN convierte la
+    // reserva en 'confirmed' (upsert) y si el flujo muere sin pagar, el cron
+    // la libera en ~20 min. created_at explícito renueva el TTL si la fila
+    // ya existía (ej. cancelled). Los promovidos de waitlist YA tienen cupo
+    // reservado: no pisar su fila.
+    const isPromotedReg = myReg?.status === 'pending' && myReg?.metodo_pago === 'waitlist_promoted';
+    if (!isPromotedReg) {
+      const { error: resErr } = await supabase.from('event_registrations').upsert({
+        event_id:     event.id,
+        user_id:      user.id,
+        metodo_pago:  'yappy_boton',
+        monto_pagado: 0,
+        status:       'pending',
+        created_at:   new Date().toISOString(),
+      }, { onConflict: 'event_id,user_id' });
+      if (resErr) {
+        setYappyLoading(false);
+        setYappyStep('idle');
+        const sinCupo = /lleno|cupos/i.test(resErr.message ?? '');
+        Alert.alert(
+          sinCupo ? 'Sin cupo' : 'Error',
+          sinCupo ? 'El último cupo se ocupó hace un momento. No se realizó ningún cobro.' : resErr.message,
+        );
+        await fetchEvent();
+        return;
+      }
+    }
+
+    // Libera la reserva si el pago no se concreta (solo toca la fila-reserva:
+    // pending + yappy_boton + monto 0). Cancelarla dispara la promoción de
+    // la lista de espera. Si Yappy aprobara tardío, el IPN la revive.
+    const releaseReserva = async () => {
+      if (isPromotedReg) return;
+      try {
+        await supabase.from('event_registrations')
+          .update({ status: 'cancelled' })
+          .eq('event_id', event.id).eq('user_id', user.id)
+          .eq('status', 'pending').eq('metodo_pago', 'yappy_boton').eq('monto_pagado', 0);
+      } catch {}
+    };
+
     let orderId;
     try {
       // tipo='evento' → IPN inscribirá directamente sin tocar wallet
       const result = await iniciarBotonYappy({ phone, amount: precio, tipo: 'evento', event_id: event.id });
       orderId = result.orderId;
     } catch (e) {
-      Alert.alert('Error Yappy', e.message);
+      await releaseReserva();
+      Alert.alert('Error Yappy', friendlyPayError(e));
       setYappyLoading(false);
       return;
     }
@@ -415,20 +564,31 @@ export default function EventDetailScreen({ route, navigation }) {
     yappyCancelRef.current = cancel;
 
     promise
-      .then(() => {
-        // El IPN ya inscribió al jugador vía inscribir_yappy_evento RPC
+      .then(async () => {
         yappyCancelRef.current = null;
         setYappyStep('idle');
-        // Avisar al gestor si el evento ya tiene equipos creados.
+        // Failsafe: si el IPN confirmó yappy_orders pero falló al llamar inscribir_yappy_evento
+        // (el polling detecta 'executed' pero el registro queda en 'pending'), lo llamamos
+        // directamente desde el cliente. Es idempotente: si ya está confirmed, no hace nada.
+        try {
+          await supabase.rpc('inscribir_yappy_evento', {
+            p_user_id:  user.id,
+            p_event_id: event.id,
+            p_monto:    precio,
+            p_order_id: orderId,
+          });
+        } catch { /* si falla (ej. ya confirmado), ignorar */ }
         notifyGestorOfNewRegistration(event.id, user?.nombre).catch(() => {});
         Alert.alert('¡Inscrito!', `Pago de $${precio.toFixed(2)} con Yappy confirmado. ¡Estás inscrito!`, [
           { text: 'OK', onPress: fetchEvent },
         ]);
       })
-      .catch((e) => {
+      .catch(async (e) => {
         yappyCancelRef.current = null;
         setYappyStep('idle');
-        if (e.message !== 'cancelled') Alert.alert('Pago no completado', e.message);
+        // Pago no concretado (timeout/cancelado/rechazado): liberar el cupo.
+        await releaseReserva();
+        if (e.message !== 'cancelled') Alert.alert('Pago no completado', friendlyPayError(e));
       })
       .finally(() => setYappyLoading(false));
   };
@@ -442,12 +602,17 @@ export default function EventDetailScreen({ route, navigation }) {
       // Guard: check if user already has a registration (any non-cancelled status)
       const { data: existingReg } = await supabase
         .from('event_registrations')
-        .select('id, status')
+        .select('id, status, metodo_pago')
         .eq('event_id', event.id)
         .eq('user_id', user.id)
         .in('status', ['confirmed', 'pending'])
         .maybeSingle();
-      if (existingReg) {
+      // EXCEPCIÓN promovido de waitlist: su fila ya es 'pending'/waitlist_promoted
+      // (ocupa el cupo reservado). DEBE poder elegir efectivo para reclamarlo —
+      // sin esta excepción el guard lo rebotaba y perdía el cupo por TTL sin que
+      // se creara ninguna solicitud para el gestor (el cupo es suyo, ya reservado).
+      const isPromotedReg = existingReg?.status === 'pending' && existingReg?.metodo_pago === 'waitlist_promoted';
+      if (existingReg && !isPromotedReg) {
         setPayModal(false);
         Alert.alert(
           existingReg.status === 'confirmed' ? 'Ya estás inscrito' : 'Ya tienes un pago pendiente',
@@ -486,13 +651,9 @@ export default function EventDetailScreen({ route, navigation }) {
       if (cashErr) console.warn('cash_payment_requests insert failed:', cashErr.message);
 
       setPayModal(false);
-      const contacto = gestor?.telefono || gestor?.correo || '';
-      const gestorInfo = gestor
-        ? `\n\nContacta al gestor para pagar:\n👤 ${gestor.nombre}${contacto ? `\n📱 ${contacto}` : ''}`
-        : '';
       Alert.alert(
         'Pago en efectivo solicitado',
-        `Tienes 4 horas para contactar al gestor y completar el pago de $${(event.precio ?? 0).toFixed(2)}.${gestorInfo}\n\nTu cupo quedó reservado. Si el pago no se confirma en 4 horas, el cupo será liberado.`,
+        `Tienes 4 horas para contactar al gestor y completar el pago de $${(event.precio ?? 0).toFixed(2)}.\n\n📞 Contactá al gestor: 6325-5309 o 6122-2854.\n\nTu cupo quedó reservado. Si el pago no se confirma en 4 horas, el cupo será liberado.`,
         [{ text: 'OK', onPress: fetchEvent }],
       );
     } catch (e) {
@@ -511,12 +672,62 @@ export default function EventDetailScreen({ route, navigation }) {
     return userGenero === evGenero;
   };
 
+  // ── Inscripción gratuita (evento con precio 0 — sin pago) ──────────────────
+  const registerFree = async () => {
+    if (paying) return;
+    setPaying(true);
+    try {
+      if (!(await checkCapacity())) { await fetchEvent(); return; }
+      // Evitar doble inscripción
+      const { data: existingReg } = await supabase
+        .from('event_registrations')
+        .select('id')
+        .eq('event_id', event.id)
+        .eq('user_id', user.id)
+        .eq('status', 'confirmed')
+        .maybeSingle();
+      if (existingReg) {
+        Alert.alert('Ya estás inscrito', 'Ya tienes una inscripción confirmada en este evento.');
+        await fetchEvent();
+        return;
+      }
+      const { error: regErr } = await supabase.from('event_registrations').upsert({
+        event_id:     event.id,
+        user_id:      user.id,
+        metodo_pago:  'gratis',
+        monto_pagado: 0,
+        status:       'confirmed',
+      }, { onConflict: 'event_id,user_id' });
+      if (regErr) throw new Error(regErr.message);
+      // Avisar al gestor (fire-and-forget, no bloquea).
+      notifyGestorOfNewRegistration(event.id, user?.nombre).catch(() => {});
+      Alert.alert('¡Inscrito!', 'Te has inscrito exitosamente. ¡Nos vemos en la cancha!', [{ text: 'OK', onPress: fetchEvent }]);
+    } catch (e) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setPaying(false);
+    }
+  };
+
   const openPayModal = () => {
     if (!checkGenderAllowed()) {
       const evGenero = event?.genero;
       Alert.alert(
         'Evento restringido',
         `Este es un evento ${evGenero}. Tu perfil indica que eres ${user?.genero}, por lo que no puedes inscribirte en este evento.`,
+      );
+      return;
+    }
+    // Evento gratis: no requiere pago → inscripción directa con confirmación.
+    if ((event?.precio ?? 0) <= 0) {
+      const freeTxt = freeLabel(event?.deporte);
+      Alert.alert(
+        freeTxt,
+        `Este evento es sin costo. ¿Confirmás tu cupo para "${event.nombre}"?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Confirmar', onPress: registerFree },
+        ],
       );
       return;
     }
@@ -533,16 +744,17 @@ export default function EventDetailScreen({ route, navigation }) {
     setCancelling(true);
     try {
       const result = await cancelRegistration({
-        userId:         user.id,
-        eventId:        event.id,
-        eventFecha:     event.fecha,
-        eventHora:      event.hora,
-        monto:          myReg?.monto_pagado ?? 0,
         registrationId: myReg.id,
-        metodoPago:     myReg?.metodo_pago ?? '',
         cancelGuests,
       });
       setCancelModal(false);
+
+      // Idempotencia: si ya estaba cancelada (doble-tap / dos pestañas), no
+      // mostrar un segundo aviso de reembolso — el RPC no devolvió de nuevo.
+      if (result.alreadyCancelled) {
+        Alert.alert('Ya cancelada', 'Esta inscripción ya estaba cancelada.', [{ text: 'OK', onPress: fetchEvent }]);
+        return;
+      }
 
       // If refunded, refresh wallet balance from DB (more reliable than local math)
       if (result.refunded) {
@@ -560,10 +772,13 @@ export default function EventDetailScreen({ route, navigation }) {
           ? ' No se pudieron cancelar tus invitados automáticamente; el sistema los ocultará del evento y el gestor podrá limpiarlos.'
         : '';
 
+      // Avisar al promovido de la lista de espera (si lo hubo) — fire-and-forget.
+      notifyPromotedFromWaitlist(event).catch(() => {});
+
       if (result.refunded) {
         Alert.alert(
           'Inscripción cancelada',
-          `Se ajustaron $${result.amount.toFixed(2)} a tus créditos internos.${guestNote}`,
+          `Se devolvieron $${result.amount.toFixed(2)} (${result.pct === 1 ? '100%' : '50% por cancelar a menos de 48 h'}) a tus créditos internos.${guestNote}`,
           [{ text: 'OK', onPress: fetchEvent }],
         );
       } else if (result.penaltyApplied) {
@@ -576,9 +791,9 @@ export default function EventDetailScreen({ route, navigation }) {
           [{ text: 'Entendido', onPress: fetchEvent }],
         );
       } else {
-        const noRefundReason = myReg?.metodo_pago === 'wallet'
-          ? ' No aplica reembolso (evento en menos de 48 h).'
-          : ' Los pagos en efectivo o Yappy son gestionados por el administrador.';
+        const noRefundReason = result.refundFailed
+          ? ' No pudimos acreditar tu devolución automáticamente — escribí al administrador (6122-2854) para resolverla.'
+          : ' No había pagos registrados para devolver.';
         Alert.alert(
           'Inscripción cancelada',
           `Tu inscripción fue cancelada.${noRefundReason}${guestNote}`,
@@ -590,6 +805,28 @@ export default function EventDetailScreen({ route, navigation }) {
     } finally {
       setCancelling(false);
     }
+  };
+
+  // Aviso (push + email) al jugador recién promovido de la lista de espera.
+  // Tiene 4 horas para pagar antes de que el cupo pase al siguiente.
+  const notifyPromotedFromWaitlist = async (ev) => {
+    const { data: promoted } = await supabase
+      .from('event_registrations')
+      .select('user_id')
+      .eq('event_id', ev.id)
+      .eq('status', 'pending')
+      .eq('metodo_pago', 'waitlist_promoted')
+      .maybeSingle();
+    if (!promoted?.user_id) return;
+    await supabase.functions.invoke('send-notification', {
+      body: {
+        user_ids:    [promoted.user_id],
+        force_email: true,
+        title:       '🎉 ¡Se liberó tu cupo!',
+        body:        `Se liberó un cupo en "${ev.nombre}" y es tuyo. Entrá a Birrea2Play y completá el pago dentro de las próximas 4 horas para confirmar tu lugar — pasado ese tiempo, el cupo pasa al siguiente de la lista.`,
+        url:         'https://birrea2play.com',
+      },
+    });
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -616,16 +853,30 @@ export default function EventDetailScreen({ route, navigation }) {
   );
 
   const inscritos  = registrations.length + guests.length;
+  // Regs 'pending' (efectivo/promovidos) reservan cupo pero no salen en la
+  // lista de jugadores — mostrarlos aparte para que el conteo siempre cuadre.
+  const pendientesPago = Math.max(0, (participantRegs?.length ?? 0) - registrations.length);
   const jugadoresInscritos = [
     ...registrations.filter(r => r.status === 'confirmed' && r.users?.nombre).map(r => ({ nombre: r.users.nombre, genero: r.users.genero })),
     ...guests.filter(g => g.status === 'confirmed' && g.nombre).map(g => ({ nombre: g.nombre, genero: g.genero ?? null })),
   ];
   // Capacity con desglose por género (si el evento Mixto lo tiene definido)
   const capacityInfo = computeEventCapacity(event, participantRegs ?? [], guests);
+  // Mi bucket de género lleno (Mixto con desglose): aunque el otro género tenga
+  // espacio, este usuario no puede inscribirse → ofrecerle lista de espera.
+  const miGeneroLleno = capacityInfo.hasGenderQuota && (
+    user?.genero === 'Masculino' ? capacityInfo.hombres.lleno
+    : user?.genero === 'Femenino' ? capacityInfo.mujeres.lleno
+    : false
+  );
+  // Ocupación REAL = confirmed + pending + invitados activos (total.lleno),
+  // la misma cuenta que checkCapacity y el RPC join_event_waitlist. Antes se
+  // usaba `inscritos` (sin pendings) y el botón "Inscribirse" aparecía en
+  // eventos ya llenos, o viceversa.
   const cuposFull  = !event.cupos_ilimitado && (
-    capacityInfo.hasGenderQuota
-      ? (capacityInfo.hombres.lleno && capacityInfo.mujeres.lleno)
-      : inscritos >= event.cupos_total
+    capacityInfo.total.lleno
+    || (capacityInfo.hasGenderQuota
+        && ((capacityInfo.hombres.lleno && capacityInfo.mujeres.lleno) || miGeneroLleno))
   );
   const { label: statusLabel, color: statusColor } = getEventStatusInfo(event.status);
   const refundInfo = myReg ? getRefundStatus(event.fecha, event.hora) : null;
@@ -661,6 +912,7 @@ export default function EventDetailScreen({ route, navigation }) {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
       >
+      <ResponsiveContainer>
         {/* Header */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.back}>
@@ -693,7 +945,10 @@ export default function EventDetailScreen({ route, navigation }) {
             onPress={() => navigation.navigate('ActiveEvent', { eventId: event.id })}
             activeOpacity={0.85}
           >
-            <Text style={styles.activeBtnText}>⚡ VER EVENTO EN CURSO</Text>
+            <View style={styles.activeBtnTitleRow}>
+              {isModo26Active() && <View pointerEvents="none" dataSet={{ m26Blink: '' }} style={styles.m26LiveDot} />}
+              <Text style={styles.activeBtnText}>⚡ VER EVENTO EN CURSO</Text>
+            </View>
             <Text style={styles.activeBtnSub}>Resultados, MVP, tabla y jugadores en vivo</Text>
           </TouchableOpacity>
         )}
@@ -716,9 +971,9 @@ export default function EventDetailScreen({ route, navigation }) {
           {!event.cupos_ilimitado && (
             capacityInfo.hasGenderQuota
               ? <InfoRow icon="👥" label={`♂ ${capacityInfo.hombres.ocupados}/${capacityInfo.hombres.cupo}   ·   ♀ ${capacityInfo.mujeres.ocupados}/${capacityInfo.mujeres.cupo}`} />
-              : <InfoRow icon="👥" label={`${inscritos}/${event.cupos_total} jugadores`} />
+              : <InfoRow icon="👥" label={`${capacityInfo.total.ocupados}/${event.cupos_total} jugadores`} />
           )}
-          {(event.precio ?? 0) > 0 && <InfoRow icon="💵" label={`$${(event.precio).toFixed(2)} por jugador`} />}
+          <InfoRow icon="💵" label={(event.precio ?? 0) > 0 ? `$${(event.precio).toFixed(2)} por jugador` : freeLabel(event.deporte)} />
           {event.descripcion ? <Text style={styles.desc}>{event.descripcion}</Text> : null}
           {event.maps_url && (
             <TouchableOpacity
@@ -778,8 +1033,8 @@ export default function EventDetailScreen({ route, navigation }) {
                 return (
                   <View key={t.id} style={[styles.teamCard, { borderLeftColor: color, opacity: is2Vidas && (t.vidas_actuales ?? 0) === 0 ? 0.5 : 1 }]}>
                     <View style={styles.teamHeader}>
-                      <View style={[styles.teamSwatch, { backgroundColor: color }]} />
-                      <Text style={styles.teamName}>{t.nombre}</Text>
+                      <TeamMark team={t} size={26} square style={{ marginRight: 2 }} />
+                      <Text style={styles.teamName}>{getTeamNameWithColor(t)}</Text>
                       {vidasTxt ? (
                         <Text style={[styles.teamGroup, { color: (t.vidas_actuales ?? 0) > 0 ? COLORS.red : COLORS.gray }]}>{vidasTxt}</Text>
                       ) : (t.grupo ? <Text style={styles.teamGroup}>Grupo {t.grupo}</Text> : null)}
@@ -827,7 +1082,9 @@ export default function EventDetailScreen({ route, navigation }) {
         )}
 
         {/* Players */}
-        <Text style={styles.sectionTitle}>Jugadores inscritos ({inscritos})</Text>
+        <Text style={styles.sectionTitle}>
+          Jugadores inscritos ({inscritos}{pendientesPago > 0 ? ` · ${pendientesPago} pendiente${pendientesPago > 1 ? 's' : ''} de pago` : ''})
+        </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.playersRow}>
           {registrations.map((r) => (
             <TouchableOpacity
@@ -848,11 +1105,28 @@ export default function EventDetailScreen({ route, navigation }) {
           ))}
         </ScrollView>
 
+        {/* Lista de espera */}
+        {waitlistRegs.length > 0 && (
+          <View style={{ marginTop: SPACING.md, paddingHorizontal: SPACING.md }}>
+            <Text style={styles.sectionTitle}>Lista de espera ({waitlistRegs.length})</Text>
+            {waitlistRegs.map((r, i) => (
+              <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.line ?? '#1E2530' }}>
+                <Text style={{ fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.gray2 ?? COLORS.gray, width: 22 }}>#{i + 1}</Text>
+                <PlayerAvatar user={r.users} size={32} />
+                <Text style={{ fontFamily: FONTS.bodyMedium, fontSize: 14, color: COLORS.white, flex: 1 }}>{r.users?.nombre}</Text>
+                {r.users?.genero && (
+                  <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2 ?? COLORS.gray }}>{r.users.genero === 'Masculino' ? '♂' : '♀'}</Text>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+
         {/* Payment / inscription */}
         {/* Si no hay usuario logueado: CTA Login con returnTo al evento */}
         {!user?.id && event.status === 'open' && (
           <View style={styles.paySection}>
-            <Text style={styles.payTitle}>INSCRIPCIÓN — ${(event.precio ?? 0).toFixed(2)}</Text>
+            <Text style={styles.payTitle}>INSCRIPCIÓN — {(event.precio ?? 0) > 0 ? `$${(event.precio ?? 0).toFixed(2)}` : freeLabel(event.deporte)}</Text>
             <TouchableOpacity
               style={styles.btnPay}
               onPress={() => navigation.navigate('Login', { returnTo: 'EventDetail', returnParams: { eventId: event.id } })}
@@ -867,7 +1141,7 @@ export default function EventDetailScreen({ route, navigation }) {
 
         {user?.id && canRegister && (
           <View style={styles.paySection}>
-            <Text style={styles.payTitle}>INSCRIPCIÓN — ${(event.precio ?? 0).toFixed(2)}</Text>
+            <Text style={styles.payTitle}>INSCRIPCIÓN — {(event.precio ?? 0) > 0 ? `$${(event.precio ?? 0).toFixed(2)}` : freeLabel(event.deporte)}</Text>
             <TouchableOpacity
               style={styles.btnPay}
               onPress={openPayModal}
@@ -897,9 +1171,11 @@ export default function EventDetailScreen({ route, navigation }) {
                     <Text style={styles.btnPayText}>Pagar e inscribirme →</Text>
                   </TouchableOpacity>
                 </>
+              ) : myReg.metodo_pago === 'efectivo' ? (
+                <CashPendingBanner createdAt={myReg?.created_at} />
               ) : (
-                <Text style={[styles.registeredText, { color: COLORS.gold }]}>
-                  ⏳ Pago en efectivo pendiente — contacta al gestor para confirmar
+                <Text style={styles.registeredText}>
+                  ⏳ Pago Yappy en proceso. Si no completaste el pago, el cupo se libera solo en ~20 min y podés reintentar.
                 </Text>
               )
             ) : (
@@ -934,7 +1210,13 @@ export default function EventDetailScreen({ route, navigation }) {
           )
         )}
 
+        {/* Rifa Aniversario */}
+        {user?.id && (
+          <RaffleBanner eventId={eventId} navigation={navigation} />
+        )}
+
         <View style={{ height: SPACING.xxl }} />
+      </ResponsiveContainer>
       </ScrollView>
 
       {/* Modals */}
@@ -944,10 +1226,13 @@ export default function EventDetailScreen({ route, navigation }) {
         onPayWallet={payWithWallet}
         onPayYappy={payWithYappy}
         onPayEfectivo={payWithEfectivo}
+        onPayMixto={payMixto}
         amount={event.precio ?? 0}
         walletBalance={walletBalance}
         loading={paying || yappyLoading}
-        showEfectivo={true}
+        showEfectivo={!event.pago_solo_yappy || !!event.pago_efectivo_libre}
+        showWallet={!event.pago_solo_yappy}
+        efectivoLibre={!!event.pago_efectivo_libre}
         efectivoBloqueado={!!user?.efectivo_bloqueado}
       />
 
@@ -956,8 +1241,8 @@ export default function EventDetailScreen({ route, navigation }) {
         onClose={() => setCancelModal(false)}
         onConfirm={handleCancel}
         loading={cancelling}
-        canRefund={refundInfo?.canRefund && myReg?.metodo_pago === 'wallet'}
-        amount={myReg?.monto_pagado ?? 0}
+        canRefund={(event.precio ?? 0) > 0 && !!refundInfo?.canRefund}
+        amount={(event.precio ?? 0) > 0 ? (myReg?.monto_pagado ?? 0) : 0}
         refundDeadline={refundInfo?.refundDeadline}
         metodoPago={myReg?.metodo_pago}
         guestCount={guests.filter((g) => g.invited_by === user?.id && g.status !== 'cancelled').length}
@@ -986,13 +1271,17 @@ export default function EventDetailScreen({ route, navigation }) {
             <View style={yappyStyles.modal}>
               <Text style={yappyStyles.modalTitle}>PAGAR CON YAPPY</Text>
 
-              {yappyStep === 'phone' && (
+              {(yappyStep === 'phone' || yappyStep === 'phone_mixto') && (
                 <>
                   <Text style={yappyStyles.metodoInfo}>
-                    Ingresa tu número Yappy. Recibirás una notificación en tu app para aprobar el cobro de{' '}
+                    {yappyStep === 'phone_mixto'
+                      ? `Pago mixto — $${mixtoWallet.toFixed(2)} se debitarán de tus créditos y `
+                      : 'Ingresa tu número Yappy. '}
+                    Recibirás una notificación para aprobar el cobro de{' '}
                     <Text style={{ color: COLORS.green, fontFamily: FONTS.bodyMedium }}>
-                      ${(event?.precio ?? 0).toFixed(2)}
-                    </Text>.
+                      ${yappyStep === 'phone_mixto' ? mixtoYappy.toFixed(2) : (event?.precio ?? 0).toFixed(2)}
+                    </Text>
+                    {yappyStep === 'phone_mixto' ? ' por Yappy.' : '.'}
                   </Text>
 
                   <TextInput
@@ -1014,7 +1303,7 @@ export default function EventDetailScreen({ route, navigation }) {
                       style={[yappyStyles.modalConfirm, {
                         opacity: yappyPhone.replace(/\D/g, '').length >= 7 ? 1 : 0.4,
                       }]}
-                      onPress={confirmarYappyBoton}
+                      onPress={yappyStep === 'phone_mixto' ? confirmarYappyMixto : confirmarYappyBoton}
                       disabled={yappyLoading || yappyPhone.replace(/\D/g, '').length < 7}
                     >
                       {yappyLoading
@@ -1026,12 +1315,14 @@ export default function EventDetailScreen({ route, navigation }) {
                 </>
               )}
 
-              {yappyStep === 'polling' && (
+              {(yappyStep === 'polling' || yappyStep === 'polling_mixto') && (
                 <>
                   <View style={yappyStyles.openedCard}>
                     <ActivityIndicator color={COLORS.green} style={{ marginBottom: 12 }} />
                     <Text style={yappyStyles.openedTitle}>Esperando aprobación...</Text>
-                    <Text style={yappyStyles.openedAmount}>${(event?.precio ?? 0).toFixed(2)}</Text>
+                    <Text style={yappyStyles.openedAmount}>
+                      ${yappyStep === 'polling_mixto' ? mixtoYappy.toFixed(2) : (event?.precio ?? 0).toFixed(2)}
+                    </Text>
                     <Text style={yappyStyles.openedSub}>
                       Abre tu app Yappy y acepta el cobro de Birrea2Play.{'\n'}
                       O entra a tu banca en línea y elegí la opción de Yappy.
@@ -1139,6 +1430,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.magenta,
   },
+  activeBtnTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  m26LiveDot:   { width: 9, height: 9, borderRadius: 5, backgroundColor: COLORS.red },
   activeBtnText:{ fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white, letterSpacing: 2 },
   activeBtnSub: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.white + 'CC', marginTop: 2 },
   paySection:   { margin: SPACING.md },
@@ -1199,4 +1492,66 @@ const yappyStyles = StyleSheet.create({
   openedAmount: { fontFamily: FONTS.heading, fontSize: 44, color: COLORS.white, marginVertical: 4 },
   openedSub:    { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, textAlign: 'center', marginTop: 4 },
   pollingDots:  { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 8 },
+});
+
+// ─── RaffleBanner: cargado inline para no añadir pantalla extra si la rifa no existe ───
+function RaffleBanner({ eventId, navigation }) {
+  const [active, setActive] = React.useState(false);
+  const [prize,  setPrize]  = React.useState('Camiseta Aniversario');
+  const [winner, setWinner] = React.useState(null);
+  const [closed, setClosed] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+
+  React.useEffect(() => {
+    if (!eventId) return;
+    supabase.rpc('raffle_get_status', { p_event_id: eventId }).then(({ data }) => {
+      if (data?.active) {
+        setActive(true);
+        setPrize(data.prize_name ?? 'Camiseta Aniversario');
+        setWinner(data.winner_nom ?? null);
+        setClosed(data.winner_confirmed ?? false);
+      }
+      setLoading(false);
+    });
+  }, [eventId]);
+
+  if (loading || !active) return null;
+
+  return (
+    <TouchableOpacity
+      style={raffleBannerStyles.card}
+      onPress={() => navigation.navigate('Raffle', { eventId })}
+      activeOpacity={0.85}
+    >
+      <View style={raffleBannerStyles.left}>
+        <Text style={raffleBannerStyles.emoji}>🎟️</Text>
+        <View>
+          <Text style={raffleBannerStyles.label}>RIFA ANIVERSARIO</Text>
+          <Text style={raffleBannerStyles.sub}>
+            {closed && winner
+              ? `🏆 Ganó: ${winner}`
+              : winner
+                ? `🎉 Girando… ${winner}`
+                : `Premio: ${prize}`}
+          </Text>
+        </View>
+      </View>
+      <Text style={raffleBannerStyles.arrow}>›</Text>
+    </TouchableOpacity>
+  );
+}
+
+const raffleBannerStyles = StyleSheet.create({
+  card: {
+    marginHorizontal: SPACING.md, marginBottom: SPACING.md,
+    backgroundColor: COLORS.card, borderRadius: RADIUS.md,
+    padding: SPACING.md, flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1, borderColor: COLORS.gold + '55',
+  },
+  left:  { flexDirection: 'row', alignItems: 'center', gap: SPACING.md, flex: 1 },
+  emoji: { fontSize: 28 },
+  label: { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.gold, letterSpacing: 2 },
+  sub:   { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2, marginTop: 2 },
+  arrow: { fontFamily: FONTS.bodyBold, fontSize: 22, color: COLORS.gray },
 });

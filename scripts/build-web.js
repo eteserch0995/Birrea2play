@@ -74,9 +74,17 @@ if (existsSync(WEB_STATIC)) {
   }
 }
 
+// 3b-bis. Imágenes del Recaudo (facturas, fotos de compras del fondo) → dist/assets/recaudo/
+//   Van bajo /assets/ para que el rewrite SPA de vercel.json NO las redirija a "/".
+const recaudoImgSrc = path.join(WEB_STATIC, 'recaudo');
+if (existsSync(recaudoImgSrc)) {
+  cpSync(recaudoImgSrc, path.join(DIST, 'assets', 'recaudo'), { recursive: true });
+  console.log('  + assets/recaudo/ (recursive)');
+}
+
 // 3c. Copiar iconos PWA explícitos para instalaciones desde navegador/Vercel.
 // Expo genera favicon.ico, pero el manifest necesita PNGs grandes y estables.
-for (const f of ['icon.png', 'favicon.png', 'pwa-icon-192.png', 'pwa-icon-512.png']) {
+for (const f of ['icon.png', 'favicon.png', 'pwa-icon-192.png', 'pwa-icon-512.png', 'pwa-maskable-512.png', 'apple-touch-icon.png']) {
   const src = path.join(ASSETS, f);
   if (existsSync(src)) {
     cpSync(src, path.join(DIST, f));
@@ -121,24 +129,23 @@ if (existsSync(indexPath)) {
     /* Espacio al fondo para que la tab bar FIXED no tape contenido del body */
     body { padding-bottom: calc(80px + env(safe-area-inset-bottom, 0)); }
   </style>`;
-  // SW killswitch (2026-05-20): ya NO registramos un SW nuevo.
-  // Para users que tienen un SW viejo instalado, hacemos cleanup activo:
-  // pedimos al browser que desregistre cualquier SW del scope y limpie caches.
-  // Esto + el sw.js killswitch fuerzan a la app a comportarse como SPA web
-  // normal sin service worker intermediando.
+  // SW SOLO-push (web-static/sw.js): lo registramos en cada carga para que el
+  // handler `push` esté vivo y `registerWebPush()` pueda suscribir al usuario.
+  // Este SW NO intercepta `fetch` ni cachea nada → no puede reintroducir el bug
+  // del "blanco en Android" (ese venía de un SW que servía bundles viejos).
   const swInject = `
   <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Birrea2Play">
   <meta name="theme-color" content="#C8102E">
-  <script id="b2p-sw-cleanup">
+  <script id="b2p-sw-register">
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations()
-        .then(function(regs) { regs.forEach(function(r) { r.unregister(); }); })
-        .catch(function() {});
-    }
-    if (typeof caches !== 'undefined' && caches.keys) {
-      caches.keys().then(function(keys) {
-        keys.forEach(function(k) { caches.delete(k); });
-      }).catch(function() {});
+      window.addEventListener('load', function() {
+        navigator.serviceWorker.register('/sw.js').catch(function() {});
+      });
     }
   </script>`;
   // PRELOAD del bundle JS principal: el browser empieza a descargarlo en
@@ -298,11 +305,21 @@ if (existsSync(indexPath)) {
     })();
   </script>`;
 
-  html = html.replace('</head>', preloadInject + scrollFix + splashInline + swInject + splashHideScript + '</head>');
+  const modo26Css = `<style id="b2p-modo26">[data-modo26="on"] [data-m26-card]{transition:transform .15s ease,border-color .15s ease,box-shadow .15s ease;}[data-modo26="on"] [data-m26-card]:hover{transform:translateY(-4px);border-color:#2D5BFF !important;box-shadow:0 10px 30px rgba(45,91,255,.25);}[data-modo26="on"] [data-m26-btn="primary"]{background-image:linear-gradient(135deg,#FFC93C,#00C865) !important;transition:transform .08s ease;}[data-modo26="on"] [data-m26-btn="primary"]:active{transform:scale(.96);}@keyframes b2pPulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.72;transform:scale(1.05);}}[data-modo26="on"] [data-m26-pulse]{animation:b2pPulse 2.2s ease-in-out infinite;}@keyframes b2pBlink{0%,100%{opacity:1;}50%{opacity:.2;}}[data-modo26="on"] [data-m26-blink]{animation:b2pBlink 1s ease-in-out infinite;}@keyframes b2pWave{0%{transform:scale(1);}100%{transform:scale(1.07);}}[data-modo26="on"] [data-m26-wave]{background-image:repeating-radial-gradient(circle at 30% 18%,rgba(0,200,101,.10) 0 2px,transparent 2px 16px),repeating-radial-gradient(circle at 72% 58%,rgba(45,91,255,.10) 0 2px,transparent 2px 18px),repeating-radial-gradient(circle at 48% 92%,rgba(255,59,78,.10) 0 2px,transparent 2px 20px);animation:b2pWave 9s ease-in-out infinite alternate;}[data-modo26="on"] a:focus-visible,[data-modo26="on"] [tabindex]:focus-visible,[data-modo26="on"] button:focus-visible{outline:2px solid #FFC93C;outline-offset:2px;border-radius:6px;}@media (prefers-reduced-motion: reduce){[data-modo26="on"] [data-m26-pulse],[data-modo26="on"] [data-m26-blink],[data-modo26="on"] [data-m26-wave],[data-modo26="on"] [data-m26-card]{animation:none !important;transition:none !important;}}</style>`;
+
+  // Splash "Mundial 26" (campaña 10-25 jun): CSS leído del componente fuente
+  // (components/WorldCupSplash.css) e inyectado como <style id="wc-splash">.
+  // try/catch: si falta el archivo, no se inyecta nada (la app carga normal).
+  let wcSplashCss = '';
+  try {
+    wcSplashCss = `<style id="wc-splash">${readFileSync(path.join(ROOT, 'components', 'WorldCupSplash.css'), 'utf8')}</style>`;
+  } catch (e) { wcSplashCss = ''; }
+
+  html = html.replace('</head>', preloadInject + scrollFix + splashInline + swInject + splashHideScript + modo26Css + wcSplashCss + '</head>');
   // Splash dentro del body, ANTES del #root (queda como hermano, no como child)
   html = html.replace(/(<body[^>]*>)/, `$1${splashBody}`);
   writeFileSync(indexPath, html);
-  console.log('  + preload + splash inline + scroll fix + SW cleanup inyectados en dist/index.html');
+  console.log('  + preload + splash inline + scroll fix + SW push register + modo26 + wc-splash inyectados en dist/index.html');
 }
 
 console.log('\nBuild web completo. Salida en dist/');

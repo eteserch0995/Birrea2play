@@ -71,21 +71,38 @@ serve(async (req) => {
       return redirectToApp({ status: 'error', code: 'orden_no_existe' });
     }
 
-    const isWcEnrollment = pending.tipo === 'wc_enrollment' && !!pending.wc_enrollment_id;
+    const isWcEnrollment   = pending.tipo === 'wc_enrollment' && !!pending.wc_enrollment_id;
+    const isAbonoCancha    = pending.tipo === 'abono_cancha'  && !!pending.cancha_reserva_id;
+    const isDonacion       = pending.tipo === 'donacion';
 
     // Idempotencia: ya fue procesado → éxito sin doble crédito
     if (pending.procesado) {
-      return redirectToApp({ status: 'success', amount: String(pending.amount), duplicate: '1', wc: isWcEnrollment ? '1' : '0' });
+      return redirectToApp({ status: 'success', amount: String(pending.amount), duplicate: '1', wc: isWcEnrollment ? '1' : '0', cancha: isAbonoCancha ? '1' : '0', donacion: isDonacion ? '1' : '0' });
     }
 
     // Validar monto (rechaza NaN y montos menores). Para tarjeta WC, pending.amount = precio + $1.50.
     const totalNum = Number(Total);
     if (!Number.isFinite(totalNum) || totalNum + 0.01 < Number(pending.amount)) {
       console.error(`[pf-webhook] monto no coincide: esperado ${pending.amount}, recibido ${Total}`);
-      return redirectToApp({ status: 'error', code: 'amount_mismatch' });
+      // isDonacion ya se conoce aquí (post-lookup): propagamos el flag para que WalletScreen
+      // muestre la copia de donación. Additive: para recarga/wc/cancha es '0' (= sin flag).
+      return redirectToApp({ status: 'error', code: 'amount_mismatch', donacion: isDonacion ? '1' : '0' });
     }
 
-    if (isWcEnrollment) {
+    if (isAbonoCancha) {
+      const { error: rpcErr } = await supabase.rpc('confirmar_abono_cancha_tarjeta', {
+        p_reserva_id:  pending.cancha_reserva_id,
+        p_gestor_id:   pending.user_id,
+        p_monto_total: pending.amount,
+        p_fee:         0.25,
+        p_orden_id:    Ref,
+      });
+      if (rpcErr) {
+        console.error('[pf-webhook] confirmar_abono_cancha_tarjeta error:', rpcErr.message);
+        return redirectToApp({ status: 'error', code: 'abono_cancha_failed' });
+      }
+
+    } else if (isWcEnrollment) {
       // Inscripción Mundial: marca pagada (la RPC valida precio del pozo). El +$1.50 es cargo de tarjeta, no entra al pozo.
       const { error: rpcErr } = await supabase.rpc('wc_pay_enrollment_card', {
         p_user_id:       pending.user_id,
@@ -96,6 +113,29 @@ serve(async (req) => {
       if (rpcErr) {
         console.error('[pf-webhook] wc_pay_enrollment_card error:', rpcErr.message);
         return redirectToApp({ status: 'error', code: 'wc_enroll_failed' });
+      }
+    } else if (isDonacion) {
+      // Recaudo Solidario (Venezuela): registrar donación. NO acredita wallet. Idempotente por order_ref.
+      // base = monto de la donación; pending.amount = total cobrado (base + comisión si la cubrió).
+      // Defensa en profundidad: la base nunca puede exceder lo realmente cobrado.
+      // pf-create-link ya valida 0 < credito_monto <= amount; aquí clampeamos por si acaso
+      // para que el termómetro jamás cuente más de lo que PágueloFácil cobró.
+      const cobrado = Number(pending.amount);
+      const rawBase = Number(pending.credito_monto ?? pending.amount);
+      const base    = Number.isFinite(rawBase) && rawBase > 0 ? Math.min(rawBase, cobrado) : cobrado;
+      const fee     = Math.max(0, cobrado - base);
+      const { error: rpcErr } = await supabase.rpc('registrar_donacion', {
+        p_user_id:       pending.user_id,
+        p_monto:         base,
+        p_metodo:        'tarjeta',
+        p_order_ref:     `pf:${Ref}`,
+        p_fee:           fee,
+        p_monto_cobrado: cobrado,
+      });
+      if (rpcErr) {
+        console.error('[pf-webhook] registrar_donacion error:', rpcErr.message);
+        // donacion='1' para que WalletScreen muestre la copia de donación, no la de recarga.
+        return redirectToApp({ status: 'error', code: 'donacion_failed', donacion: '1' });
       }
     } else {
       // Recarga de créditos: acredita wallet — credit_wallet(p_user_id, p_monto, p_tipo, p_descripcion)
@@ -118,7 +158,7 @@ serve(async (req) => {
       .eq('orden_id', Ref)
       .eq('procesado', false);
 
-    return redirectToApp({ status: 'success', amount: String(pending.amount), wc: isWcEnrollment ? '1' : '0' });
+    return redirectToApp({ status: 'success', amount: String(pending.amount), wc: isWcEnrollment ? '1' : '0', cancha: isAbonoCancha ? '1' : '0', donacion: isDonacion ? '1' : '0' });
   } catch (e) {
     console.error('[pf-webhook] error no capturado:', (e as Error).message);
     return redirectToApp({ status: 'error', code: 'exception' });

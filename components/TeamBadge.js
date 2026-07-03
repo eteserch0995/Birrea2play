@@ -1,8 +1,9 @@
-// "Escudo" del equipo: círculo de color con la inicial del nombre.
-// Reusable en bracket, sección de avanzantes y pantalla del ganador.
+// "Escudo" del equipo: bandera/escudo (logo_url) si existe; si no, círculo de
+// color con la inicial del nombre. Reusable en bracket, avanzantes y ganador.
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, Image, StyleSheet } from 'react-native';
 import { COLORS, FONTS } from '../constants/theme';
+import { getTeamNameWithColor } from '../lib/teamWearColor';
 
 export default function TeamBadge({ team, size = 36, showName = true, style }) {
   if (!team) {
@@ -18,12 +19,22 @@ export default function TeamBadge({ team, size = 36, showName = true, style }) {
   const displayName = team.nombre ?? team.name_es ?? team.name ?? team.code ?? '';
   const initial = (displayName || '?').trim().charAt(0).toUpperCase();
   const color = team.color || COLORS.blue;
+  const logo  = team.logo_url;
   return (
     <View style={[styles.row, style]}>
-      <View style={[styles.shield, { width: size, height: size, backgroundColor: color, borderColor: color }]}>
-        <Text style={[styles.initial, { fontSize: size * 0.45 }]}>{initial}</Text>
-      </View>
-      {showName && <Text style={styles.name} numberOfLines={1}>{displayName || 'Equipo'}</Text>}
+      {logo ? (
+        <Image
+          source={{ uri: logo }}
+          style={[styles.shield, { width: size, height: size, borderColor: COLORS.navy, backgroundColor: COLORS.card }]}
+          resizeMode="cover"
+          accessibilityIgnoresInvertColors
+        />
+      ) : (
+        <View style={[styles.shield, { width: size, height: size, backgroundColor: color, borderColor: color }]}>
+          <Text style={[styles.initial, { fontSize: size * 0.45 }]}>{initial}</Text>
+        </View>
+      )}
+      {showName && <Text style={styles.name} numberOfLines={1}>{getTeamNameWithColor(team)}</Text>}
     </View>
   );
 }

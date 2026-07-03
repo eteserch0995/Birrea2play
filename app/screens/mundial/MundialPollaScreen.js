@@ -4,6 +4,7 @@ import {
   ActivityIndicator, Alert, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import WhatsAppSupport from '../../../components/mundial/WhatsAppSupport';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
@@ -11,7 +12,7 @@ import { supabase } from '../../../lib/supabase';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 import { WCTabBar, WCButton, WCBadge, WC_ALPHA } from '../../../components/mundial/WCComponents';
 
-const TABS = ['Grupos', 'Bracket', 'Ranking', 'Bonus'];
+const TABS = ['Jornadas', 'Eliminatoria', 'Ranking', 'Bonus'];
 
 /**
  * Resuelve un placeholder a teams elegibles, considerando los picks previos del user.
@@ -183,6 +184,32 @@ const PHASE_LABEL = {
   quarter: 'Cuartos', semi: 'Semis', third_place: '3°', final: 'Final',
 };
 
+// Agrupa partidos por FECHA (jornada) en hora Panamá (UTC-5), para mostrar la
+// Polla por jornadas/fechas (como Survivor) en vez de por grupo/fase.
+const PA_OFFSET_MS = 5 * 3600 * 1000;
+const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+const MES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+function paDateKey(iso) {
+  const pa = new Date(new Date(iso).getTime() - PA_OFFSET_MS);
+  return `${pa.getUTCFullYear()}-${String(pa.getUTCMonth() + 1).padStart(2, '0')}-${String(pa.getUTCDate()).padStart(2, '0')}`;
+}
+function paDateLabel(iso) {
+  const pa = new Date(new Date(iso).getTime() - PA_OFFSET_MS);
+  return `${DOW_ES[pa.getUTCDay()]} ${pa.getUTCDate()} ${MES_ES[pa.getUTCMonth()]}`;
+}
+function groupMatchesByDate(list) {
+  const map = new Map();
+  for (const m of list) {
+    if (!m.scheduled_at) continue;
+    const k = paDateKey(m.scheduled_at);
+    if (!map.has(k)) map.set(k, { key: k, label: paDateLabel(m.scheduled_at), items: [] });
+    map.get(k).items.push(m);
+  }
+  const groups = [...map.values()].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+  groups.forEach((g) => g.items.sort((a, b) => (a.scheduled_at < b.scheduled_at ? -1 : 1)));
+  return groups;
+}
+
 export default function MundialPollaScreen({ navigation }) {
   const { user } = useAuthStore();
   const { pool, loadPool } = useWcStore();
@@ -199,7 +226,7 @@ export default function MundialPollaScreen({ navigation }) {
   // Stats agregadas REALES (todos los inscritos pagados) vía RPC wc_pool_stats.
   // El conteo propio (totalEnrolled) subcontaba el pozo por RLS.
   const [poolStats, setPoolStats] = useState(null); // fila { paid_count, pozo, ... } del modo 'polla'
-  const [tab, setTab] = useState('Grupos');
+  const [tab, setTab] = useState('Jornadas');
   const [expandedGroup, setExpandedGroup] = useState(null);
   const [expandedKoPhase, setExpandedKoPhase] = useState(null);
   const [koTeamPicker, setKoTeamPicker] = useState(null);
@@ -264,8 +291,9 @@ export default function MundialPollaScreen({ navigation }) {
       const { data: ko } = await supabase
         .from('wc_matches')
         .select(`
-          id, match_number, phase, scheduled_at, status, multiplier,
+          id, match_number, phase, scheduled_at, prediction_deadline, status, multiplier,
           home_placeholder, away_placeholder,
+          team_home_id, team_away_id,
           team_home:team_home_id ( code, name_es ),
           team_away:team_away_id ( code, name_es )
         `)
@@ -302,14 +330,10 @@ export default function MundialPollaScreen({ navigation }) {
       const { data: t } = await supabase.from('wc_teams').select('id, code, name_es');
       setTeamsById(Object.fromEntries((t ?? []).map(x => [x.id, x])));
 
-      // Ranking top 50
-      const { data: rnk } = await supabase
-        .from('wc_enrollments')
-        .select('id, user_id, total_points, bonus_points, match_points, users(nombre, foto_url)')
-        .eq('mode', 'polla')
-        .eq('payment_status', 'paid')
-        .order('total_points', { ascending: false })
-        .limit(50);
+      // Ranking — RPC SECURITY DEFINER. El query directo a wc_enrollments
+      // devolvía vacío por la policy RLS "select own or admin"; el leaderboard
+      // lo tienen que ver TODOS, con todos los inscritos y sus puntos.
+      const { data: rnk } = await supabase.rpc('wc_polla_leaderboard');
       setRanking(rnk ?? []);
       const myIdx = (rnk ?? []).findIndex(r => r.user_id === user.id);
       setMyRank(myIdx >= 0 ? myIdx + 1 : null);
@@ -393,6 +417,8 @@ export default function MundialPollaScreen({ navigation }) {
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
+        <WhatsAppSupport label="¿Dudas con la Polla? Consultá por WhatsApp" style={{ marginBottom: 12 }} />
+
         {/* Pozo + puntos — pozo e inscritos vienen del RPC agregado (real, no subcontado) */}
         {(() => {
           // paid_count y pozo reales de TODOS los inscritos pagados. Fallback al conteo propio.
@@ -456,17 +482,17 @@ export default function MundialPollaScreen({ navigation }) {
               </Text>
               {!complete && (
                 <Text style={styles.globalProgressWarn}>
-                  ⚠️ Llená TODO antes del cierre (11-jun 11am PA) — después no se puede tocar
+                  ⚠️ Cada partido cierra 15 min antes de su inicio. Cargá tus marcadores con tiempo — la Polla queda abierta para inscribirse.
                 </Text>
               )}
             </View>
           );
         })()}
 
-        {/* Tabs scrolleables — Grupos / Bracket / Ranking / Bonus */}
+        {/* Tabs scrolleables — Jornadas / Eliminatoria / Ranking / Bonus */}
         <WCTabBar tabs={TABS} active={tab} onChange={setTab} accent="magenta" />
 
-        {tab === 'Grupos' && (
+        {tab === 'Jornadas' && (
           <View>
             {(() => {
               const totalGroupMatches = matches.length;
@@ -489,22 +515,21 @@ export default function MundialPollaScreen({ navigation }) {
               );
             })()}
             <Text style={styles.helpText}>
-              Predicí el marcador de los 72 partidos de fase de grupos. Tocá un grupo para abrirlo.
-              Botón "Llenar grupo 1-0" llena rápido y vos editás los que querés.
+              Predicí el marcador de los 72 partidos de grupos, organizados por jornada (fecha).
+              Tocá una fecha para abrirla; "Llenar la jornada 1-0" llena rápido y vos editás.
             </Text>
-            {['A','B','C','D','E','F','G','H','I','J','K','L'].map((letter) => {
-              const groupMatches = matches.filter(m => m.group_letter === letter);
-              const filled = groupMatches.filter(m => predictions[m.id]).length;
-              const isOpen = expandedGroup === letter;
+            {groupMatchesByDate(matches).map(({ key, label, items }) => {
+              const filled = items.filter(m => predictions[m.id]).length;
+              const isOpen = expandedGroup === key;
               return (
-                <View key={letter} style={styles.groupBlock}>
+                <View key={key} style={styles.groupBlock}>
                   <TouchableOpacity
                     style={[styles.groupHeader, isOpen && styles.groupHeaderOpen]}
-                    onPress={() => setExpandedGroup(isOpen ? null : letter)}
+                    onPress={() => setExpandedGroup(isOpen ? null : key)}
                   >
-                    <Text style={styles.groupHeaderTitle}>GRUPO {letter}</Text>
+                    <Text style={styles.groupHeaderTitle}>{label}</Text>
                     <Text style={styles.groupHeaderMeta}>
-                      {filled}/{groupMatches.length} · {isOpen ? '▲' : '▼'}
+                      {filled}/{items.length} · {isOpen ? '▲' : '▼'}
                     </Text>
                   </TouchableOpacity>
                   {isOpen && (
@@ -512,7 +537,7 @@ export default function MundialPollaScreen({ navigation }) {
                       <TouchableOpacity
                         style={styles.quickFillBtn}
                         onPress={async () => {
-                          for (const m of groupMatches) {
+                          for (const m of items) {
                             if (!predictions[m.id]) {
                               try {
                                 await supabase.rpc('wc_submit_polla_prediction', {
@@ -528,9 +553,9 @@ export default function MundialPollaScreen({ navigation }) {
                           await silentReload();
                         }}
                       >
-                        <Text style={styles.quickFillText}>⚡ Llenar grupo con 1-0 (después editás)</Text>
+                        <Text style={styles.quickFillText}>⚡ Llenar la jornada con 1-0 (después editás)</Text>
                       </TouchableOpacity>
-                      {groupMatches.map((m) => (
+                      {items.map((m) => (
                         <PredictionRow
                           key={m.id}
                           match={m}
@@ -547,7 +572,7 @@ export default function MundialPollaScreen({ navigation }) {
           </View>
         )}
 
-        {tab === 'Bracket' && (() => {
+        {tab === 'Eliminatoria' && (() => {
           const groupsFilled = matches.filter(mt => predictions[mt.id]).length;
           const groupsTotal = matches.length;
           const groupsComplete = groupsTotal > 0 && groupsFilled === groupsTotal;
@@ -565,10 +590,10 @@ export default function MundialPollaScreen({ navigation }) {
                   Llevás {groupsFilled}/{groupsTotal} grupos
                 </Text>
                 <WCButton
-                  label="IR A LLENAR GRUPOS"
+                  label="IR A LLENAR LAS JORNADAS"
                   variant="primary"
                   size="lg"
-                  onPress={() => setTab('Grupos')}
+                  onPress={() => setTab('Jornadas')}
                   style={{ marginTop: SPACING.lg }}
                 />
               </View>
@@ -580,29 +605,26 @@ export default function MundialPollaScreen({ navigation }) {
             <Text style={styles.helpText}>
               Predicí quién avanza en cada partido de eliminatoria.
             </Text>
-            {[
-              { phase: 'round_32',    label: '16AVOS',   mult: 1.5 },
-              { phase: 'round_16',    label: 'OCTAVOS',  mult: 2.0 },
-              { phase: 'quarter',     label: 'CUARTOS',  mult: 2.5 },
-              { phase: 'semi',        label: 'SEMIS',    mult: 3.0 },
-              { phase: 'third_place', label: '3ER LUGAR',mult: 4.0 },
-              { phase: 'final',       label: 'FINAL',    mult: 4.0 },
-            ].map(({ phase, label, mult }) => {
-              const phaseMatches = koMatches.filter(m => m.phase === phase);
-              const filled = phaseMatches.filter(m => predictions[m.id]?.pred_winner_team_id).length;
-              const isOpen = expandedKoPhase === phase;
+            {groupMatchesByDate(koMatches).map(({ key, label, items }) => {
+              const filled = items.filter(m => predictions[m.id]?.pred_winner_team_id).length;
+              const isOpen = expandedKoPhase === key;
+              const faseLabel = PHASE_LABEL[items[0]?.phase] ?? 'Eliminatoria';
+              const mult = items[0]?.multiplier;
               return (
-                <View key={phase} style={styles.groupBlock}>
+                <View key={key} style={styles.groupBlock}>
                   <TouchableOpacity
                     style={[styles.groupHeader, isOpen && styles.groupHeaderOpen]}
-                    onPress={() => setExpandedKoPhase(isOpen ? null : phase)}
+                    onPress={() => setExpandedKoPhase(isOpen ? null : key)}
                   >
-                    <Text style={styles.groupHeaderTitle}>{label}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.groupHeaderTitle}>{label}</Text>
+                      <Text style={styles.groupHeaderMeta}>{faseLabel}{mult ? ` · x${Number(mult)}` : ''}</Text>
+                    </View>
                     <Text style={styles.groupHeaderMeta}>
-                      {filled}/{phaseMatches.length} · x{mult} · {isOpen ? '▲' : '▼'}
+                      {filled}/{items.length} · {isOpen ? '▲' : '▼'}
                     </Text>
                   </TouchableOpacity>
-                  {isOpen && phaseMatches.map((m) => {
+                  {isOpen && items.map((m) => {
                     const elig = getEligibleTeamsForMatch(m, koMatches, allTeams, predictions, teamsById, userStandings);
                     const homeResolved = getResolvedNameForPlaceholder(m.home_placeholder, userStandings, teamsById, koMatches, predictions);
                     const awayResolved = getResolvedNameForPlaceholder(m.away_placeholder, userStandings, teamsById, koMatches, predictions);
@@ -638,21 +660,21 @@ export default function MundialPollaScreen({ navigation }) {
           <View style={styles.rankCard}>
             <Text style={styles.sectionTitle}>Top 50 de la Polla</Text>
             {ranking.map((r, i) => (
-              <View key={r.id} style={[styles.rankRow, r.user_id === user.id && styles.rankRowMe]}>
+              <View key={r.user_id} style={[styles.rankRow, r.user_id === user.id && styles.rankRowMe]}>
                 <Text style={styles.rankPos}>#{i + 1}</Text>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.rankName} numberOfLines={1}>
-                    {r.users?.nombre ?? 'Anónimo'}{r.user_id === user.id && ' (vos)'}
+                    {r.nombre ?? 'Anónimo'}{r.user_id === user.id && ' (vos)'}
                   </Text>
                   <Text style={styles.rankSubtext}>
-                    {r.match_points} pts · {r.bonus_points} bonus
+                    {Number(r.match_points)} pts · {Number(r.bonus_points)} bonus
                   </Text>
                 </View>
-                <Text style={styles.rankPts}>{r.total_points}</Text>
+                <Text style={styles.rankPts}>{Number(r.total_points)}</Text>
               </View>
             ))}
             {ranking.length === 0 && (
-              <Text style={styles.emptyText}>Aún no hay puntos calculados.</Text>
+              <Text style={styles.emptyText}>Aún no hay inscritos en la Polla.</Text>
             )}
             {myRank && !ranking.find(r => r.user_id === user.id) && (
               <View style={styles.myRankFooter}>
@@ -762,12 +784,12 @@ function PredictionRow({ match, prediction, userId, onSaved }) {
   const [away, setAway] = useState(prediction?.pred_score_away != null ? String(prediction.pred_score_away) : '');
   const [saving, setSaving] = useState(false);
 
-  // Deadline unificado: cierra al enrollment_deadline del pool (fuente de verdad en DB).
-  const { pool } = useWcStore();
-  const ENROLLMENT_DEADLINE_MS = pool?.enrollment_deadline
-    ? new Date(pool.enrollment_deadline).getTime()
-    : Date.UTC(2026, 5, 11, 16, 0, 0); // fallback si el pool aún no cargó
-  const closed = Date.now() >= ENROLLMENT_DEADLINE_MS || match.status !== 'scheduled';
+  // Deadline POR PARTIDO: cierra 15 min antes del kickoff de ESTE partido
+  // (alineado con wc_matches.prediction_deadline y el RPC wc_submit_polla_prediction).
+  const deadlineMs = match.prediction_deadline
+    ? new Date(match.prediction_deadline).getTime()
+    : new Date(match.scheduled_at).getTime() - 15 * 60 * 1000;
+  const closed = Date.now() >= deadlineMs || match.status !== 'scheduled';
   const finished = match.status === 'finished';
   const homeName = match.team_home?.name_es || match.home_placeholder || '—';
   const awayName = match.team_away?.name_es || match.away_placeholder || '—';
@@ -882,11 +904,11 @@ function BracketRow({ match, prediction, teamsById, blockedReason, userId, homeR
   const [scoreAway, setScoreAway] = useState(prediction?.pred_score_away != null ? String(prediction.pred_score_away) : '');
   const [savingScore, setSavingScore] = useState(false);
 
-  const { pool } = useWcStore();
-  const ENROLLMENT_DEADLINE_MS = pool?.enrollment_deadline
-    ? new Date(pool.enrollment_deadline).getTime()
-    : Date.UTC(2026, 5, 11, 16, 0, 0);
-  const closed = Date.now() >= ENROLLMENT_DEADLINE_MS;
+  // Cierra 15 min antes del kickoff de este partido KO (por-partido, no global).
+  const deadlineMs = match.prediction_deadline
+    ? new Date(match.prediction_deadline).getTime()
+    : new Date(match.scheduled_at).getTime() - 15 * 60 * 1000;
+  const closed = Date.now() >= deadlineMs;
 
   const saveScore = async () => {
     if (!picked) {

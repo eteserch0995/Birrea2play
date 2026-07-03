@@ -88,6 +88,7 @@ export function WCButton({ label, onPress, variant = 'primary', size = 'lg', dis
       ]}
       onPress={onPress}
       disabled={disabled || loading}
+      {...(variant === 'primary' ? { dataSet: { m26Btn: 'primary' } } : {})}
     >
       {loading ? (
         <ActivityIndicator color={color} size="small" />

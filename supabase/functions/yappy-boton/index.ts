@@ -154,7 +154,7 @@ serve(async (req) => {
     return jsonRes({ error: 'Perfil no encontrado' }, 403);
   }
 
-  let payload: { action?: string; amount?: number; phoneNumber?: string; tipo?: string; event_id?: string; guest_id?: string; wc_enrollment_id?: string };
+  let payload: { action?: string; amount?: number; phoneNumber?: string; tipo?: string; event_id?: string; guest_id?: string; wc_enrollment_id?: string; cancha_reserva_id?: string };
   try { payload = await req.json(); } catch { return jsonRes({ error: 'Body inválido' }, 400); }
 
   if (payload.action !== 'create-order') {
@@ -171,11 +171,43 @@ serve(async (req) => {
     return jsonRes({ error: 'Ingresa tu número Yappy' }, 400);
   }
 
+  // Determinar tipo + ids ANTES de cobrar (era despues de createOrder).
+  const rawTipo = payload.tipo ?? 'recarga';
+  const tipo    = ['evento', 'invitado', 'recarga', 'compra_tienda', 'wc_enrollment', 'abono_cancha', 'donacion', 'rifa'].includes(rawTipo) ? rawTipo : 'recarga';
+  const event_id          = (tipo === 'evento' || tipo === 'rifa') ? (payload.event_id ?? null) : null;
+  const guest_id          = tipo === 'invitado'      ? (payload.guest_id          ?? null) : null;
+  const wc_enrollment_id  = tipo === 'wc_enrollment' ? (payload.wc_enrollment_id  ?? null) : null;
+  const cancha_reserva_id = tipo === 'abono_cancha'  ? (payload.cancha_reserva_id ?? null) : null;
+
+  if (tipo === 'wc_enrollment' && !wc_enrollment_id) return jsonRes({ error: 'wc_enrollment_id requerido' }, 400);
+  if (tipo === 'abono_cancha'  && !cancha_reserva_id) return jsonRes({ error: 'cancha_reserva_id requerido' }, 400);
+  if ((tipo === 'evento' || tipo === 'rifa') && !event_id) return jsonRes({ error: 'event_id requerido' }, 400);
+  if (tipo === 'invitado' && !guest_id) return jsonRes({ error: 'guest_id requerido' }, 400);
+
+  // VALIDACION DE MONTO server-side: el cobro debe cubrir el precio real del recurso.
+  // Cierra el subpago (ej. $0.01) en evento/invitado — el monto NO se confia del cliente.
+  if (tipo === 'evento') {
+    const { data: ev } = await supabaseAdmin.from('events').select('precio').eq('id', event_id).maybeSingle();
+    if (!ev) return jsonRes({ error: 'Evento no encontrado' }, 404);
+    if (amount + 0.001 < Number(ev.precio)) {
+      return jsonRes({ error: `Monto insuficiente: el evento cuesta $${Number(ev.precio).toFixed(2)}` }, 400);
+    }
+  } else if (tipo === 'invitado') {
+    const { data: g } = await supabaseAdmin.from('event_guests').select('event_id').eq('id', guest_id).maybeSingle();
+    if (!g?.event_id) return jsonRes({ error: 'Invitado no encontrado' }, 404);
+    const { data: ev2 } = await supabaseAdmin.from('events').select('precio').eq('id', g.event_id).maybeSingle();
+    if (!ev2) return jsonRes({ error: 'Evento no encontrado' }, 404);
+    if (amount + 0.001 < Number(ev2.precio)) {
+      return jsonRes({ error: `Monto insuficiente: el evento cuesta $${Number(ev2.precio).toFixed(2)}` }, 400);
+    }
+  }
+  // rifa: amount = cantidad de tickets ($1 c/u), ya validado >= 1.
+
   const prefix  = authUser.id.replace(/-/g, '').slice(0, 2).toUpperCase();
   const orderId = (prefix + Date.now().toString()).slice(0, 15);
 
   console.log('YAPPY_CREATE_ORDER_START', {
-    orderId, amount, aliasLast4: aliasYappy.slice(-4), domain: DOMAIN, ipnUrl: IPN_URL,
+    orderId, amount, tipo, aliasLast4: aliasYappy.slice(-4), domain: DOMAIN, ipnUrl: IPN_URL,
   });
 
   try {
@@ -184,32 +216,27 @@ serve(async (req) => {
 
     console.log('YAPPY_CREATE_ORDER_SUCCESS', { orderId, transactionId: orderData.transactionId });
 
-    // Determine tipo — 'invitado' when guest_id provided, 'evento' for direct event reg,
-    // 'wc_enrollment' for Mundial 2026, else 'recarga'
-    const rawTipo = payload.tipo ?? 'recarga';
-    const tipo    = ['evento', 'invitado', 'recarga', 'compra_tienda', 'wc_enrollment'].includes(rawTipo) ? rawTipo : 'recarga';
-    const event_id         = tipo === 'evento'        ? (payload.event_id ?? null) : null;
-    const guest_id         = tipo === 'invitado'      ? (payload.guest_id ?? null) : null;
-    const wc_enrollment_id = tipo === 'wc_enrollment' ? (payload.wc_enrollment_id ?? null) : null;
-
-    if (tipo === 'wc_enrollment' && !wc_enrollment_id) {
-      return jsonRes({ error: 'wc_enrollment_id requerido para tipo=wc_enrollment' }, 400);
-    }
-
     const { error: dbErr } = await supabaseAdmin.from('yappy_orders').upsert({
-      order_id:       orderId,
-      transaction_id: orderData.transactionId,
-      user_id:        profile.id,
+      order_id:           orderId,
+      transaction_id:     orderData.transactionId,
+      user_id:            profile.id,
       amount,
-      status:         'pending',
+      status:             'pending',
       tipo,
       event_id,
       guest_id,
       wc_enrollment_id,
+      cancha_reserva_id,
     }, { onConflict: 'order_id' });
 
-    if (dbErr) console.error('YAPPY_DB_SAVE_ERROR', { orderId, error: dbErr.message });
-    else        console.log('YAPPY_ORDER_SAVED', { orderId, userId: profile.id, amount, tipo });
+    // FAIL-CLOSED: si no podemos registrar la orden, NO confirmamos el cobro (evita cobros
+    // huerfanos que el IPN no podria atribuir). Con la constraint de tipo ya alineada
+    // (abono_cancha/rifa), el insert no deberia fallar por tipo.
+    if (dbErr) {
+      console.error('YAPPY_DB_SAVE_ERROR', { orderId, error: dbErr.message });
+      return jsonRes({ error: 'No se pudo registrar la orden. Intentá de nuevo.' }, 500);
+    }
+    console.log('YAPPY_ORDER_SAVED', { orderId, userId: profile.id, amount, tipo });
 
     return jsonRes({ ok: true, orderId, ...orderData });
   } catch (e) {

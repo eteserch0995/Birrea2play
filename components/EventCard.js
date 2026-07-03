@@ -2,14 +2,15 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../constants/theme';
-import { getEventStatusInfo } from '../lib/eventHelpers';
+import { getEventStatusInfo, freeLabel } from '../lib/eventHelpers';
+import { isModo26Active } from '../lib/modo26';
 
 function parseLocalDate(dateStr) {
   const [y, m, d] = dateStr.split('-').map(Number);
   return new Date(y, m - 1, d);
 }
 
-export default function EventCard({ event, onPress }) {
+function EventCard({ event, onPress }) {
   const inscritos = event.event_registrations?.[0]?.count ?? 0;
   const pct = event.cupos_total ? inscritos / event.cupos_total : 0;
   const { label, color } = getEventStatusInfo(event.status);
@@ -29,7 +30,14 @@ export default function EventCard({ event, onPress }) {
   const effectiveColor = (event.status === 'open' && (cuposFull || regClosed)) ? COLORS.red : color;
 
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85}>
+    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.85} dataSet={{ m26Card: '' }}>
+      {isModo26Active() && (
+        <View pointerEvents="none" style={styles.m26Stripe}>
+          <View style={{ flex: 1, backgroundColor: COLORS.green }} />
+          <View style={{ flex: 1, backgroundColor: COLORS.blue }} />
+          <View style={{ flex: 1, backgroundColor: COLORS.red }} />
+        </View>
+      )}
       {event.cancha_foto_url && (
         <View>
           <Image
@@ -55,7 +63,7 @@ export default function EventCard({ event, onPress }) {
               </View>
             )}
           </View>
-          <Text style={styles.price}>${(event.precio ?? 0).toFixed(2)}</Text>
+          <Text style={styles.price}>{(event.precio ?? 0) > 0 ? `$${event.precio.toFixed(2)}` : freeLabel(event.deporte)}</Text>
         </View>
 
         <Text style={styles.nombre}>{event.nombre}</Text>
@@ -93,6 +101,8 @@ export default function EventCard({ event, onPress }) {
   );
 }
 
+export default React.memo(EventCard);
+
 const styles = StyleSheet.create({
   card: {
     backgroundColor: COLORS.card,
@@ -111,7 +121,7 @@ const styles = StyleSheet.create({
   top:         { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   badge:       { paddingHorizontal: 10, paddingVertical: 4, borderRadius: RADIUS.full, borderWidth: 1, borderColor: COLORS.white + '12' },
   badgeText:   { fontFamily: FONTS.bodyBold, fontSize: 10, letterSpacing: 1, textTransform: 'uppercase' },
-  price:       { fontFamily: FONTS.heading, fontSize: 24, color: COLORS.neon, letterSpacing: 1 },
+  price:       { fontFamily: FONTS.heading, fontSize: 19, color: COLORS.neon, letterSpacing: 1 },
   nombre:      { fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white, marginBottom: 4, letterSpacing: 1 },
   deporte:     { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.neon, marginBottom: 4, letterSpacing: 1, textTransform: 'uppercase' },
   meta:        { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, marginBottom: 2 },
@@ -119,4 +129,5 @@ const styles = StyleSheet.create({
   progressBg:  { flex: 1, height: 5, backgroundColor: COLORS.line, borderRadius: 2, overflow: 'hidden' },
   progressFill:{ height: '100%', borderRadius: 2 },
   cuposText:   { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2 },
+  m26Stripe:   { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4, flexDirection: 'column', overflow: 'hidden', zIndex: 2 },
 });

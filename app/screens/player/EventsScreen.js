@@ -1,7 +1,7 @@
 import React, { useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
-  StyleSheet, ActivityIndicator, RefreshControl,
+  StyleSheet, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
@@ -9,6 +9,9 @@ import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import useEventStore from '../../../store/eventStore';
 import { useAppRefresh } from '../../../hooks/useAppRefresh';
 import EventCard from '../../../components/EventCard';
+import EventListSkeleton from '../../../components/EventListSkeleton';
+import EmptyState from '../../../components/EmptyState';
+import ResponsiveContainer from '../../../components/ResponsiveContainer';
 
 const FILTERS = ['Todos', 'Liga', 'Torneo', 'Amistoso', 'Abiertos'];
 
@@ -16,20 +19,33 @@ export default function EventsScreen({ navigation }) {
   const [filter, setFilter] = React.useState('Todos');
   const { events, loading, error, fetchEvents } = useEventStore();
 
-  const fetch = useCallback(() => {
-    const q = filter === 'Abiertos' ? 'open' : filter;
-    fetchEvents(q);
-  }, [filter, fetchEvents]);
-
-  // Reload on every focus (tab switch or back-navigate) and on filter change
+  // Reload on every focus (tab switch or back-navigate). El filtro ahora se
+  // aplica client-side sobre `events`, así que el focus no depende de él.
   useFocusEffect(
     useCallback(() => {
-      fetch();
+      fetchEvents();
       return undefined;
-    }, [fetch])
+    }, [fetchEvents])
   );
 
-  const { refreshing, onRefresh } = useAppRefresh(fetch);
+  const { refreshing, onRefresh } = useAppRefresh(
+    useCallback(() => fetchEvents({ force: true }), [fetchEvents])
+  );
+
+  const retry = useCallback(() => fetchEvents({ force: true }), [fetchEvents]);
+
+  const filteredEvents = React.useMemo(() => {
+    if (filter === 'Todos') return events;
+    if (filter === 'Abiertos') return events.filter((e) => e.status === 'open');
+    return events.filter((e) => e.formato === filter);
+  }, [events, filter]);
+
+  const renderItem = useCallback(({ item }) => (
+    <EventCard
+      event={item}
+      onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
+    />
+  ), [navigation]);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -38,49 +54,50 @@ export default function EventsScreen({ navigation }) {
         <Text style={styles.title}>EVENTOS</Text>
       </View>
 
-      {/* Filter chips */}
-      <View style={styles.filterRow}>
-        {FILTERS.map((f) => (
-          <TouchableOpacity
-            key={f}
-            style={[styles.chip, filter === f && styles.chipActive]}
-            onPress={() => setFilter(f)}
-          >
-            <Text style={[styles.chipText, filter === f && styles.chipTextActive]}>{f}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
+      <ResponsiveContainer>
+        {/* Filter chips */}
+        <View style={styles.filterRow}>
+          {FILTERS.map((f) => (
+            <TouchableOpacity
+              key={f}
+              style={[styles.chip, filter === f && styles.chipActive]}
+              onPress={() => setFilter(f)}
+              hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+            >
+              <Text style={[styles.chipText, filter === f && styles.chipTextActive]}>{f}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
 
-      {loading && events.length === 0
-        ? <ActivityIndicator color={COLORS.red} style={{ marginTop: SPACING.xl }} />
-        : error
-          ? (
-            <View style={{ alignItems: 'center', padding: SPACING.xl, gap: SPACING.md }}>
-              <Text style={styles.empty}>Error al cargar eventos</Text>
-              <TouchableOpacity
-                style={{ backgroundColor: COLORS.red, paddingHorizontal: SPACING.xl, paddingVertical: SPACING.sm, borderRadius: SPACING.sm }}
-                onPress={fetch}
-              >
-                <Text style={{ fontFamily: FONTS.bodyMedium, color: COLORS.white }}>Reintentar</Text>
-              </TouchableOpacity>
-            </View>
-          )
-          : (
-          <FlatList
-            data={events}
-            keyExtractor={(i) => i.id}
-            contentContainerStyle={styles.list}
-            refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
-            renderItem={({ item }) => (
-              <EventCard
-                event={item}
-                onPress={() => navigation.navigate('EventDetail', { eventId: item.id })}
+        {loading && events.length === 0
+          ? <EventListSkeleton />
+          : error
+            ? (
+              <EmptyState
+                icon="⚠️"
+                title="Error al cargar eventos"
+                actionLabel="Reintentar"
+                onAction={retry}
               />
-            )}
-            ListEmptyComponent={<Text style={styles.empty}>No hay eventos disponibles</Text>}
-          />
-        )
-      }
+            )
+            : (
+            <FlatList
+              data={filteredEvents}
+              keyExtractor={(i) => i.id}
+              contentContainerStyle={styles.list}
+              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
+              renderItem={renderItem}
+              ListEmptyComponent={
+                <EmptyState
+                  icon="📅"
+                  title="No hay eventos disponibles"
+                  subtitle="Pronto se publican nuevas birreas"
+                />
+              }
+            />
+          )
+        }
+      </ResponsiveContainer>
     </SafeAreaView>
   );
 }
@@ -91,10 +108,9 @@ const styles = StyleSheet.create({
   kicker:          { fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.neon, letterSpacing: 1.6 },
   title:           { fontFamily: FONTS.heading, fontSize: 38, color: COLORS.white, letterSpacing: 4, marginTop: 2 },
   filterRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, paddingHorizontal: SPACING.md, marginVertical: SPACING.md },
-  chip:            { paddingHorizontal: SPACING.md, paddingVertical: 8, borderRadius: RADIUS.sm, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.line },
+  chip:            { paddingHorizontal: SPACING.md, paddingVertical: 10, minHeight: 40, justifyContent: 'center', borderRadius: RADIUS.sm, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.line },
   chipActive:      { backgroundColor: COLORS.red, borderColor: COLORS.red2 },
   chipText:        { fontFamily: FONTS.bodyBold, color: COLORS.gray2, fontSize: 12, letterSpacing: 1, textTransform: 'uppercase' },
   chipTextActive:  { color: COLORS.white, fontFamily: FONTS.bodyBold },
   list:            { padding: SPACING.md, gap: SPACING.sm },
-  empty:           { fontFamily: FONTS.body, color: COLORS.gray, textAlign: 'center', padding: SPACING.xl },
 });

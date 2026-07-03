@@ -14,9 +14,14 @@ export default function CancelRegistrationModal({
   canRefund = false, amount = 0, refundDeadline,
   metodoPago = '', guestCount = 0,
 }) {
-  const isWallet  = metodoPago === 'wallet';
-  const isPending = metodoPago === 'efectivo';
+  // Política de devoluciones (2026-06-04): cancelar siempre se puede.
+  // ≥48h antes del evento → 100% a créditos | <48h → 50% a créditos.
+  // Siempre en créditos internos, sin importar el método de pago original.
+  const isPaid    = (metodoPago === 'wallet' || metodoPago === 'yappy_boton') && amount > 0;
+  const isCash    = metodoPago === 'efectivo';
   const hasGuests = guestCount > 0;
+  const refund100 = (amount ?? 0).toFixed(2);
+  const refund50  = ((amount ?? 0) * 0.5).toFixed(2);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -24,36 +29,48 @@ export default function CancelRegistrationModal({
         <View style={styles.sheet}>
           <Text style={styles.title}>Cancelar Inscripción</Text>
 
-          {/* Refund / no-refund info */}
-          {isWallet && canRefund ? (
-            <View style={styles.refundBox}>
-              <Text style={styles.refundText}>
-                ✓  Aplica reembolso de ${amount.toFixed(2)} a tus créditos
-              </Text>
-            </View>
-          ) : isWallet && !canRefund ? (
+          {/* Refund info — el usuario ve el costo ANTES de confirmar */}
+          {canRefund ? (
+            isPaid ? (
+              <View style={styles.refundBox}>
+                <Text style={styles.refundText}>
+                  ✓  Se devuelven ${refund100} (100%) a tus créditos internos.
+                </Text>
+              </View>
+            ) : isCash ? (
+              <View style={styles.refundBox}>
+                <Text style={styles.refundText}>
+                  ✓  Si tu pago en efectivo ya fue recibido, se devuelven ${refund100} (100%) a tus créditos internos. Si aún no pagaste, no se hace cargo alguno.
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.noRefundBox}>
+                <Text style={styles.noRefundText}>No hay pagos registrados que devolver.</Text>
+              </View>
+            )
+          ) : isPaid ? (
             <View style={styles.noRefundBox}>
               <Text style={styles.noRefundText}>
-                ⚠️  El evento comienza en menos de 48 horas.{'\n'}No aplica reembolso.
+                ⚠️  Estás cancelando a menos de 48 horas del evento.{'\n'}
+                Se devuelve el 50% (${refund50}) a tus créditos internos; el resto se retiene como cargo por cancelación tardía.
               </Text>
               {refundDeadline && (
                 <Text style={styles.deadlineText}>
-                  Plazo venció: {new Date(refundDeadline).toLocaleString('es-PA')}
+                  Plazo para 100% venció: {new Date(refundDeadline).toLocaleString('es-PA')}
                 </Text>
               )}
             </View>
-          ) : isPending ? (
+          ) : isCash ? (
             <View style={styles.noRefundBox}>
               <Text style={styles.noRefundText}>
-                Tu pago en efectivo estaba pendiente — no se hará cargo alguno.
+                ⚠️  Estás cancelando a menos de 48 horas del evento.{'\n'}
+                Si tu pago en efectivo ya fue recibido, se devuelve el 50% (${refund50}) a tus créditos internos.{'\n'}
+                Si aún no pagaste, el pago en efectivo quedará bloqueado para futuros eventos.
               </Text>
             </View>
           ) : (
             <View style={styles.noRefundBox}>
-              <Text style={styles.noRefundText}>
-                Los pagos con Yappy o efectivo son gestionados por el administrador.{'\n'}
-                No se realiza reembolso automático.
-              </Text>
+              <Text style={styles.noRefundText}>No hay pagos registrados que devolver.</Text>
             </View>
           )}
 

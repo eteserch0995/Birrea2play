@@ -1,3 +1,12 @@
+import { isModo26Active } from '../lib/modo26';
+
+// BUMP OBLIGATORIO EN CADA DEPLOY donde solo cambien chunks lazy (paneles).
+// Gotcha 2026-07-02: Metro reusa el nombre del bundle principal (index-<hash>.js)
+// aunque cambien las referencias a chunks; con Cache-Control immutable, los
+// browsers quedan apuntando a chunks del deploy anterior (404 -> panel roto).
+// Cambiar este valor fuerza contenido nuevo en el grafo principal -> nombre nuevo.
+export const BUILD_STAMP = '2026-07-02.6';
+
 const MUNDIAL_THEME_START_MS = Date.UTC(2026, 4, 29, 5, 0, 0); // 2026-05-29 00:00 PA
 const MUNDIAL_THEME_END_MS = Date.UTC(2026, 6, 20, 5, 0, 0); // 2026-07-20 00:00 PA
 
@@ -63,15 +72,56 @@ const MUNDIAL_COLORS = {
   magentaText:  '#FF5C97',  // magenta WCAG AA sobre fondo oscuro (ratio ≥4.5:1)
 };
 
-export const COLORS = isMundialThemeWindow() ? MUNDIAL_COLORS : BASE_COLORS;
+const MODO26_COLORS = {
+  bg: '#0D0D1F',
+  bg2: '#16162B',
+  navy: '#1E3AAD',
+  blue: '#2D5BFF',
+  blue2: '#6E8CFF',
+  red: '#FF3B4E',
+  red2: '#FF5566',
+  magenta: '#2D5BFF',
+  purple: '#6E5BFF',
+  purple2: '#9B8CFF',
+  gold: '#FFC93C',
+  gold2: '#FFD96B',
+  white: '#F7F5F0',
+  gray: '#9C9CB8',
+  gray2: '#C8C8DC',
+  card: '#16162B',
+  card2: '#1F1F38',
+  green: '#00C865',
+  asphalt: '#0A0A18',
+  line: '#2A2A45',
+  neon: '#00C865',
+  orange: '#FF7A18',
+  magentaA11y: '#2D5BFF',
+  red2A11y: '#E0263C',
+  lineVisible: '#3A3A5A',
+  magentaText: '#6E8CFF',
+};
 
-export const FONTS = {
+export const COLORS = isModo26Active() ? MODO26_COLORS : (isMundialThemeWindow() ? MUNDIAL_COLORS : BASE_COLORS);
+
+const FONTS_BASE = {
   heading: 'BebasNeue_400Regular',
   body: 'Barlow_400Regular',
   bodyMedium: 'Barlow_500Medium',
   bodySemiBold: 'Barlow_600SemiBold',
   bodyBold: 'Barlow_700Bold',
 };
+
+const FONTS_MODO26 = {
+  heading: 'Anton_400Regular',
+  body: 'Archivo_400Regular',
+  bodyMedium: 'Archivo_500Medium',
+  bodySemiBold: 'Archivo_600SemiBold',
+  bodyBold: 'Archivo_700Bold',
+};
+
+export const FONTS = isModo26Active() ? FONTS_MODO26 : FONTS_BASE;
+
+export const GRAD_TRI = ['#00C865', '#2D5BFF', '#FF3B4E'];
 
 export const SPACING = {
   xs: 4,
@@ -105,7 +155,7 @@ export const SHADOWS = {
     elevation: isMundialThemeWindow() ? 12 : 10,
   },
   glow: {
-    shadowColor: isMundialThemeWindow() ? '#FF1A6B' : '#E1062C',
+    shadowColor: isModo26Active() ? '#2D5BFF' : (isMundialThemeWindow() ? '#FF1A6B' : '#E1062C'),
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: isMundialThemeWindow() ? 0.36 : 0.28,
     shadowRadius: isMundialThemeWindow() ? 22 : 18,

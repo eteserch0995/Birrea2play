@@ -18,6 +18,7 @@ import { supabase } from '../../lib/supabase';
 import useWcStore from '../../store/wcStore';
 import { WCButton, WCBadge, WCCard, WC_ALPHA } from '../../components/mundial/WCComponents';
 import { broadcastNotification } from '../../lib/notifications';
+import { isModo26Active, setModo26 } from '../../lib/modo26';
 
 const PHASE_LABEL = {
   group: 'Grupos',
@@ -45,12 +46,15 @@ export default function WCAdminPanel({ navigation }) {
   const [savingFlag, setSavingFlag] = useState(false);
   const [finalizingSurvivor, setFinalizingSurvivor] = useState(false);
   const [finalizingPolla, setFinalizingPolla] = useState(false);
+  const [finalizingFree, setFinalizingFree] = useState(false);
+  const [freeEntries, setFreeEntries] = useState([]);
   const [pollaInputs, setPollaInputs] = useState({
     champion_id: '', runner_up_id: '', third_place_id: '',
     top_scorer: '', mvp: '', final_home: '', final_away: '',
   });
   const [payouts, setPayouts] = useState([]);
   const [loadingPayouts, setLoadingPayouts] = useState(false);
+  const [modo26On, setModo26On] = useState(isModo26Active());
 
   const loadPayouts = useCallback(async () => {
     setLoadingPayouts(true);
@@ -156,6 +160,62 @@ export default function WCAdminPanel({ navigation }) {
     );
   }, [pollaInputs, loadPayouts]);
 
+  const loadFreeEntries = useCallback(async () => {
+    try {
+      const { data } = await supabase
+        .from('wc_free_polla')
+        .select('id, created_at, bonus_points, rank_position, prize_credits, users:user_id(nombre, correo)')
+        .order('created_at', { ascending: true });
+      setFreeEntries(data ?? []);
+    } catch (_) { /* silent */ }
+  }, []);
+
+  const finalizeFreePolla = useCallback(async () => {
+    const { champion_id, runner_up_id, third_place_id, top_scorer, mvp, final_home, final_away } = pollaInputs;
+    if (!champion_id || !runner_up_id || !third_place_id || !top_scorer || !mvp ||
+        final_home === '' || final_away === '') {
+      Alert.alert('Datos incompletos', 'Completá los resultados reales (arriba, los mismos de la Polla) antes de finalizar la Polla Gratis.');
+      return;
+    }
+    const fh = parseInt(final_home, 10), fa = parseInt(final_away, 10);
+    if (Number.isNaN(fh) || Number.isNaN(fa)) { Alert.alert('Marcador inválido', 'El marcador debe ser numérico.'); return; }
+    Alert.alert(
+      'Finalizar Polla Gratis',
+      '¿Confirmar? Se rankea por puntos y se acreditan 20/10/5 créditos al wallet del top 3. No se puede deshacer.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Finalizar', style: 'destructive',
+          onPress: async () => {
+            setFinalizingFree(true);
+            try {
+              const { data, error } = await supabase.rpc('wc_free_polla_finalize', {
+                p_actual_champion_team_id:  champion_id,
+                p_actual_runner_up_team_id: runner_up_id,
+                p_actual_third_place_team_id: third_place_id,
+                p_actual_top_scorer_name:   top_scorer.trim(),
+                p_actual_mvp_name:          mvp.trim(),
+                p_actual_final_score_home:  fh,
+                p_actual_final_score_away:  fa,
+              });
+              if (error) throw error;
+              await loadFreeEntries();
+              const rows = Array.isArray(data) ? data : [];
+              const resumen = rows.length
+                ? rows.map(r => `${r.out_rank}º ${r.out_nombre} (${Number(r.out_points)}pts → ${Number(r.out_prize)} créd.)`).join('  ·  ')
+                : 'sin participantes';
+              Alert.alert('Polla Gratis finalizada', resumen);
+            } catch (e) {
+              Alert.alert('Error', e.message || 'Error desconocido');
+            } finally {
+              setFinalizingFree(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [pollaInputs, loadFreeEntries]);
+
   // Recarga silenciosa: solo refresca stats y matches sin desmontar UI.
   // Usar después de guardar un resultado de match.
   const silentReload = useCallback(async () => {
@@ -216,7 +276,7 @@ export default function WCAdminPanel({ navigation }) {
     setLoading(false);
   }, [loadPool]);
 
-  useEffect(() => { load(); loadPayouts(); }, [load, loadPayouts]);
+  useEffect(() => { load(); loadPayouts(); loadFreeEntries(); }, [load, loadPayouts, loadFreeEntries]);
 
   useEffect(() => {
     supabase.from('wc_teams').select('id, code, name_es, group_letter')
@@ -306,6 +366,12 @@ export default function WCAdminPanel({ navigation }) {
         {/* Toggles */}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Visibilidad y estado</Text>
+
+          {/* Toggle admin-only para previsualizar/forzar el tema Modo 26 */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: SPACING.sm }}>
+            <Text style={{ color: COLORS.white, fontFamily: FONTS.bodySemiBold, fontSize: 14 }}>Modo 26 (preview)</Text>
+            <Switch value={modo26On} onValueChange={(v) => { setModo26On(v); setModo26(v); if (typeof window !== 'undefined' && window.location) window.location.reload(); }} />
+          </View>
 
           <View style={styles.flagRow}>
             <View style={styles.flagInfo}>
@@ -462,6 +528,45 @@ export default function WCAdminPanel({ navigation }) {
             onPress={finalizePolla}
             loading={finalizingPolla}
             disabled={finalizingPolla}
+            style={{ marginTop: SPACING.md }}
+          />
+        </View>
+
+        {/* Polla Gratis — participantes + finalizar */}
+        <View style={styles.card}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm }}>
+            <Text style={styles.cardTitle}>Polla Gratis ({freeEntries.length})</Text>
+            <TouchableOpacity onPress={loadFreeEntries} style={{ padding: 4 }}>
+              <Text style={{ color: COLORS.neon, fontFamily: FONTS.bodyBold, fontSize: 12 }}>Actualizar</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.cardSubtitle}>
+            Revisá los participantes antes de premiar. Usa los MISMOS resultados de arriba. Premio: 20/10/5 créditos al top 3.
+          </Text>
+          {freeEntries.length === 0 ? (
+            <Text style={[styles.cardSubtitle, { marginTop: SPACING.sm }]}>Sin participantes todavía.</Text>
+          ) : (
+            <View style={{ marginTop: SPACING.sm }}>
+              {freeEntries.map((e, i) => (
+                <View key={e.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: COLORS.line }}>
+                  <Text style={{ width: 26, color: COLORS.gray, fontFamily: FONTS.bodyBold, fontSize: 12 }}>{e.rank_position ?? (i + 1)}</Text>
+                  <Text style={{ flex: 1, color: COLORS.white, fontFamily: FONTS.body, fontSize: 13 }} numberOfLines={1}>
+                    {e.users?.nombre ?? '—'} · {e.users?.correo ?? ''}
+                  </Text>
+                  <Text style={{ color: COLORS.gray2, fontFamily: FONTS.bodyBold, fontSize: 12 }}>
+                    {Number(e.bonus_points ?? 0)}pts{Number(e.prize_credits ?? 0) > 0 ? ` · ${Number(e.prize_credits)}créd` : ''}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+          <WCButton
+            label={finalizingFree ? 'Calculando…' : 'Finalizar Polla Gratis'}
+            variant="secondary"
+            size="md"
+            onPress={finalizeFreePolla}
+            loading={finalizingFree}
+            disabled={finalizingFree}
             style={{ marginTop: SPACING.md }}
           />
         </View>

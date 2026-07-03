@@ -17,11 +17,21 @@ function withTimeout(promise, ms, label = 'query') {
 
 const useEventStore = create((set, get) => ({
   events: [],
-  activeEvent: null,
   loading: false,
   error: null,
+  lastFetchedAt: null,
 
-  fetchEvents: async (filter = null) => {
+  // opts: { filter, force }. Compat: también acepta un string de filtro directo
+  // (llamada legacy) para no romper a EventsScreen mientras no se actualice.
+  // ARQ-9: cache de 15s — evita refetch redundante en focus/remount si ya hay
+  // datos frescos; `force: true` (pull-to-refresh) siempre refetchea.
+  fetchEvents: async (opts = {}) => {
+    const { filter = null, force = false } = typeof opts === 'string' ? { filter: opts } : (opts ?? {});
+    const { lastFetchedAt, events } = get();
+    if (!force && lastFetchedAt && events.length > 0 && Date.now() - lastFetchedAt < 15000) {
+      return;
+    }
+
     set({ loading: true, error: null });
     try {
       let q = supabase
@@ -41,13 +51,14 @@ const useEventStore = create((set, get) => ({
       const { data, error } = await withTimeout(q, 12000, 'fetchEvents.events');
       if (error) throw error;
 
-      // Fetch CONFIRMED inscripciones e invitados — necesario porque embedded
-      // event_registrations(count) cuenta también 'cancelled'.
+      // Fetch inscripciones ACTIVAS (confirmed + pending: los pending de
+      // efectivo reservan cupo) e invitados — necesario porque embedded
+      // event_registrations(count) cuenta también 'cancelled' y 'waitlist'.
       const eventIds = (data ?? []).map((e) => e.id);
       const [regsByEvent, guestsByEvent] = await withTimeout(Promise.all([
         eventIds.length === 0 ? Promise.resolve({}) :
           supabase.from('event_registrations').select('event_id, user_id, status')
-            .in('event_id', eventIds).eq('status', 'confirmed')
+            .in('event_id', eventIds).in('status', ['confirmed', 'pending'])
             .then(({ data: rows }) => (rows ?? []).reduce((acc, r) => {
               const bucket = acc[r.event_id] ?? { count: 0, rows: [] };
               bucket.count += 1;
@@ -92,44 +103,11 @@ const useEventStore = create((set, get) => ({
         return new Date(a.fecha) - new Date(b.fecha);
       });
 
-      set({ events: visible, loading: false });
+      set({ events: visible, loading: false, lastFetchedAt: Date.now() });
     } catch (e) {
       set({ loading: false, error: e.message ?? 'Error cargando eventos' });
     }
   },
-
-  fetchActiveEvent: async (eventId) => {
-    try {
-      const [
-        { data: ev },
-        { data: teams },
-        { data: matches },
-        { data: standings },
-        { data: regs },
-      ] = await withTimeout(Promise.all([
-        supabase.from('events').select('*').eq('id', eventId).single(),
-        supabase.from('teams').select('*, team_players(*, users(nombre, foto_url))').eq('event_id', eventId),
-        supabase.from('matches').select('*').eq('event_id', eventId).order('round'),
-        supabase.from('standings').select('*').eq('event_id', eventId).order('pts', { ascending: false }),
-        supabase.from('event_registrations').select('*, users(nombre, foto_url)').eq('event_id', eventId).eq('status', 'confirmed'),
-      ]), 12000, 'fetchActiveEvent');
-      set({
-        activeEvent: {
-          event:      ev,
-          teams:      teams    ?? [],
-          matches:    matches  ?? [],
-          standings:  standings ?? [],
-          players:    regs     ?? [],
-        },
-      });
-    } catch (e) {
-      // Si la carga falla o timeout, no dejamos activeEvent corrupto.
-      set({ activeEvent: null });
-      throw e;
-    }
-  },
-
-  clearActiveEvent: () => set({ activeEvent: null }),
 }));
 
 export default useEventStore;

@@ -6,18 +6,18 @@ import { COLORS, FONTS, SPACING, RADIUS } from '../constants/theme';
 
 /**
  * Pre-permission prompt before triggering the system notification dialog.
- * Show this once; record the decision in AsyncStorage so it's not repeated.
+ * Obligatorio: no permite cerrar ni omitir el permiso.
  */
-export default function NotificationPermissionModal({ visible, onAllow, onSkip }) {
+export default function NotificationPermissionModal({ visible, onAllow }) {
+  const noop = () => {};
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onSkip}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={noop}>
       <View style={styles.overlay}>
         <View style={styles.card}>
           <Text style={styles.icon}>🔔</Text>
           <Text style={styles.title}>ACTIVA LAS{'\n'}NOTIFICACIONES</Text>
-          <Text style={styles.body}>
-            Entérate al instante de:
-          </Text>
+          <Text style={styles.required}>Requerido para usar la app instalada</Text>
+          <Text style={styles.body}>Entérate al instante de:</Text>
           <View style={styles.benefits}>
             <Text style={styles.benefit}>📅  Nuevos eventos y cambios de fecha</Text>
             <Text style={styles.benefit}>🏆  Cuando seas elegido MVP</Text>
@@ -27,9 +27,6 @@ export default function NotificationPermissionModal({ visible, onAllow, onSkip }
 
           <TouchableOpacity style={styles.btnAllow} onPress={onAllow}>
             <Text style={styles.btnAllowText}>Activar notificaciones</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.btnSkip} onPress={onSkip}>
-            <Text style={styles.btnSkipText}>Ahora no</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -57,6 +54,7 @@ const styles = StyleSheet.create({
   },
   icon:     { fontSize: 48 },
   title:    { fontFamily: FONTS.heading, fontSize: 26, color: COLORS.white, letterSpacing: 3, textAlign: 'center' },
+  required: { fontFamily: FONTS.bodySemiBold, fontSize: 12, color: COLORS.red, textAlign: 'center', textTransform: 'uppercase', letterSpacing: 1 },
   body:     { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2, textAlign: 'center' },
   benefits: { width: '100%', gap: SPACING.sm },
   benefit:  { fontFamily: FONTS.body, fontSize: 14, color: COLORS.white },
@@ -69,6 +67,4 @@ const styles = StyleSheet.create({
     marginTop: SPACING.sm,
   },
   btnAllowText: { fontFamily: FONTS.bodySemiBold, color: COLORS.white, fontSize: 16 },
-  btnSkip:      { padding: SPACING.sm },
-  btnSkipText:  { fontFamily: FONTS.body, color: COLORS.gray, fontSize: 14 },
 });

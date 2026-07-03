@@ -4,6 +4,7 @@ import {
   ActivityIndicator, Alert, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import WhatsAppSupport from '../../../components/mundial/WhatsAppSupport';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
@@ -12,6 +13,17 @@ import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 import { WCTabBar, WCButton, WCBadge, WCEmptyState, WC_ALPHA } from '../../../components/mundial/WCComponents';
 
 const TABS = ['Pick', 'Jornadas', 'Equipos', 'Comunidad', 'Ranking'];
+
+// Etiqueta de fecha "Jue 11 jun" desde una date string 'YYYY-MM-DD' (sin desfase
+// de zona horaria), para que las jornadas se vean IGUAL que las de la Polla.
+const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+const MES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+function fmtDayLabel(dateStr) {
+  if (!dateStr) return '';
+  const [y, mo, da] = String(dateStr).slice(0, 10).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, (mo || 1) - 1, da || 1));
+  return `${DOW_ES[dt.getUTCDay()]} ${da} ${MES_ES[(mo || 1) - 1]}`;
+}
 
 export default function MundialSurvivorScreen({ navigation }) {
   const { user } = useAuthStore();
@@ -39,6 +51,7 @@ export default function MundialSurvivorScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pickToast, setPickToast] = useState(false);
+  const [survivorWinner, setSurvivorWinner] = useState(null);
 
   // Recarga silenciosa: refresca picks + usage + enrollment sin desmontar la UI.
   // Usar después de guardar un pick (no la primera carga).
@@ -100,17 +113,20 @@ export default function MundialSurvivorScreen({ navigation }) {
         return;
       }
 
-      // 2) Próxima jornada-día con phase=group sin settled
-      const nowIso = new Date().toISOString();
-      const { data: days } = await supabase
+      // 2) Jornada-día activa: la más próxima (group, sin settled) que TODAVÍA tiene
+      // al menos un partido por empezar. Así no salta a la jornada siguiente cuando
+      // venció el deadline del primer partido pero los de hoy aún no se jugaron.
+      // Los picks se editan hasta 15 min antes de cada partido (validado en el RPC).
+      const nowMs = Date.now();
+      const { data: candidateDays } = await supabase
         .from('wc_match_days')
-        .select('*')
+        .select('*, matches:wc_matches ( scheduled_at )')
         .eq('phase', 'group')
         .eq('is_settled', false)
-        .gte('pick_deadline', nowIso)
-        .order('date')
-        .limit(1);
-      const day = days?.[0];
+        .order('date');
+      const day = (candidateDays ?? []).find(d =>
+        (d.matches ?? []).some(mt => new Date(mt.scheduled_at).getTime() > nowMs)
+      ) ?? null;
       setNextDay(day);
 
       if (day) {
@@ -168,14 +184,9 @@ export default function MundialSurvivorScreen({ navigation }) {
         .order('resolved_at', { ascending: false });
       setHistory(hist ?? []);
 
-      // 8) Ranking top 30
-      const { data: rnk } = await supabase
-        .from('wc_enrollments')
-        .select('id, user_id, lives_remaining, eliminated_at, users(nombre, foto_url)')
-        .eq('mode', 'survivor')
-        .eq('payment_status', 'paid')
-        .order('lives_remaining', { ascending: false })
-        .limit(30);
+      // 8) Ranking — RPC SECURITY DEFINER (la policy RLS "select own or admin"
+      // dejaba el ranking vacío para los jugadores; el leaderboard lo ven todos).
+      const { data: rnk } = await supabase.rpc('wc_survivor_leaderboard');
       setRanking(rnk ?? []);
 
       // 9) Distribución de vidas REAL (todos los survivor paid) vía RPC agregado.
@@ -261,6 +272,12 @@ export default function MundialSurvivorScreen({ navigation }) {
 
       // 15) Pool global
       await loadPool();
+
+      // 16) Ganador del Survivor (SECURITY DEFINER → visible a todos)
+      try {
+        const { data: wData } = await supabase.rpc('wc_survivor_winner');
+        setSurvivorWinner(wData?.[0] ?? null);
+      } catch (_) { setSurvivorWinner(null); }
     } finally {
       setLoading(false);
     }
@@ -378,6 +395,9 @@ export default function MundialSurvivorScreen({ navigation }) {
           <Text style={styles.backLink}>← Volver</Text>
         </TouchableOpacity>
 
+
+        <WhatsAppSupport label="¿Dudas con el Survivor? Consultá por WhatsApp" style={{ marginBottom: 12 }} />
+
         {/* Pozo en vivo — pozo, total y vivos vienen del RPC agregado (real, no subcontado) */}
         {(() => {
           // pozo real del RPC; fallback al estimado por conteo si el RPC no devolvió fila.
@@ -451,6 +471,13 @@ export default function MundialSurvivorScreen({ navigation }) {
               </View>
             ) : (
               <>
+                {(() => {
+                  // La jornada cierra 15 min antes del PRIMER partido del día (pick_deadline en DB).
+                  const isDayLocked = nextDay.pick_deadline
+                    ? Date.now() >= new Date(nextDay.pick_deadline).getTime()
+                    : false;
+                  return (
+                <>
                 <View style={styles.dayInfo}>
                   <Text style={styles.dayDate}>
                     {new Date(nextDay.date).toLocaleDateString('es-PA', {
@@ -458,9 +485,7 @@ export default function MundialSurvivorScreen({ navigation }) {
                     }).toUpperCase()}
                   </Text>
                   <Text style={styles.deadline}>
-                    Cierra: {new Date(nextDay.pick_deadline).toLocaleString('es-PA', {
-                      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-                    })}
+                    ✏️ Podés editar tu pick hasta 15 min antes del primer partido del día
                   </Text>
                 </View>
 
@@ -473,11 +498,19 @@ export default function MundialSurvivorScreen({ navigation }) {
                   </View>
                 )}
 
+                {isDayLocked && (
+                  <Text style={styles.ruleNote}>
+                    🔒 Jornada cerrada: el primer partido ya empieza en menos de 15 min.
+                  </Text>
+                )}
+
                 <Text style={styles.sectionTitle}>Partidos del día</Text>
-                {matchesOfDay.map((m) => (
+                {matchesOfDay.map((m) => {
+                  return (
                   <View key={m.id} style={styles.matchCard}>
                     <Text style={styles.matchPhase}>
                       Grupo {m.group_letter} · {new Date(m.scheduled_at).toLocaleTimeString('es-PA', { hour: '2-digit', minute: '2-digit' })}
+                      {isMatchLocked(m.scheduled_at) && ' · 🔒 cerrado'}
                     </Text>
                     <View style={styles.matchTeams}>
                       <TeamButton
@@ -485,7 +518,7 @@ export default function MundialSurvivorScreen({ navigation }) {
                         usage={teamUsage[m.team_home?.id] ?? 0}
                         selected={currentPick?.team_id === m.team_home?.id}
                         onPress={() => submitPick(m.team_home.id)}
-                        disabled={saving}
+                        disabled={saving || isDayLocked}
                       />
                       <Text style={styles.vsLabel}>VS</Text>
                       <TeamButton
@@ -493,16 +526,20 @@ export default function MundialSurvivorScreen({ navigation }) {
                         usage={teamUsage[m.team_away?.id] ?? 0}
                         selected={currentPick?.team_id === m.team_away?.id}
                         onPress={() => submitPick(m.team_away.id)}
-                        disabled={saving}
+                        disabled={saving || isDayLocked}
                       />
                     </View>
                   </View>
-                ))}
+                  );
+                })}
 
                 <Text style={styles.ruleNote}>
                   ⚠️ Cada equipo se puede usar 1 sola vez en grupos. Si no hacés pick, perdés
                   una vida.
                 </Text>
+              </>
+                  );
+                })()}
               </>
             )}
           </View>
@@ -572,17 +609,17 @@ export default function MundialSurvivorScreen({ navigation }) {
               Las futuras se habilitan cuando termina la anterior.
             </Text>
             {(() => {
-              // Identificar la "jornada actual": primera no-settled con deadline > now
+              // Jornada "actual": la más próxima sin settled que aún tiene un partido por empezar.
               const now = Date.now();
-              const currentDayId = allDays.find(d =>
-                !d.is_settled && new Date(d.pick_deadline).getTime() > now
-              )?.id;
+              const hasFutureMatch = (dayId) =>
+                (matchesByDay[dayId] ?? []).some(mt => new Date(mt.scheduled_at).getTime() > now);
+              const currentDayId = allDays.find(d => !d.is_settled && hasFutureMatch(d.id))?.id;
 
               return allDays.map((d) => {
                 const kickoffMs = new Date(d.first_kickoff_at).getTime();
                 const deadlineMs = new Date(d.pick_deadline).getTime();
                 let status;
-                if (d.is_settled || kickoffMs <= now) status = 'closed';
+                if (d.is_settled || !hasFutureMatch(d.id)) status = 'closed';
                 else if (d.id === currentDayId) status = 'current';
                 else status = 'future_locked';
 
@@ -602,9 +639,7 @@ export default function MundialSurvivorScreen({ navigation }) {
                     >
                       <View style={{ flex: 1 }}>
                         <Text style={styles.dayHeaderDate}>
-                          {new Date(d.date).toLocaleDateString('es-PA', {
-                            weekday: 'short', day: '2-digit', month: 'short',
-                          }).toUpperCase()}
+                          {fmtDayLabel(d.date)}
                         </Text>
                         <Text style={styles.dayHeaderMeta}>
                           {dayMatches.length} partidos ·{' '}
@@ -654,7 +689,7 @@ export default function MundialSurvivorScreen({ navigation }) {
                               onPress={() => {
                                 if (status === 'current') submitPickFor(d.id, mt.team_home.id);
                               }}
-                              disabled={status !== 'current' || saving || eliminated}
+                              disabled={status !== 'current' || saving || eliminated || (d.pick_deadline ? now >= new Date(d.pick_deadline).getTime() : false)}
                             />
                             <Text style={styles.vsLabel}>VS</Text>
                             <TeamButton
@@ -664,7 +699,7 @@ export default function MundialSurvivorScreen({ navigation }) {
                               onPress={() => {
                                 if (status === 'current') submitPickFor(d.id, mt.team_away.id);
                               }}
-                              disabled={status !== 'current' || saving || eliminated}
+                              disabled={status !== 'current' || saving || eliminated || (d.pick_deadline ? now >= new Date(d.pick_deadline).getTime() : false)}
                             />
                           </View>
                         </View>
@@ -705,11 +740,14 @@ export default function MundialSurvivorScreen({ navigation }) {
         {tab === 'Ranking' && (
           <View style={styles.rankCard}>
             <Text style={styles.sectionTitle}>Top 30 sobrevivientes</Text>
+            {ranking.length === 0 && (
+              <Text style={styles.emptyText}>Aún no hay inscritos en el Survivor.</Text>
+            )}
             {ranking.map((r, i) => (
-              <View key={r.id} style={styles.rankRow}>
+              <View key={r.user_id} style={styles.rankRow}>
                 <Text style={styles.rankPos}>#{i + 1}</Text>
                 <Text style={styles.rankName} numberOfLines={1}>
-                  {r.users?.nombre ?? 'Anónimo'}{r.user_id === user.id && ' (vos)'}
+                  {r.nombre ?? 'Anónimo'}{r.user_id === user.id && ' (vos)'}
                 </Text>
                 <View style={styles.rankLives}>
                   {[0, 1, 2].map((j) => (
@@ -743,6 +781,19 @@ function DistTile({ lives, count, total, color }) {
       <Text style={styles.distPct}>{pct}%</Text>
     </View>
   );
+}
+
+const PICK_LOCK_MS = 15 * 60 * 1000; // el pick se edita hasta 15 min antes del kickoff de cada partido
+function isMatchLocked(scheduledAt, nowMs = Date.now()) {
+  if (!scheduledAt) return false;
+  return nowMs >= new Date(scheduledAt).getTime() - PICK_LOCK_MS;
+}
+function isPickLocked(pick, matches, nowMs = Date.now()) {
+  if (!pick || !matches) return false;
+  const teamId = pick.team_id ?? pick.team?.id;
+  const m = (pick.match_id && matches.find(x => x.id === pick.match_id))
+    || matches.find(x => x.team_home?.id === teamId || x.team_away?.id === teamId);
+  return m ? isMatchLocked(m.scheduled_at, nowMs) : false;
 }
 
 function TeamButton({ team, usage, selected, onPress, disabled }) {
@@ -1101,5 +1152,49 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: COLORS.orange,
     letterSpacing: 0.5,
+  },
+
+  winnerBanner: {
+    backgroundColor: COLORS.gold + '22',
+    borderColor: COLORS.gold,
+    borderWidth: 2,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.lg,
+    marginBottom: SPACING.md,
+    alignItems: 'center',
+    ...SHADOWS.glow,
+  },
+  winnerCrown: {
+    fontSize: 48,
+    marginBottom: 4,
+  },
+  winnerTitle: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 11,
+    color: COLORS.gold,
+    letterSpacing: 2.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  winnerName: {
+    fontFamily: FONTS.heading,
+    fontSize: 32,
+    color: COLORS.gold,
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  winnerPrize: {
+    fontFamily: FONTS.heading,
+    fontSize: 22,
+    color: COLORS.white,
+    letterSpacing: 1,
+  },
+  winnerInsta: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 13,
+    color: COLORS.gold,
+    letterSpacing: 1,
+    marginTop: 8,
+    opacity: 0.85,
   },
 });

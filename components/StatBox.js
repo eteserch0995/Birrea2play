@@ -2,11 +2,13 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 
-export default function StatBox({ icon, value, label }) {
+// size: 'md' (default, comportamiento original) | 'sm' (value 24, icon 18, padding SPACING.sm)
+export default function StatBox({ icon, value, label, size = 'md' }) {
+  const sm = size === 'sm';
   return (
-    <View style={styles.card}>
-      <Text style={styles.icon}>{icon}</Text>
-      <Text style={styles.value}>{value}</Text>
+    <View style={[styles.card, sm && styles.cardSm]}>
+      <Text style={[styles.icon, sm && styles.iconSm]}>{icon}</Text>
+      <Text style={[styles.value, sm && styles.valueSm]}>{value}</Text>
       <Text style={styles.label}>{label}</Text>
     </View>
   );
@@ -23,7 +25,10 @@ const styles = StyleSheet.create({
     borderColor: COLORS.line,
     ...SHADOWS.card,
   },
+  cardSm: { padding: SPACING.sm },
   icon:  { fontSize: 22, marginBottom: 4 },
+  iconSm: { fontSize: 18 },
   value: { fontFamily: FONTS.heading, fontSize: 30, color: COLORS.white, letterSpacing: 1 },
+  valueSm: { fontSize: 24 },
   label: { fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gray2, marginTop: 2, letterSpacing: 1, textTransform: 'uppercase' },
 });

@@ -10,6 +10,7 @@ import useWcStore from '../../../store/wcStore';
 import { supabase } from '../../../lib/supabase';
 import { iniciarBotonYappy, pollBotonOrder } from '../../../lib/yappy';
 import { iniciarPagoTarjeta } from '../../../lib/paguelofacil';
+import { getPendingRef, clearPendingRef } from '../../../lib/referral';
 import MundialScreenFrame from '../../../components/mundial/MundialScreenFrame';
 import { WCButton, WCBadge } from '../../../components/mundial/WCComponents';
 
@@ -44,10 +45,25 @@ export default function MundialEnrollScreen({ route, navigation }) {
   const yappyPollRef = useRef(null);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
 
+  // Código de invitación (referido): descuento de $2 en la inscripción.
+  const [refInput, setRefInput] = useState('');
+  const [refApplied, setRefApplied] = useState(null); // { valid, discount, referrer } | null
+  const [refError, setRefError] = useState(null);
+  const [refChecking, setRefChecking] = useState(false);
+
   const price = mode === 'survivor' ? pool?.survivor_price : pool?.polla_price;
   const walletBalance = user?.wallets?.balance ?? 0;
   const isPolla = mode === 'polla';
   const enrolled = enrollment?.payment_status === 'paid';
+
+  // Descuento efectivo: del código recién validado o el ya guardado en una
+  // inscripción pendiente. El código se bloquea una vez aplicado en DB.
+  const refLocked = !!enrollment?.referred_by;
+  const discount = refApplied?.valid
+    ? Number(refApplied.discount ?? 2)
+    : (refLocked ? Number(enrollment?.referral_discount ?? 0) : 0);
+  const effectivePrice = Math.max(0, (Number(price) || 0) - discount);
+  const cardTotal = effectivePrice + CARD_FEE;
 
   useEffect(() => {
     (async () => {
@@ -66,8 +82,33 @@ export default function MundialEnrollScreen({ route, navigation }) {
         .order('name_es');
       setTeams(t ?? []);
       setLoading(false);
+
+      // Pre-cargar el código de invitación capturado del link (?ref=CODE), salvo
+      // que ya esté inscrito o ya tenga un código aplicado en esta inscripción.
+      if (e?.payment_status !== 'paid' && !e?.referred_by) {
+        const pending = await getPendingRef();
+        if (pending) { setRefInput(pending); validateRef(pending); }
+      }
     })();
   }, [mode, user.id, loadPool]);
+
+  const validateRef = async (codeArg) => {
+    const code = String(codeArg ?? refInput).trim();
+    if (!code) { setRefApplied(null); setRefError(null); return; }
+    setRefChecking(true);
+    setRefError(null);
+    try {
+      const { data, error } = await supabase.rpc('wc_validate_referral_code', { p_code: code });
+      if (error) throw error;
+      if (data?.valid) { setRefApplied(data); setRefError(null); }
+      else { setRefApplied(null); setRefError(data?.reason ?? 'Código inválido'); }
+    } catch (_) {
+      setRefApplied(null);
+      setRefError('No se pudo validar el código');
+    } finally {
+      setRefChecking(false);
+    }
+  };
 
   const teamsById = useMemo(() => Object.fromEntries(teams.map(t => [t.id, t])), [teams]);
 
@@ -81,8 +122,8 @@ export default function MundialEnrollScreen({ route, navigation }) {
     }
 
     // Validar método de pago
-    if (paymentMethod === 'wallet' && walletBalance < price) {
-      Alert.alert('Saldo insuficiente', `Necesitás $${price} en tu wallet. Tenés $${walletBalance.toFixed(2)}. Probá con Yappy o recargá tu wallet primero.`);
+    if (paymentMethod === 'wallet' && walletBalance < effectivePrice) {
+      Alert.alert('Saldo insuficiente', `Necesitás $${effectivePrice.toFixed(2)} en tu wallet. Tenés $${walletBalance.toFixed(2)}. Probá con Yappy o recargá tu wallet primero.`);
       return;
     }
     if (paymentMethod === 'yappy') {
@@ -118,10 +159,11 @@ export default function MundialEnrollScreen({ route, navigation }) {
 
     setProcessing(true);
     try {
-      // 1) Crear enrollment pending
+      // 1) Crear enrollment pending (con código de referido si fue validado)
       const { data: enrollId, error: e1 } = await supabase.rpc('wc_create_pending_enrollment', {
         p_user_id: user.id,
         p_mode: mode,
+        p_referral_code: refApplied?.valid ? refInput.trim() : null,
       });
       if (e1) throw e1;
 
@@ -167,7 +209,7 @@ export default function MundialEnrollScreen({ route, navigation }) {
         const cleanPhone = String(yappyPhone).replace(/\D/g, '');
         const { orderId } = await iniciarBotonYappy({
           phone: cleanPhone,
-          amount: price,
+          amount: effectivePrice,
           tipo: 'wc_enrollment',
           wc_enrollment_id: enrollId,
         });
@@ -183,15 +225,16 @@ export default function MundialEnrollScreen({ route, navigation }) {
         // Tarjeta (Pagueló Fácil): abre navegador; el webhook marca la inscripción pagada al confirmar.
         await iniciarPagoTarjeta({
           userId: user.id,
-          amount: Number(price) + CARD_FEE,
+          amount: cardTotal,
           descripcion: `Inscripcion ${isPolla ? 'Polla' : 'Survivor'} Mundial 2026`,
           tipo: 'wc_enrollment',
           wc_enrollment_id: enrollId,
         });
         Alert.alert(
           'Pago con tarjeta',
-          `Te abrimos el navegador para pagar $${(Number(price) + CARD_FEE).toFixed(2)} (incluye $${CARD_FEE.toFixed(2)} de comisión de tarjeta). Al completar el pago, volvé a la app: vas a quedar inscrito.`
+          `Te abrimos el navegador para pagar $${cardTotal.toFixed(2)} (incluye $${CARD_FEE.toFixed(2)} de comisión de tarjeta). Al completar el pago, volvé a la app: vas a quedar inscrito.`
         );
+        await clearPendingRef();
         await refreshProfile();
         navigation.replace('MundialHome');
         return;
@@ -199,6 +242,7 @@ export default function MundialEnrollScreen({ route, navigation }) {
 
       setYappyStep('confirmed');
       Alert.alert('¡Inscripción confirmada!', `Estás dentro del ${isPolla ? 'Polla Ganadora' : 'Survivor 3 Vidas'}.`);
+      await clearPendingRef();
       await refreshProfile();
       navigation.replace(isPolla ? 'MundialPolla' : 'MundialSurvivor');
     } catch (err) {
@@ -275,12 +319,61 @@ export default function MundialEnrollScreen({ route, navigation }) {
 
         <View style={styles.enrollHeader}>
           <Text style={styles.title}>{isPolla ? 'POLLA GANADORA' : 'SURVIVOR 3 VIDAS'}</Text>
-          <Text style={styles.priceBig}>${price}</Text>
+          {discount > 0 ? (
+            <View style={styles.priceRow}>
+              <Text style={styles.priceStrike}>${price}</Text>
+              <Text style={styles.priceBig}>${effectivePrice.toFixed(2)}</Text>
+              <View style={styles.discountTag}><Text style={styles.discountTagText}>−${discount.toFixed(0)} código</Text></View>
+            </View>
+          ) : (
+            <Text style={styles.priceBig}>${price}</Text>
+          )}
           <Text style={styles.subtitle}>
             {isPolla
               ? 'Predice marcadores de los 104 partidos. 3-5-8 pts por acierto x multiplicador por fase.'
               : 'Pick 1 equipo por jornada-día. Cada equipo 1 sola vez en grupos. Sobreviví la fase de grupos.'}
           </Text>
+        </View>
+
+        {/* Código de invitación (referido) → descuento de $2 */}
+        <View style={styles.refBlock}>
+          <Text style={styles.refTitle}>¿Tenés un código de invitación?</Text>
+          {refLocked ? (
+            <Text style={styles.refOk}>✓ Código aplicado — ahorrás ${Number(enrollment?.referral_discount ?? 2).toFixed(0)} en esta inscripción.</Text>
+          ) : refApplied?.valid ? (
+            <>
+              <Text style={styles.refOk}>
+                ✓ Código válido{refApplied.referrer ? ` de ${refApplied.referrer}` : ''} — ahorrás ${Number(refApplied.discount ?? 2).toFixed(0)}.
+              </Text>
+              <TouchableOpacity onPress={() => { setRefApplied(null); setRefInput(''); setRefError(null); }}>
+                <Text style={styles.refRemove}>Quitar código</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <View style={styles.refInputRow}>
+                <TextInput
+                  style={styles.refInput}
+                  value={refInput}
+                  onChangeText={(v) => { setRefInput(v.toUpperCase()); setRefError(null); }}
+                  placeholder="B2P-XXXXX"
+                  placeholderTextColor={COLORS.gray}
+                  autoCapitalize="characters"
+                  editable={!processing && !refChecking}
+                  maxLength={14}
+                />
+                <TouchableOpacity
+                  style={[styles.refApplyBtn, (!refInput.trim() || refChecking) && { opacity: 0.5 }]}
+                  onPress={() => validateRef()}
+                  disabled={!refInput.trim() || refChecking || processing}
+                >
+                  <Text style={styles.refApplyText}>{refChecking ? '...' : 'Aplicar'}</Text>
+                </TouchableOpacity>
+              </View>
+              {refError && <Text style={styles.refErr}>{refError}</Text>}
+              <Text style={styles.refHint}>La bolsa igual crece el monto completo — el descuento lo cubre la casa.</Text>
+            </>
+          )}
         </View>
 
         {/* Selector de método de pago */}
@@ -322,15 +415,15 @@ export default function MundialEnrollScreen({ route, navigation }) {
             </TouchableOpacity>
           </View>
 
-          {paymentMethod === 'wallet' && walletBalance < price && (
+          {paymentMethod === 'wallet' && walletBalance < effectivePrice && (
             <Text style={styles.walletWarn}>
-              Saldo insuficiente. Necesitás ${(price - walletBalance).toFixed(2)} más, o pagá con Yappy.
+              Saldo insuficiente. Necesitás ${(effectivePrice - walletBalance).toFixed(2)} más, o pagá con Yappy.
             </Text>
           )}
 
           {paymentMethod === 'tarjeta' && (
             <Text style={styles.cardHint}>
-              {`Cobro con tarjeta: $${price} + $${CARD_FEE.toFixed(2)} de comisión = $${(Number(price) + CARD_FEE).toFixed(2)}. Se abre el navegador para completar el pago.`}
+              {`Cobro con tarjeta: $${effectivePrice.toFixed(2)} + $${CARD_FEE.toFixed(2)} de comisión = $${cardTotal.toFixed(2)}. Se abre el navegador para completar el pago.`}
             </Text>
           )}
 
@@ -348,7 +441,7 @@ export default function MundialEnrollScreen({ route, navigation }) {
                 editable={!processing}
               />
               <Text style={styles.yappyHint}>
-                Vas a recibir una notificación en tu app Yappy para aprobar el cobro de ${price}.
+                Vas a recibir una notificación en tu app Yappy para aprobar el cobro de ${effectivePrice.toFixed(2)}.
               </Text>
             </View>
           )}
@@ -460,12 +553,12 @@ export default function MundialEnrollScreen({ route, navigation }) {
           label={processing
             ? (yappyStep === 'waiting' ? 'ESPERANDO YAPPY…' : 'PROCESANDO…')
             : paymentMethod === 'tarjeta'
-              ? `INSCRIBIRME · $${(Number(price) + CARD_FEE).toFixed(2)} (TARJETA)`
-              : `INSCRIBIRME · $${price}${paymentMethod === 'yappy' ? ' (YAPPY)' : ' (WALLET)'}`}
+              ? `INSCRIBIRME · $${cardTotal.toFixed(2)} (TARJETA)`
+              : `INSCRIBIRME · $${effectivePrice.toFixed(2)}${paymentMethod === 'yappy' ? ' (YAPPY)' : ' (WALLET)'}`}
           onPress={handleEnroll}
           variant="primary"
           size="lg"
-          disabled={processing || !acceptedTerms || (paymentMethod === 'wallet' && walletBalance < price)}
+          disabled={processing || !acceptedTerms || (paymentMethod === 'wallet' && walletBalance < effectivePrice)}
           loading={processing && yappyStep !== 'waiting'}
           style={{ marginTop: SPACING.md }}
         />
@@ -626,6 +719,41 @@ const styles = StyleSheet.create({
     fontFamily: FONTS.body, fontSize: 14, color: COLORS.bg,
     lineHeight: 20, marginTop: 4,
   },
+  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 6, flexWrap: 'wrap' },
+  priceStrike: {
+    fontFamily: FONTS.heading, fontSize: 30, color: COLORS.gray2,
+    textDecorationLine: 'line-through',
+  },
+  discountTag: {
+    backgroundColor: (COLORS.green ?? '#23D18B') + '22',
+    borderColor: (COLORS.green ?? '#23D18B') + '88', borderWidth: 1,
+    borderRadius: RADIUS.full, paddingHorizontal: 10, paddingVertical: 4,
+  },
+  discountTagText: { fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.green ?? '#1A9E68' },
+
+  refBlock: {
+    backgroundColor: 'rgba(10, 14, 20, 0.92)', borderColor: COLORS.neon + '55',
+    borderWidth: 1, borderRadius: RADIUS.md, padding: SPACING.md, marginBottom: SPACING.lg,
+  },
+  refTitle: {
+    fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white,
+    letterSpacing: 0.5, marginBottom: SPACING.sm,
+  },
+  refInputRow: { flexDirection: 'row', gap: SPACING.sm, alignItems: 'center' },
+  refInput: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.72)', borderColor: COLORS.line, borderWidth: 1,
+    borderRadius: RADIUS.sm, paddingHorizontal: SPACING.sm, paddingVertical: 11,
+    color: COLORS.white, fontFamily: FONTS.heading, fontSize: 18, letterSpacing: 2,
+  },
+  refApplyBtn: {
+    backgroundColor: COLORS.neon, borderRadius: RADIUS.sm,
+    paddingHorizontal: SPACING.md, paddingVertical: 12,
+  },
+  refApplyText: { fontFamily: FONTS.heading, fontSize: 14, color: COLORS.bg, letterSpacing: 1 },
+  refOk: { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.green ?? '#23D18B', lineHeight: 18 },
+  refRemove: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray2, marginTop: 6, textDecorationLine: 'underline' },
+  refErr: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.red2A11y || COLORS.red2, marginTop: 6 },
+  refHint: { fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray2, marginTop: 6, lineHeight: 15 },
 
   walletCard: {
     backgroundColor: COLORS.card, borderColor: COLORS.line, borderWidth: 1,

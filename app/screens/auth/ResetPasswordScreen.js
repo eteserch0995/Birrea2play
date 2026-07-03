@@ -1,6 +1,11 @@
 // Pantalla que recibe el deep link / URL de reset de Supabase.
 // El user llega acá desde el email "Restablecer tu contraseña".
-// Supabase auto-loguea con la sesión de recovery → el user solo ingresa la nueva password.
+// Maneja los 3 formatos de enlace que puede mandar Supabase:
+//   - token_hash + type   -> verifyOtp     (plantilla recomendada, inmune a prefetch)
+//   - code (PKCE)         -> exchangeCodeForSession
+//   - access_token/refresh_token en el hash (implícito) -> setSession / detectSessionInUrl
+// Si el enlace viene con error (ej: otp_expired por prefetch del cliente de correo),
+// muestra el MOTIVO REAL en vez del genérico "Link inválido".
 import React, { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
@@ -8,6 +13,32 @@ import {
 } from 'react-native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { supabase } from '../../../lib/supabase';
+import { remoteLog } from '../../../lib/remoteLogger';
+
+// Lee params tanto del fragment (#) como del query (?). Supabase usa uno u otro
+// según el formato del enlace y la versión de la plantilla de correo.
+function readAuthParams() {
+  if (typeof window === 'undefined' || !window.location) return {};
+  const out = {};
+  const add = (raw) => {
+    const s = (raw || '').replace(/^[#?]/, '');
+    if (!s) return;
+    try {
+      for (const [k, v] of new URLSearchParams(s).entries()) {
+        if (out[k] == null) out[k] = v;
+      }
+    } catch (_) {}
+  };
+  add(window.location.hash);
+  add(window.location.search);
+  return out;
+}
+
+function cleanAuthParamsFromUrl() {
+  if (typeof window !== 'undefined' && window.location && window.history?.replaceState) {
+    try { window.history.replaceState(null, '', window.location.pathname); } catch (_) {}
+  }
+}
 
 export default function ResetPasswordScreen({ navigation }) {
   const [password,    setPassword]    = useState('');
@@ -18,33 +49,89 @@ export default function ResetPasswordScreen({ navigation }) {
   const [done,        setDone]        = useState(false);
 
   useEffect(() => {
-    // En web, Supabase parsea el hash de la URL y crea la sesión automáticamente
-    // (gracias a detectSessionInUrl: true que ya seteamos en lib/supabase.js).
-    // Verificamos que efectivamente haya sesión de recovery.
     let cancelled = false;
+
+    async function establishRecoverySession() {
+      const p = readAuthParams();
+
+      // 1) Supabase devolvió un error explícito en el enlace. El caso más común:
+      //    el token de un solo uso fue consumido por un prefetch del cliente de
+      //    correo (Gmail/Outlook/WhatsApp/antivirus) antes de que el user haga clic.
+      if (p.error || p.error_code || p.error_description) {
+        let desc = p.error_description || p.error_code || p.error || '';
+        try { desc = decodeURIComponent(desc); } catch (_) {}
+        desc = desc.replace(/\+/g, ' ');
+        const expired = p.error_code === 'otp_expired' || /expir|invalid|used|otp/i.test(desc);
+        throw new Error(expired
+          ? 'El enlace ya fue usado o expiró. Solicita uno nuevo (los enlaces son de un solo uso).'
+          : `No se pudo validar el enlace: ${desc}`);
+      }
+
+      // 2) Plantilla recomendada: token_hash + type -> verifyOtp.
+      if (p.token_hash) {
+        const { error } = await supabase.auth.verifyOtp({ token_hash: p.token_hash, type: p.type || 'recovery' });
+        if (error) throw error;
+        return;
+      }
+
+      // 3) Flujo PKCE: ?code=... -> exchangeCodeForSession.
+      if (p.code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(p.code);
+        if (error) throw error;
+        return;
+      }
+
+      // 4) Flujo implícito: tokens en el hash -> setSession (por si
+      //    detectSessionInUrl no alcanzó a procesarlos a tiempo).
+      if (p.access_token && p.refresh_token) {
+        const { error } = await supabase.auth.setSession({
+          access_token: p.access_token,
+          refresh_token: p.refresh_token,
+        });
+        if (error) throw error;
+        return;
+      }
+
+      // 5) detectSessionInUrl (web) pudo haber procesado y limpiado el hash ya.
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) return;
+
+      // 6) Darle margen a la inicialización async de supabase y reintentar.
+      await new Promise((r) => setTimeout(r, 1200));
+      if (cancelled) return;
+      const { data: { session: s2 } } = await supabase.auth.getSession();
+      if (s2?.user) return;
+
+      throw new Error('Enlace inválido o expirado. Solicita uno nuevo.');
+    }
+
     (async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (cancelled) return;
-        if (session?.user) {
+        await establishRecoverySession();
+        if (!cancelled) {
           setSessionReady(true);
-        } else {
-          // Esperar a que Supabase procese el hash (puede tardar unos ms en web)
-          const t = setTimeout(async () => {
-            const { data: { session: s2 } } = await supabase.auth.getSession();
-            if (!cancelled) {
-              if (s2?.user) setSessionReady(true);
-              else setSessionErr('Link inválido o expirado. Solicita un nuevo enlace.');
-            }
-          }, 1500);
-          return () => clearTimeout(t);
+          cleanAuthParamsFromUrl();
         }
       } catch (e) {
-        if (!cancelled) setSessionErr(e?.message ?? 'Error al verificar el link');
+        if (cancelled) return;
+        const msg = e?.message ?? 'No se pudo validar el enlace.';
+        setSessionErr(msg);
+        try {
+          remoteLog({ level: 'error', screen: 'ResetPassword', action: 'establish_session', error_message: msg });
+        } catch (_) {}
       }
     })();
+
     return () => { cancelled = true; };
   }, []);
+
+  function goRequestNewLink() {
+    if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+      window.location.assign('/recuperar-acceso');
+    } else {
+      navigation.reset({ index: 0, routes: [{ name: 'ForgotPassword' }] });
+    }
+  }
 
   async function handleReset() {
     if (password.length < 8) { Alert.alert('Error', 'La contraseña debe tener al menos 8 caracteres.'); return; }
@@ -91,10 +178,7 @@ export default function ResetPasswordScreen({ navigation }) {
         <View style={styles.inner}>
           <Text style={styles.brand}>LINK INVÁLIDO</Text>
           <Text style={styles.errorBody}>{sessionErr}</Text>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'ForgotPassword' }] })}
-          >
+          <TouchableOpacity style={styles.btn} onPress={goRequestNewLink}>
             <Text style={styles.btnText}>SOLICITAR NUEVO ENLACE</Text>
           </TouchableOpacity>
         </View>
