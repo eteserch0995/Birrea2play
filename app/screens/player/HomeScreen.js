@@ -19,7 +19,6 @@ import EventCard from '../../../components/EventCard';
 import MundialQuickCard from '../../../components/mundial/MundialQuickCard';
 import { useAppRefresh } from '../../../hooks/useAppRefresh';
 import ResponsiveContainer from '../../../components/ResponsiveContainer';
-import EmptyState from '../../../components/EmptyState';
 import { freeLabel } from '../../../lib/eventHelpers';
 import { Card } from '../../../components/ui';
 
@@ -396,11 +395,13 @@ export default function HomeScreen({ navigation }) {
                 padding={0}
                 onPress={() => navigation.navigate('Eventos', { screen: 'EventDetail', params: { eventId: heroEvent.id } })}
               >
-                {heroEvent.cancha_foto_url && (
+                {heroEvent.cancha_foto_url ? (
                   <View>
                     <Image source={{ uri: heroEvent.cancha_foto_url }} style={t2.heroImage} resizeMode="cover" />
                     <LinearGradient colors={['#00000000', COLORS.bg + 'E6']} style={t2.heroImageFade} />
                   </View>
+                ) : (
+                  <CanchaNocturna height={130} />
                 )}
                 <View style={t2.heroBody}>
                   <Text style={t2.heroKicker}>PRÓXIMO EVENTO</Text>
@@ -426,8 +427,14 @@ export default function HomeScreen({ navigation }) {
                 </View>
               </Card>
             ) : (
-              <Card variant="glass" style={t2.heroEmptyCard}>
-                <EmptyState icon="📅" title="No hay eventos disponibles" subtitle="Volvé pronto para ver la próxima birrea" />
+              /* Sin eventos: la cancha nocturna igual se enciende — el "estadio"
+                 es la identidad del Home, con o sin evento (pedido de Sergio). */
+              <Card variant="holo" glow="subtle" padding={0}>
+                <CanchaNocturna height={190} />
+                <View style={t2.heroEmptyOverlay} pointerEvents="none">
+                  <Text style={t2.heroEmptyTitle}>LA CANCHA TE ESPERA</Text>
+                  <Text style={t2.heroEmptySub}>No hay eventos disponibles — volvé pronto para ver la próxima birrea</Text>
+                </View>
               </Card>
             )}
           </View>
@@ -927,8 +934,45 @@ const styles = StyleSheet.create({
 
 // ── Estilos exclusivos de la rama Tema2 (bento) — solo se montan con el gate
 // encendido, no afectan al árbol clásico ni a sus estilos. ──
+// Cancha nocturna dibujada en RN puro (franjas de césped + reflector lima +
+// círculo central + línea media): fondo del hero cuando el evento no tiene
+// foto y del estado "sin eventos" — el estadio siempre presente en el Home.
+function CanchaNocturna({ height = 130 }) {
+  return (
+    <View style={[t2.canchaWrap, { height }]} pointerEvents="none">
+      <View style={t2.canchaStripes}>
+        {Array.from({ length: 8 }).map((_, i) => (
+          <View key={i} style={[t2.canchaStripe, i % 2 === 1 && t2.canchaStripeAlt]} />
+        ))}
+      </View>
+      <LinearGradient colors={['rgba(214,255,47,0.22)', 'rgba(214,255,47,0)']} style={t2.canchaGlow} />
+      <View style={t2.canchaCircle} />
+      <View style={t2.canchaMidline} />
+      <LinearGradient colors={['#00000000', COLORS.bg + 'F0']} style={t2.canchaFade} />
+    </View>
+  );
+}
+
 const t2 = StyleSheet.create({
   aurora: { ...StyleSheet.absoluteFillObject },
+  canchaWrap: { backgroundColor: '#07130C', overflow: 'hidden', width: '100%' },
+  canchaStripes: { ...StyleSheet.absoluteFillObject, flexDirection: 'row' },
+  canchaStripe: { flex: 1, backgroundColor: '#0B2416' },
+  canchaStripeAlt: { backgroundColor: '#0E2D1B' },
+  canchaGlow: { position: 'absolute', top: 0, left: 0, right: 0, height: '65%' },
+  canchaCircle: {
+    position: 'absolute', alignSelf: 'center', top: '28%',
+    width: 88, height: 88, borderRadius: 44,
+    borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.20)',
+  },
+  canchaMidline: { position: 'absolute', left: 0, right: 0, top: '50%', height: 1, backgroundColor: 'rgba(255,255,255,0.12)' },
+  canchaFade: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 52 },
+  heroEmptyOverlay: {
+    position: 'absolute', left: 0, right: 0, bottom: 16,
+    alignItems: 'center', paddingHorizontal: SPACING.lg,
+  },
+  heroEmptyTitle: { fontFamily: FONTS.heading, fontSize: TYPE.h1, color: COLORS.white, letterSpacing: 1.5 },
+  heroEmptySub: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray2, marginTop: 2, textAlign: 'center' },
   heroWrap: { paddingHorizontal: SPACING.md, marginTop: SPACING.sm, marginBottom: SPACING.md },
   heroEmptyCard: { alignItems: 'center', justifyContent: 'center', minHeight: 140, padding: SPACING.lg },
   heroImage: { width: '100%', height: 180 },

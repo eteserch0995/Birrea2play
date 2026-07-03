@@ -6,7 +6,7 @@ import { isTema2Active } from '../lib/tema2';
 // aunque cambien las referencias a chunks; con Cache-Control immutable, los
 // browsers quedan apuntando a chunks del deploy anterior (404 -> panel roto).
 // Cambiar este valor fuerza contenido nuevo en el grafo principal -> nombre nuevo.
-export const BUILD_STAMP = '2026-07-03.5';
+export const BUILD_STAMP = '2026-07-03.6';
 
 const MUNDIAL_THEME_START_MS = Date.UTC(2026, 4, 29, 5, 0, 0); // 2026-05-29 00:00 PA
 const MUNDIAL_THEME_END_MS = Date.UTC(2026, 6, 20, 5, 0, 0); // 2026-07-20 00:00 PA
