@@ -8,6 +8,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS, TYPE } from '../../../constants/theme';
 import { isModo26Active } from '../../../lib/modo26';
 import { isTema2Active } from '../../../lib/tema2';
+import { IconWallet, IconCalendar, IconTrophy, IconField } from '../../../components/ui/TabIcons';
 import useAuthStore from '../../../store/authStore';
 import useWcStore from '../../../store/wcStore';
 import useClubStore from '../../../store/clubStore';
@@ -277,28 +278,28 @@ export default function HomeScreen({ navigation }) {
           <View style={t2.bentoGrid}>
             <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '3' }}>
               <Card variant="glass" glow="subtle" style={t2.bentoTile} onPress={() => navigation.navigate('Wallet')}>
-                <Text style={t2.bentoIcon}>💰</Text>
+                <View style={t2.bentoIcon}><IconWallet color={COLORS.neon} size={22} /></View>
                 <Text style={[t2.bentoValue, { color: COLORS.neon }]}>${Number(walletBalance ?? 0).toFixed(2)}</Text>
                 <Text style={t2.bentoLabel}>Saldo</Text>
               </Card>
             </View>
             <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '3' }}>
               <Card variant="glass" style={t2.bentoTile}>
-                <Text style={t2.bentoIcon}>⚽</Text>
+                <View style={t2.bentoIcon}><IconField color={COLORS.neon} size={22} /></View>
                 <Text style={t2.bentoValue}>{user?.actividades_completadas ?? 0}</Text>
                 <Text style={t2.bentoLabel}>Actividades</Text>
               </Card>
             </View>
             <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '4' }}>
               <Card variant="glass" style={t2.bentoTile}>
-                <Text style={t2.bentoIcon}>📅</Text>
+                <View style={t2.bentoIcon}><IconCalendar color={COLORS.gold} size={22} /></View>
                 <Text style={t2.bentoValue}>{totalEvents}</Text>
                 <Text style={t2.bentoLabel}>Eventos</Text>
               </Card>
             </View>
             <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '4' }}>
               <Card variant="glass" style={t2.bentoTile}>
-                <Text style={t2.bentoIcon}>🏆</Text>
+                <View style={t2.bentoIcon}><IconTrophy color={COLORS.gold} size={22} /></View>
                 <Text style={t2.bentoValue}>{mvpCount}</Text>
                 <Text style={t2.bentoLabel}>MVPs</Text>
               </Card>
@@ -311,7 +312,7 @@ export default function HomeScreen({ navigation }) {
                   style={t2.bentoTileWide}
                   onPress={() => navigation.navigate('Eventos', { screen: 'EventDetail', params: { eventId: myMvps[0].event_id } })}
                 >
-                  <Text style={t2.bentoIcon}>🏆</Text>
+                  <IconTrophy color={COLORS.gold} size={22} />
                   <View style={{ flex: 1 }}>
                     <Text style={t2.bentoWideTitle} numberOfLines={1}>{myMvps[0].event?.nombre ?? 'Último MVP'}</Text>
                     <Text style={t2.bentoWideSub}>
@@ -326,7 +327,9 @@ export default function HomeScreen({ navigation }) {
 
           {/* ── Banners existentes: mismo contenido/condiciones que la rama clásica ──
              No se migraron a estilo glass hoy (ver risks del handoff); se reutiliza
-             el JSX tal cual para no reescribir 6 banners en esta pasada. */}
+             el JSX tal cual para no reescribir 6 banners en esta pasada. Se agrupan
+             en un solo View con t2Rise para que entren juntos (grupo, no individual). */}
+          <View dataSet={{ t2Rise: '4' }}>
           {RAFFLE_ACTIVE && !RECAUDO_FOCUS && (
             <TouchableOpacity
               style={styles.raffleBanner}
@@ -464,6 +467,7 @@ export default function HomeScreen({ navigation }) {
               </View>
             </TouchableOpacity>
           )}
+          </View>
 
           {/* ── Más eventos (el resto de la lista, después del hero) ── */}
           {!loading && !error && restoEventos.length > 0 && (
@@ -1075,7 +1079,7 @@ const t2 = StyleSheet.create({
   bentoTileWrapFull: { flexBasis: '100%' },
   bentoTile: { alignItems: 'flex-start', minHeight: 88 },
   bentoTileWide: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  bentoIcon: { fontSize: 22, marginBottom: 6 },
+  bentoIcon: { marginBottom: 6 },
   bentoValue: { fontFamily: FONTS.heading, fontSize: TYPE.h2, color: COLORS.white, letterSpacing: 0.5 },
   bentoLabel: { fontFamily: FONTS.body, fontSize: TYPE.caption, color: COLORS.gray, marginTop: 2 },
   bentoWideTitle: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.h3, color: COLORS.white },

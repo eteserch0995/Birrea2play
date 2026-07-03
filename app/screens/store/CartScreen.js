@@ -249,7 +249,7 @@ export default function CartScreen({ navigation }) {
           </View>
         )}
         renderItem={({ item }) => (
-          <View style={styles.row}>
+          <View style={styles.row} dataSet={{ t2Glass: '' }}>
             <View style={styles.info}>
               <Text style={styles.nombre}>{item.nombre}</Text>
               {item.talla && (
@@ -274,7 +274,7 @@ export default function CartScreen({ navigation }) {
       />
 
       {/* Footer */}
-      <View style={styles.footer}>
+      <View style={styles.footer} dataSet={{ t2Glass: '' }}>
         <View style={styles.totalRow}>
           <Text style={styles.totalLabel}>TOTAL</Text>
           <Text style={styles.totalVal}>${cartTotal.toFixed(2)}</Text>
@@ -309,7 +309,7 @@ export default function CartScreen({ navigation }) {
       {/* Yappy payment modal */}
       <Modal visible={yappyModal} transparent animationType="slide" onRequestClose={cancelYappy}>
         <KeyboardAvoidingView style={styles.modalOverlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <View style={styles.modalBox}>
+          <View style={styles.modalBox} dataSet={{ t2Glass: '' }}>
 
             {yappyStep === 'input' ? (
               <>

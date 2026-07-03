@@ -83,7 +83,7 @@ export default function OrderConfirmationScreen({ route, navigation }) {
         <Text style={styles.sub}>Tu orden ha sido procesada exitosamente</Text>
 
         {/* Order info */}
-        <View style={styles.card}>
+        <View style={styles.card} dataSet={{ t2Glass: '', t2Glow: 'subtle' }}>
           <Text style={styles.orderId}>Orden #{order.id.slice(0, 8).toUpperCase()}</Text>
           <View style={styles.divider} />
 

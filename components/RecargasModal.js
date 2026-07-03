@@ -116,7 +116,7 @@ export default function RecargasModal({ visible, onClose, onSuccess }) {
         style={styles.overlay}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <View style={styles.sheet}>
+        <View style={styles.sheet} dataSet={{ t2Glass: '' }}>
           <View style={styles.header}>
             <Text style={styles.title}>CRÉDITOS CON BONO</Text>
             <TouchableOpacity onPress={handleClose}>
@@ -134,6 +134,7 @@ export default function RecargasModal({ visible, onClose, onSuccess }) {
                   <TouchableOpacity
                     key={t.amount}
                     style={styles.tierCard}
+                    dataSet={{ t2Press: '' }}
                     onPress={() => { setTier(t); setStep('payment'); }}
                   >
                     <View style={[styles.tierBadge, { backgroundColor: t.color }]}>
@@ -162,6 +163,7 @@ export default function RecargasModal({ visible, onClose, onSuccess }) {
                 <View style={styles.metodoBtns}>
                   <TouchableOpacity
                     style={[styles.metodoBtn, metodo === 'yappy' && styles.metodoBtnActivo]}
+                    dataSet={{ t2Press: '' }}
                     onPress={() => setMetodo('yappy')}
                     disabled={procesando}
                   >
@@ -171,6 +173,7 @@ export default function RecargasModal({ visible, onClose, onSuccess }) {
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.metodoBtn, metodo === 'tarjeta' && styles.metodoBtnActivo]}
+                    dataSet={{ t2Press: '' }}
                     onPress={() => setMetodo('tarjeta')}
                     disabled={procesando}
                   >

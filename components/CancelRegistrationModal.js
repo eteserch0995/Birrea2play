@@ -26,7 +26,7 @@ export default function CancelRegistrationModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={styles.sheet} dataSet={{ t2Glass: '' }}>
           <Text style={styles.title}>Cancelar Inscripción</Text>
 
           {/* Refund info — el usuario ve el costo ANTES de confirmar */}
@@ -88,6 +88,7 @@ export default function CancelRegistrationModal({
                   style={[styles.btnOption, { borderColor: COLORS.red + '60' }]}
                   onPress={() => onConfirm(false)}
                   disabled={loading}
+                  dataSet={{ t2Press: '' }}
                 >
                   {loading
                     ? <ActivityIndicator color={COLORS.white} />
@@ -102,6 +103,7 @@ export default function CancelRegistrationModal({
                   style={[styles.btnOption, { borderColor: COLORS.red }]}
                   onPress={() => onConfirm(true)}
                   disabled={loading}
+                  dataSet={{ t2Press: '' }}
                 >
                   {loading
                     ? <ActivityIndicator color={COLORS.white} />
@@ -124,7 +126,7 @@ export default function CancelRegistrationModal({
                 <TouchableOpacity style={styles.btnKeep} onPress={onClose} disabled={loading}>
                   <Text style={styles.btnKeepText}>Mantener</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.btnCancel} onPress={() => onConfirm(false)} disabled={loading}>
+                <TouchableOpacity style={styles.btnCancel} onPress={() => onConfirm(false)} disabled={loading} dataSet={{ t2Press: '' }}>
                   {loading
                     ? <ActivityIndicator color={COLORS.white} />
                     : <Text style={styles.btnCancelText}>Sí, cancelar</Text>

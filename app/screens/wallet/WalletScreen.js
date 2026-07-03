@@ -274,6 +274,7 @@ export default function WalletScreen() {
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.heroCard}
+          dataSet={{ t2Glass: '', t2Glow: 'mid', t2Holo: 'auto', t2Rise: '1' }}
         >
           <Text style={styles.heroLabel}>CRÉDITOS INTERNOS</Text>
           <Text style={styles.heroAmount}>${walletBalance.toFixed(2)}</Text>
@@ -293,9 +294,9 @@ export default function WalletScreen() {
         {/* Recargas pendientes */}
         {pendingRecargas.filter(r => r.status === 'pending').length > 0 && (
           <>
-            <Text style={styles.sectionTitle}>Recargas en revisión</Text>
+            <Text style={styles.sectionTitle} dataSet={{ t2Rise: '2' }}>Recargas en revisión</Text>
             {pendingRecargas.filter(r => r.status === 'pending').map((r) => (
-              <View key={r.id} style={styles.pendingRow}>
+              <View key={r.id} style={styles.pendingRow} dataSet={{ t2Glass: '' }}>
                 <Text style={styles.pendingLabel}>⏳ {r.tier_label ?? `$${Number(r.amount_paid).toFixed(2)}`}</Text>
                 <View style={{ alignItems: 'flex-end' }}>
                   {r.amount_credito !== r.amount_paid
@@ -312,7 +313,7 @@ export default function WalletScreen() {
         )}
 
         {/* Historial */}
-        <Text style={styles.sectionTitle}>Historial de movimientos</Text>
+        <Text style={styles.sectionTitle} dataSet={{ t2Rise: '3' }}>Historial de movimientos</Text>
         {loading ? (
           <ActivityIndicator color={COLORS.red} style={{ marginTop: SPACING.md }} />
         ) : fetchError ? (
@@ -335,7 +336,7 @@ export default function WalletScreen() {
           </View>
         ) : (
           txs.map((tx) => (
-            <View key={tx.id} style={styles.txRow}>
+            <View key={tx.id} style={styles.txRow} dataSet={{ t2Glass: '' }}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.txTipo}>{TIPO_LABEL[tx.tipo] ?? tx.tipo}</Text>
                 <Text style={styles.txDesc} numberOfLines={2}>{tx.descripcion ?? ''}</Text>
@@ -356,7 +357,7 @@ export default function WalletScreen() {
           style={styles.modalOverlay}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-          <View style={styles.modal}>
+          <View style={styles.modal} dataSet={{ t2Glass: '' }}>
             <Text style={styles.modalTitle}>COMPRAR CRÉDITOS</Text>
 
             {/* Selector de método */}

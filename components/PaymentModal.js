@@ -55,7 +55,7 @@ export default function PaymentModal({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={styles.sheet} dataSet={{ t2Glass: '' }}>
           <Text style={styles.title}>INSCRIPCIÓN</Text>
 
           <View style={styles.row}>
@@ -78,6 +78,7 @@ export default function PaymentModal({
               style={[styles.btn, styles.btnWallet, !sufficient && styles.btnDisabled]}
               onPress={onPayWallet}
               disabled={loading || !sufficient}
+              dataSet={{ t2Press: '' }}
             >
               {loading
                 ? <ActivityIndicator color={COLORS.white} />
@@ -91,7 +92,7 @@ export default function PaymentModal({
             </TouchableOpacity>
           )}
 
-          <TouchableOpacity style={[styles.btn, styles.btnYappy]} onPress={onPayYappy} disabled={loading}>
+          <TouchableOpacity style={[styles.btn, styles.btnYappy]} onPress={onPayYappy} disabled={loading} dataSet={{ t2Press: '' }}>
             <Text style={styles.btnText}>📱 Pagar con Yappy</Text>
           </TouchableOpacity>
 
@@ -100,6 +101,7 @@ export default function PaymentModal({
               style={[styles.btn, styles.btnMixto]}
               onPress={() => onPayMixto(mixtoWallet, mixtoYappy)}
               disabled={loading}
+              dataSet={{ t2Press: '' }}
             >
               <Text style={styles.btnText}>💰+📱 Pago mixto</Text>
               <Text style={styles.btnSub}>
@@ -115,7 +117,7 @@ export default function PaymentModal({
                 <Text style={styles.efInfoSub}>Verificando pago en efectivo…</Text>
               </View>
             ) : efAllowed ? (
-              <TouchableOpacity style={[styles.btn, styles.btnEfectivo]} onPress={onPayEfectivo} disabled={loading}>
+              <TouchableOpacity style={[styles.btn, styles.btnEfectivo]} onPress={onPayEfectivo} disabled={loading} dataSet={{ t2Press: '' }}>
                 <Text style={styles.btnText}>💵 Pagar en Efectivo</Text>
                 <Text style={styles.btnSub}>Ventana de 4 horas — contacta al gestor</Text>
               </TouchableOpacity>

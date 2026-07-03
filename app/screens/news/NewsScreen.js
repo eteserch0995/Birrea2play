@@ -59,6 +59,7 @@ export default function NewsScreen() {
             key={f}
             style={[styles.chip, filter === f && styles.chipActive]}
             onPress={() => setFilter(f)}
+            dataSet={{ t2Glass: '' }}
           >
             <Text style={[styles.chipText, filter === f && styles.chipTextActive]}>{f}</Text>
           </TouchableOpacity>
@@ -98,11 +99,14 @@ export default function NewsScreen() {
                 </View>
               ) : null
             )}
-            renderItem={({ item }) => (
+            renderItem={({ item, index }) => (
               <TouchableOpacity
                 style={styles.newsCard}
                 onPress={() => setExpanded(expanded === item.id ? null : item.id)}
                 activeOpacity={0.85}
+                // dataSet puro (t2Glass/t2Rise): inerte sin el gate tema2.
+                // t2Rise solo en las primeras 3 (entrada escalonada).
+                dataSet={{ t2Glass: '', ...(index < 3 ? { t2Rise: String(index + 1) } : {}) }}
               >
                 {item.imagen_url && (
                   <Image source={{ uri: item.imagen_url }} style={styles.newsImage} />

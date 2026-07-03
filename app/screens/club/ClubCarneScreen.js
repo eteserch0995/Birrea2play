@@ -13,6 +13,7 @@ import { qrToDataURL } from '../../../lib/qr';
 
 import { COLORS, FONTS, SPACING, RADIUS, SHADOWS } from '../../../constants/theme';
 import useAuthStore from '../../../store/authStore';
+import { isTema2Active } from '../../../lib/tema2';
 import {
   WCCard,
   WCButton,
@@ -77,6 +78,10 @@ export default function ClubCarneScreen({ navigation }) {
 
   const socioDesdeFecha = formatSocioDesdeFecha(user?.created_at);
   const badge = roleLabel(user?.role);
+  // Tema2: el carné se vuelve carta holo. WCCard (componente compartido) no
+  // reenvía dataSet/props extra al View interno, así que el holo se aplica
+  // en un contenedor EXTERIOR propio de esta screen (no toca WCComponents.js).
+  const tema2 = isTema2Active();
 
   return (
     <View style={styles.root}>
@@ -89,9 +94,11 @@ export default function ClubCarneScreen({ navigation }) {
           />
 
           {/* ── Carne premium ── */}
-          <WCCard variant="glow" accent="gold" style={styles.carneCard}>
-            {/* Franja superior dorada */}
-            <View style={styles.goldStripe} />
+          {(() => {
+            const carneCard = (
+              <WCCard variant="glow" accent="gold" style={styles.carneCard}>
+                {/* Franja superior dorada */}
+                <View style={styles.goldStripe} />
 
             {/* Avatar */}
             <View style={styles.avatarWrap}>
@@ -149,7 +156,18 @@ export default function ClubCarneScreen({ navigation }) {
                 Mostra este carne en comercios aliados
               </Text>
             </View>
-          </WCCard>
+              </WCCard>
+            );
+            // El foil (mix-blend color-dodge) es matemáticamente inerte sobre
+            // negro/blanco puros (satura a negro/blanco sin alterar el valor),
+            // así que no distorsiona el QR (blanco/negro) aunque el ::after
+            // quede por encima de la sub-card del QR.
+            return tema2 ? (
+              <View style={styles.carneHoloWrap} dataSet={{ t2Holo: 'auto', t2Tilt: '', t2Glow: 'hero' }}>
+                {carneCard}
+              </View>
+            ) : carneCard;
+          })()}
 
           {/* ── Acciones ── */}
           <WCButton
@@ -184,6 +202,16 @@ const styles = StyleSheet.create({
   scroll: {
     padding: SPACING.md,
     paddingBottom: SPACING.xxl * 2,
+  },
+
+  /* ── Tema2: contenedor holo exterior del carné (borderRadius/overflow
+     propios, no existían a este nivel; solo se usan con tema2 activo) ── */
+  carneHoloWrap: {
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    position: 'relative',
+    // sin marginBottom propio: carneCard ya trae marginBottom: SPACING.lg,
+    // evita duplicar el espaciado cuando el wrapper envuelve la card.
   },
 
   /* ── Carne card ── */

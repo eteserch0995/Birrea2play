@@ -115,7 +115,7 @@ export default function StoreScreen({ navigation }) {
           keyExtractor={(i) => i.id}
           contentContainerStyle={styles.list}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
-          renderItem={({ item }) => <ProductCard item={item} onAdd={handleAdd} onZoom={setLightbox} getAvailableSizes={getAvailableSizes} getTotalStock={getTotalStock} />}
+          renderItem={({ item, index }) => <ProductCard item={item} index={index} onAdd={handleAdd} onZoom={setLightbox} getAvailableSizes={getAvailableSizes} getTotalStock={getTotalStock} />}
           ListEmptyComponent={
             <View style={styles.centerBox}>
               <Text style={{ fontSize: 48, marginBottom: SPACING.sm }}>🛒</Text>
@@ -140,7 +140,7 @@ export default function StoreScreen({ navigation }) {
       {/* Size-selection bottom sheet */}
       <Modal visible={!!tallaModal} transparent animationType="slide" onRequestClose={() => { setTallaModal(null); setTalla(null); }}>
         <View style={styles.overlay}>
-          <View style={styles.modalBox}>
+          <View style={styles.modalBox} dataSet={{ t2Glass: '' }}>
             <Text style={styles.modalTitle}>{tallaModal?.nombre}</Text>
             <Text style={styles.modalSub}>Selecciona tu talla</Text>
 
@@ -182,14 +182,15 @@ export default function StoreScreen({ navigation }) {
   );
 }
 
-function ProductCard({ item, onAdd, onZoom, getAvailableSizes, getTotalStock }) {
+function ProductCard({ item, index, onAdd, onZoom, getAvailableSizes, getTotalStock }) {
   const totalStock = getTotalStock(item);
   const outOfStock = totalStock === 0 && !item.stock_ilimitado;
   const availSizes = getAvailableSizes(item);
   const catLabel   = CATEGORIA_LABELS[item.categoria] ?? (item.categoria ?? 'General');
+  const riseStep   = typeof index === 'number' ? String((index % 5) + 1) : undefined;
 
   return (
-    <View style={styles.card}>
+    <View style={styles.card} dataSet={{ t2Glass: '', t2Press: '', ...(riseStep ? { t2Rise: riseStep } : {}) }}>
       {/* Large image — tap to zoom */}
       <TouchableOpacity
         activeOpacity={item.imagen_url ? 0.9 : 1}

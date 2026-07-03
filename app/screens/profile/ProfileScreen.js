@@ -94,6 +94,10 @@ export default function ProfileScreen({ navigation }) {
   };
 
   const role = user?.role ?? 'player';
+  // Tema2: header del jugador (avatar+nombre+stats) se agrupa en una sola
+  // "carta coleccionable" con holo+tilt+glow. Con el gate apagado no se toca
+  // nada (style/dataSet quedan undefined, cero cambio de render).
+  const tema2 = isTema2Active();
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -113,6 +117,13 @@ export default function ProfileScreen({ navigation }) {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.red} />}
       >
       <ResponsiveContainer>
+        {/* Carta holo del jugador (Tema2): agrupa avatar+nombre+stats como una
+            sola superficie coleccionable. El wrapper no tiene estilo/dataSet
+            cuando el gate está apagado (undefined = cero impacto visual). */}
+        <View
+          style={tema2 ? t2Styles.playerCardWrap : undefined}
+          dataSet={tema2 ? { t2Holo: 'auto', t2Tilt: '', t2Glow: 'mid' } : undefined}
+        >
         {/* Avatar */}
         <View style={styles.avatarSection}>
           {user?.foto_url
@@ -157,6 +168,7 @@ export default function ProfileScreen({ navigation }) {
           <StatBox size="sm" icon="⚽" value={user?.actividades_completadas ?? 0} label="Actividades" />
           <StatBox size="sm" icon="📅" value={totalEvents} label="Eventos" />
           <StatBox size="sm" icon="🏆" value={mvpCount} label="MVPs" />
+        </View>
         </View>
 
         {/* Invita y Gana */}
@@ -223,6 +235,10 @@ function ActionBtn({ icon, label, onPress, danger }) {
     <TouchableOpacity
       style={[styles.actionBtn, danger && styles.actionBtnDanger]}
       onPress={onPress}
+      // dataSet puro (t2Glass): inerte sin el gate tema2, aplica a TODAS las
+      // acciones por igual (incluye el botón de Rediseño 2026 sin tocar su
+      // label/icon/onPress, que quedan intactos arriba).
+      dataSet={{ t2Glass: '' }}
     >
       <Text style={styles.actionIcon}>{icon}</Text>
       <Text style={[styles.actionLabel, danger && { color: COLORS.red }]}>{label}</Text>
@@ -262,4 +278,15 @@ const styles = StyleSheet.create({
   actionIcon:      { fontSize: 20 },
   actionLabel:     { fontFamily: FONTS.bodyMedium, fontSize: 15, color: COLORS.white, flex: 1 },
   actionArrow:     { fontFamily: FONTS.bodyBold, fontSize: 20, color: COLORS.gray },
+});
+
+// ─── Estilos exclusivos Tema2 (gate ON) ──────────────────────────────────────
+// No existía un borderRadius/overflow común a avatar+info+stats: se agrega acá,
+// SOLO aplicado cuando tema2 está activo (ver `tema2 ? t2Styles... : undefined`).
+const t2Styles = StyleSheet.create({
+  playerCardWrap: {
+    borderRadius: RADIUS.lg,
+    overflow: 'hidden',
+    position: 'relative',
+  },
 });

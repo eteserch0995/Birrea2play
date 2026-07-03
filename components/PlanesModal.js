@@ -84,7 +84,7 @@ export default function PlanesModal({ visible, onClose, onPlanActivado }) {
   return (
     <Modal visible={visible} transparent animationType="slide">
       <View style={styles.overlay}>
-        <View style={styles.container}>
+        <View style={styles.container} dataSet={{ t2Glass: '' }}>
           <View style={styles.header}>
             <Text style={styles.title}>PLANES MENSUALES</Text>
             <TouchableOpacity onPress={onClose}>
@@ -140,6 +140,7 @@ export default function PlanesModal({ visible, onClose, onPlanActivado }) {
                           style={[styles.comprarBtn, { backgroundColor: badgeCol }]}
                           onPress={() => comprarPlan(plan)}
                           disabled={comprando !== null}
+                          dataSet={{ t2Press: '' }}
                         >
                           {comprando === plan.id
                             ? <ActivityIndicator color={COLORS.white} />

@@ -399,7 +399,7 @@ export default function GuestModal({
         style={styles.overlay}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <View style={styles.sheet}>
+        <View style={styles.sheet} dataSet={{ t2Glass: '' }}>
           <ScrollView
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
@@ -449,7 +449,7 @@ export default function GuestModal({
                 <TouchableOpacity style={styles.btnCancel} onPress={handleClose}>
                   <Text style={styles.btnCancelText}>Cancelar</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.btnAdd} onPress={handleNext} disabled={loading}>
+                <TouchableOpacity style={styles.btnAdd} onPress={handleNext} disabled={loading} dataSet={{ t2Press: '' }}>
                   <Text style={styles.btnAddText}>{esPago ? 'Siguiente →' : 'Agregar'}</Text>
                 </TouchableOpacity>
               </View>
@@ -468,6 +468,7 @@ export default function GuestModal({
                 style={[styles.payBtn, walletBalance >= precio && styles.payBtnActive]}
                 onPress={payWithWallet}
                 disabled={loading || walletBalance < precio}
+                dataSet={{ t2Press: '' }}
               >
                 <Text style={styles.payBtnIcon}>💰</Text>
                 <View style={{ flex: 1 }}>
@@ -483,6 +484,7 @@ export default function GuestModal({
                 style={[styles.payBtn, styles.payBtnActive]}
                 onPress={() => setStep('yappy')}
                 disabled={loading}
+                dataSet={{ t2Press: '' }}
               >
                 <Text style={styles.payBtnIcon}>📱</Text>
                 <View style={{ flex: 1 }}>
@@ -501,6 +503,7 @@ export default function GuestModal({
                   style={[styles.payBtn, styles.payBtnActive]}
                   onPress={payWithEfectivo}
                   disabled={loading}
+                  dataSet={{ t2Press: '' }}
                 >
                   <Text style={styles.payBtnIcon}>💵</Text>
                   <View style={{ flex: 1 }}>
@@ -556,7 +559,7 @@ export default function GuestModal({
               ) : null}
 
               {!loading && (
-                <TouchableOpacity style={styles.btnYappy} onPress={startYappyPayment}>
+                <TouchableOpacity style={styles.btnYappy} onPress={startYappyPayment} dataSet={{ t2Press: '' }}>
                   <Text style={styles.btnYappyText}>Enviar solicitud Yappy</Text>
                 </TouchableOpacity>
               )}
