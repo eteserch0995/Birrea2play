@@ -6,7 +6,7 @@ import { isTema2Active } from '../lib/tema2';
 // aunque cambien las referencias a chunks; con Cache-Control immutable, los
 // browsers quedan apuntando a chunks del deploy anterior (404 -> panel roto).
 // Cambiar este valor fuerza contenido nuevo en el grafo principal -> nombre nuevo.
-export const BUILD_STAMP = '2026-07-03.3';
+export const BUILD_STAMP = '2026-07-03.4';
 
 const MUNDIAL_THEME_START_MS = Date.UTC(2026, 4, 29, 5, 0, 0); // 2026-05-29 00:00 PA
 const MUNDIAL_THEME_END_MS = Date.UTC(2026, 6, 20, 5, 0, 0); // 2026-07-20 00:00 PA
@@ -102,9 +102,10 @@ const MODO26_COLORS = {
   magentaText: '#6E8CFF',
 };
 
-// TEMA2 — "Estadio Nocturno" (rediseño 2026, híbrido A+B). Preview gateado con
-// ?preview=tema (lib/tema2.js); tiene PRIORIDAD sobre modo26/mundial. Mantiene
-// la identidad rojo/neón con negros más profundos y dorado del Cinturón.
+// TEMA2 — "Estadio Nocturno" (rediseño 2026, híbrido A+B). SKIN POR DEFECTO
+// desde 2026-07-02 (aprobado por Sergio; lib/tema2.js, opt-out ?preview=off);
+// PRIORIDAD sobre modo26/mundial. Identidad rojo/neón con negros más profundos
+// y dorado del Cinturón.
 const TEMA2_COLORS = {
   bg: '#05070B',
   bg2: '#0C1017',
