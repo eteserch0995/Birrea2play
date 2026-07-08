@@ -1500,8 +1500,25 @@ function AdminManageEvent({ route, navigation }) {
   const [addGuestModal,   setAddGuestModal]   = useState(false);
   const [addGuestName,    setAddGuestName]    = useState('');
   const [addGuestGenero,  setAddGuestGenero]  = useState(null);
+  // Gate de confidencialidad para la pestaña Ganancia (PIN). Se re-bloquea al salir de la pestaña.
+  const [gananciaUnlocked, setGananciaUnlocked] = useState(false);
+  const [gananciaPinInput, setGananciaPinInput] = useState('');
+  const GANANCIA_PIN = '2426';
 
-  useEffect(() => { loadAll(); }, [tab]);
+  useEffect(() => {
+    loadAll();
+    if (tab !== 'Ganancia') { setGananciaUnlocked(false); setGananciaPinInput(''); }
+  }, [tab]);
+
+  function tryUnlockGanancia() {
+    if (gananciaPinInput.trim() === GANANCIA_PIN) {
+      setGananciaUnlocked(true);
+      setGananciaPinInput('');
+    } else {
+      Alert.alert('PIN incorrecto', 'El PIN de confidencialidad no es correcto.');
+      setGananciaPinInput('');
+    }
+  }
 
   async function loadAll() {
     setLoading(true);
@@ -2437,29 +2454,52 @@ function AdminManageEvent({ route, navigation }) {
               );
             })()}
 
-            {/* ═══ GANANCIA ═══ */}
+            {/* ═══ GANANCIA (protegida con PIN de confidencialidad) ═══ */}
             {tab === 'Ganancia' && event && (
-              <>
+              !gananciaUnlocked ? (
                 <View style={styles.card}>
-                  <Text style={styles.cardName}>{event.nombre}</Text>
-                  <Text style={styles.cardSub}>{event.deporte} · {event.formato} · {event.genero}</Text>
-                  <Text style={styles.cardSub}>
-                    Cancha: {event.cancha_costo != null
-                      ? <Text style={{ color: COLORS.gold }}>${Number(event.cancha_costo).toFixed(2)}</Text>
-                      : <Text style={{ color: COLORS.red }}>sin definir</Text>}
+                  <Text style={styles.cardName}>🔒 Ganancias confidenciales</Text>
+                  <Text style={[styles.cardSub, { marginBottom: SPACING.sm }]}>
+                    Ingresá el PIN de confidencialidad para ver las ganancias de este evento.
                   </Text>
-                  {event.cancha_costo == null && (
-                    <Text style={[styles.cardSub, { color: COLORS.red, marginTop: 4 }]}>
-                      ⚠ Definí el costo de la cancha desde "Editar evento" (Config) para que el cálculo sea real.
-                    </Text>
-                  )}
+                  <TextInput
+                    style={styles.input}
+                    placeholder="PIN"
+                    placeholderTextColor={COLORS.gray}
+                    keyboardType="number-pad"
+                    secureTextEntry
+                    maxLength={8}
+                    value={gananciaPinInput}
+                    onChangeText={setGananciaPinInput}
+                    onSubmitEditing={tryUnlockGanancia}
+                  />
+                  <TouchableOpacity style={[styles.btn, { backgroundColor: COLORS.green, marginTop: SPACING.sm }]} onPress={tryUnlockGanancia}>
+                    <Text style={styles.btnText}>Ver ganancias</Text>
+                  </TouchableOpacity>
                 </View>
-                <GananciaCard
-                  event={event}
-                  inscritosConfirmados={players.length}
-                  gestorEnEvento={players.some((p) => p._key === event.created_by)}
-                />
-              </>
+              ) : (
+                <>
+                  <View style={styles.card}>
+                    <Text style={styles.cardName}>{event.nombre}</Text>
+                    <Text style={styles.cardSub}>{event.deporte} · {event.formato} · {event.genero}</Text>
+                    <Text style={styles.cardSub}>
+                      Cancha: {event.cancha_costo != null
+                        ? <Text style={{ color: COLORS.gold }}>${Number(event.cancha_costo).toFixed(2)}</Text>
+                        : <Text style={{ color: COLORS.red }}>sin definir</Text>}
+                    </Text>
+                    {event.cancha_costo == null && (
+                      <Text style={[styles.cardSub, { color: COLORS.red, marginTop: 4 }]}>
+                        ⚠ Definí el costo de la cancha desde "Editar evento" (Config) para que el cálculo sea real.
+                      </Text>
+                    )}
+                  </View>
+                  <GananciaCard
+                    event={event}
+                    inscritosConfirmados={players.length}
+                    gestorEnEvento={players.some((p) => p._key === event.created_by)}
+                  />
+                </>
+              )
             )}
 
             {/* ═══ CONFIG ═══ */}

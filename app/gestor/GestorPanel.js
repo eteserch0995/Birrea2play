@@ -1260,6 +1260,13 @@ function GestorResults({ route }) {
   const [saving,  setSaving]  = useState(null);
   const [inscritosCount, setInscritosCount] = useState(0);
   const [gestorEnEvento, setGestorEnEvento] = useState(true);
+  // Gate de confidencialidad para las ganancias (mismo PIN que el panel admin)
+  const [gananciaUnlocked, setGananciaUnlocked] = useState(false);
+  const [gananciaPinInput, setGananciaPinInput] = useState('');
+  function unlockGanancia() {
+    if (gananciaPinInput.trim() === '2426') { setGananciaUnlocked(true); setGananciaPinInput(''); }
+    else { Alert.alert('PIN incorrecto', 'El PIN de confidencialidad no es correcto.'); setGananciaPinInput(''); }
+  }
 
   const fetchData = useCallback(() => {
     if (!eventId) return;
@@ -1511,7 +1518,28 @@ function GestorResults({ route }) {
       <ScrollView contentContainerStyle={styles.list}>
         {event && (
           <View style={{ paddingHorizontal: SPACING.md }}>
-            <GananciaCard event={event} inscritosConfirmados={inscritosCount} gestorEnEvento={gestorEnEvento} />
+            {!gananciaUnlocked ? (
+              <View style={styles.card}>
+                <Text style={styles.cardName}>🔒 Ganancias confidenciales</Text>
+                <Text style={[styles.cardSub, { marginBottom: SPACING.sm }]}>Ingresá el PIN de confidencialidad para ver las ganancias.</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="PIN"
+                  placeholderTextColor={COLORS.gray}
+                  keyboardType="number-pad"
+                  secureTextEntry
+                  maxLength={8}
+                  value={gananciaPinInput}
+                  onChangeText={setGananciaPinInput}
+                  onSubmitEditing={unlockGanancia}
+                />
+                <TouchableOpacity style={[styles.btn, { backgroundColor: COLORS.green, marginTop: SPACING.sm }]} onPress={unlockGanancia}>
+                  <Text style={styles.btnText}>Ver ganancias</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <GananciaCard event={event} inscritosConfirmados={inscritosCount} gestorEnEvento={gestorEnEvento} />
+            )}
           </View>
         )}
         {matches.length === 0 && <Text style={styles.empty}>Sin partidos. Genera el fixture primero.</Text>}
