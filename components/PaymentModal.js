@@ -20,9 +20,11 @@ export default function PaymentModal({
 }) {
   const sufficient = walletBalance >= amount;
   // Mixto: wallet cubre más del 50% pero no alcanza para todo
-  const mixtoWallet = Math.min(walletBalance, amount - 0.01);
-  const mixtoYappy  = amount - mixtoWallet;
-  const canMixto    = !sufficient && walletBalance > amount / 2 && walletBalance > 0;
+  // Mixto v2 (2026-07-05, decisión Sergio): usás TODOS tus créditos disponibles,
+  // sin mínimo, y la diferencia va por Yappy (Yappy exige mínimo $1.00).
+  const mixtoWallet = Number(Math.min(walletBalance, Math.max(amount - 1, 0)).toFixed(2));
+  const mixtoYappy  = Number((amount - mixtoWallet).toFixed(2));
+  const canMixto    = !sufficient && walletBalance > 0 && amount > 1;
 
   // Pago en efectivo: requiere >=3 birrias jugadas y no estar bloqueado por admin.
   // Lo consulta el propio modal (RPC efectivo_status) cuando se abre.

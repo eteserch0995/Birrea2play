@@ -107,8 +107,7 @@ function GestorDashboard({ navigation }) {
         .from('events')
         .select(`
           *,
-          cancha:cancha_id ( id, nombre, telefono ),
-          cancha_slot:cancha_slot_id ( id, fecha, hora_inicio, hora_fin, precio_hora )
+          cancha:cancha_id ( id, nombre, telefono )
         `)
         .eq('created_by', user.id)
         .in('status', ['draft', 'open', 'active'])
@@ -285,6 +284,7 @@ function GestorCreateEvent({ navigation }) {
     tiene_semis: true, tiene_tercer_lugar: true, tiene_final: true,
     ida_y_vuelta: false, maps_url: '', genero: null,
     vidas_por_equipo: 3,
+    es_privado: false, // F4: birrea privada con código de acceso
   });
 
   const upd = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -403,30 +403,10 @@ function GestorCreateEvent({ navigation }) {
         maps_url:            form.maps_url.trim() || null,
         vidas_por_equipo:    form.formato === '2 Vidas' ? (form.vidas_por_equipo ?? 3) : null,
         cancha_id:           canchaVinculada?.id ?? null,
-        cancha_slot_id:      slotSeleccionado?.id ?? null,
         app_fee_per_player:  user?.is_fee_exempt ? 0 : 0.50,
-      }).select('id').single();
+        es_privado:          form.es_privado === true, // el trigger de DB genera el access_code
+      }).select('id, access_code').single();
       if (error) throw error;
-
-      // Si hay slot seleccionado, reclamarlo atómicamente
-      if (slotSeleccionado?.id && created?.id) {
-        try {
-          const { error: claimErr } = await supabase.rpc('claim_cancha_slot', {
-            p_slot_id: slotSeleccionado.id,
-          });
-          if (claimErr) {
-            // El evento fue creado pero el slot falló (ya reclamado por otro)
-            await supabase.from('events').update({ cancha_id: null, cancha_slot_id: null }).eq('id', created.id);
-            Alert.alert('Aviso', `El evento fue creado pero el slot de cancha ya no estaba disponible. Vincula otra cancha desde la Config del evento.\n\nError: ${claimErr.message}`);
-          } else {
-            // Actualizar la reserva con el event_id
-            await supabase
-              .from('cancha_slot_reservas')
-              .update({ event_id: created.id })
-              .eq('slot_id', slotSeleccionado.id);
-          }
-        } catch (_) {}
-      }
 
       // Upload court photo if selected
       if (canchaImageUri && created?.id) {
@@ -436,7 +416,13 @@ function GestorCreateEvent({ navigation }) {
         } catch (_) {}
       }
 
-      Alert.alert('¡Evento creado!', `"${form.nombre}" creado en borrador. Ve a Config para publicarlo cuando esté listo.`);
+      Alert.alert(
+        '¡Evento creado!',
+        `"${form.nombre}" creado en borrador. Ve a Config para publicarlo cuando esté listo.` +
+        (form.es_privado && created?.access_code
+          ? `\n\n🔒 Birrea PRIVADA — código de acceso: ${created.access_code}\nCompartilo con tu grupo (también lo ves en Config).`
+          : ''),
+      );
       navigation.goBack();
     } catch (e) {
       Alert.alert('Error', e.message);
@@ -627,6 +613,24 @@ function GestorCreateEvent({ navigation }) {
           value={form.descripcion}
           onChangeText={(v) => upd('descripcion', v)}
         />
+
+        {/* F4: birrea pública o privada (privada = con código de acceso) */}
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: SPACING.md }}>
+          <View style={{ flex: 1, paddingRight: SPACING.sm }}>
+            <Text style={styles.fieldLabel}>🔒 Birrea privada (con código)</Text>
+            <Text style={{ fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginTop: 2 }}>
+              {form.es_privado
+                ? 'No sale en las listas. Al crearla te damos el código para compartir. Si después la pasás a pública, se le avisa a todos.'
+                : 'Pública: sale en las listas y al publicarla se le avisa a todos los usuarios.'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.toggle, form.es_privado && styles.toggleActive]}
+            onPress={() => upd('es_privado', !form.es_privado)}
+          >
+            <Text style={styles.toggleText}>{form.es_privado ? 'ON' : 'OFF'}</Text>
+          </TouchableOpacity>
+        </View>
 
         {/* Vincular cancha (opcional) */}
         <Text style={[styles.fieldLabel, { marginTop: SPACING.md }]}>Vincular cancha (opcional)</Text>
@@ -826,128 +830,25 @@ function CanchaPendingBanner({ event, onResolved }) {
 }
 
 // ── Modal: selector de cancha + slot para evento ───────────────────────────
+// F4 2026-07-05: el modelo viejo de "slots" murió (tablas dropeadas). Las
+// reservas de cancha ahora van por el flujo real (CanchaBooking: solicitud →
+// aprobación de la cancha → abono). Este modal quedó como aviso/redirección
+// para no romper el form del gestor.
 function CanchaSlotPickerModal({ visible, onClose, fechaEvento, onPick }) {
-  const [canchas, setCanchas]           = useState([]);
-  const [selectedCancha, setSelectedCancha] = useState(null);
-  const [slots, setSlots]               = useState([]);
-  const [loading, setLoading]           = useState(false);
-  const [loadingSlots, setLoadingSlots] = useState(false);
-
-  useEffect(() => {
-    if (!visible) { setSelectedCancha(null); setSlots([]); return; }
-    setLoading(true);
-    supabase
-      .from('canchas')
-      .select('id, nombre, telefono, direccion, precio_hora')
-      .eq('activa', true)
-      .order('nombre', { ascending: true })
-      .then(({ data, error }) => {
-        if (error) Alert.alert('Error', error.message);
-        else setCanchas(data ?? []);
-        setLoading(false);
-      });
-  }, [visible]);
-
-  useEffect(() => {
-    if (!selectedCancha) { setSlots([]); return; }
-    setLoadingSlots(true);
-    let q = supabase
-      .from('cancha_slots')
-      .select('id, fecha, hora_inicio, hora_fin, precio_hora, notas')
-      .eq('cancha_id', selectedCancha.id)
-      .eq('status', 'available')
-      .in('visibility', ['public'])
-      .order('fecha', { ascending: true })
-      .order('hora_inicio', { ascending: true });
-    if (fechaEvento) q = q.eq('fecha', fechaEvento);
-    Promise.resolve(q).then(({ data, error }) => {
-      if (error) Alert.alert('Error', error.message);
-      else setSlots(data ?? []);
-      setLoadingSlots(false);
-    });
-  }, [selectedCancha, fechaEvento]);
-
-  const fmtDate = (d) => {
-    if (!d) return '';
-    return new Date(d + 'T00:00:00').toLocaleDateString('es-PA', { weekday: 'short', day: '2-digit', month: 'short' });
-  };
-
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: COLORS.bg2, borderTopLeftRadius: RADIUS.lg, borderTopRightRadius: RADIUS.lg, padding: SPACING.lg, maxHeight: '80%' }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.md }}>
-            {selectedCancha && (
-              <TouchableOpacity onPress={() => setSelectedCancha(null)} style={{ marginRight: SPACING.sm }}>
-                <Text style={{ fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white }}>←</Text>
-              </TouchableOpacity>
-            )}
-            <Text style={{ fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white, flex: 1, letterSpacing: 1 }}>
-              {selectedCancha ? selectedCancha.nombre : 'Elegir cancha'}
-            </Text>
-            <TouchableOpacity onPress={onClose}>
-              <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.gray, fontSize: 14 }}>Cerrar</Text>
-            </TouchableOpacity>
-          </View>
-
-          {!selectedCancha ? (
-            loading ? (
-              <ActivityIndicator color={COLORS.red} style={{ marginVertical: SPACING.lg }} />
-            ) : (
-              <FlatList
-                data={canchas}
-                keyExtractor={c => c.id}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={{ padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.card2 }}
-                    onPress={() => setSelectedCancha(item)}
-                  >
-                    <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 14 }}>{item.nombre}</Text>
-                    {!!item.direccion && (
-                      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>{item.direccion}</Text>
-                    )}
-                    {item.precio_hora != null && (
-                      <Text style={{ fontFamily: FONTS.body, color: COLORS.gold, fontSize: 12 }}>${Number(item.precio_hora).toFixed(2)} / hora</Text>
-                    )}
-                  </TouchableOpacity>
-                )}
-                ListEmptyComponent={
-                  <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, textAlign: 'center', padding: SPACING.lg }}>
-                    No hay canchas disponibles.
-                  </Text>
-                }
-              />
-            )
-          ) : loadingSlots ? (
-            <ActivityIndicator color={COLORS.red} style={{ marginVertical: SPACING.lg }} />
-          ) : slots.length === 0 ? (
-            <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, textAlign: 'center', padding: SPACING.lg }}>
-              {fechaEvento
-                ? `Sin slots disponibles para el ${fmtDate(fechaEvento)}. Cambia la fecha del evento o pide a la cancha que publique un slot.`
-                : 'Sin slots disponibles para esta cancha.'}
-            </Text>
-          ) : (
-            <FlatList
-              data={slots}
-              keyExtractor={s => s.id}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={{ padding: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.card2 }}
-                  onPress={() => onPick(selectedCancha, item)}
-                >
-                  <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 14 }}>
-                    {fmtDate(item.fecha)} · {item.hora_inicio?.slice(0,5)}–{item.hora_fin?.slice(0,5)}
-                  </Text>
-                  {item.precio_hora != null && (
-                    <Text style={{ fontFamily: FONTS.body, color: COLORS.gold, fontSize: 12 }}>${Number(item.precio_hora).toFixed(2)} / hora</Text>
-                  )}
-                  {!!item.notas && (
-                    <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>{item.notas}</Text>
-                  )}
-                </TouchableOpacity>
-              )}
-            />
-          )}
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <View style={{ flex: 1, backgroundColor: '#000A', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: COLORS.card, borderTopLeftRadius: RADIUS.lg, borderTopRightRadius: RADIUS.lg, padding: SPACING.lg, gap: SPACING.sm }}>
+          <Text style={{ fontFamily: FONTS.heading, fontSize: 18, color: COLORS.white, letterSpacing: 1 }}>RESERVÁ TU CANCHA</Text>
+          <Text style={{ fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, lineHeight: 19 }}>
+            Las canchas ahora se reservan desde <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white }}>Reservar Cancha</Text>: elegís horario, la cancha te confirma y pagás el abono por la app. Después usá el selector de costo de cancha del evento para reflejar lo que te cuesta.
+          </Text>
+          <TouchableOpacity
+            style={{ backgroundColor: COLORS.red, borderRadius: RADIUS.md, padding: SPACING.md, alignItems: 'center', marginTop: SPACING.sm }}
+            onPress={onClose}
+          >
+            <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white }}>ENTENDIDO</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -2688,6 +2589,30 @@ function GestorConfig({ route, navigation }) {
               onPress={() => toggleField('visible', event.visible !== false ? false : true)}
             >
               <Text style={styles.toggleText}>{event.visible !== false ? 'ON' : 'OFF'}</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* F4: birrea privada con código — no sale en listas; al pasarla a
+              pública (visible+open) el trigger notifica a TODOS los usuarios */}
+          <View style={[styles.toggleRow, { borderTopWidth: 1, borderTopColor: COLORS.navy, marginTop: SPACING.sm, paddingTop: SPACING.sm }]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.cardSub}>🔒 Birrea privada (con código)</Text>
+              {event.es_privado === true && !!event.access_code && (
+                <Text style={[styles.cardSub, { color: COLORS.gold, fontSize: 12, marginTop: 2 }]}>
+                  Código: {event.access_code} — compartilo con tu grupo
+                </Text>
+              )}
+              {event.es_privado === true && (
+                <Text style={[styles.cardSub, { color: COLORS.gray, fontSize: 11, marginTop: 2 }]}>
+                  Al pasarla a pública se le avisa a todos los usuarios.
+                </Text>
+              )}
+            </View>
+            <TouchableOpacity
+              style={[styles.toggle, event.es_privado === true && styles.toggleActive, { backgroundColor: event.es_privado === true ? COLORS.gold : COLORS.navy }]}
+              onPress={() => toggleField('es_privado', event.es_privado === true ? false : true)}
+            >
+              <Text style={styles.toggleText}>{event.es_privado === true ? 'ON' : 'OFF'}</Text>
             </TouchableOpacity>
           </View>
 

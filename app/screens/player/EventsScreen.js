@@ -1,8 +1,9 @@
 import React, { useCallback } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity,
-  StyleSheet, RefreshControl,
+  StyleSheet, RefreshControl, TextInput, Alert,
 } from 'react-native';
+import { supabase } from '../../../lib/supabase';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
@@ -18,6 +19,9 @@ const FILTERS = ['Todos', 'Liga', 'Torneo', 'Amistoso', 'Abiertos'];
 
 export default function EventsScreen({ navigation }) {
   const [filter, setFilter] = React.useState('Todos');
+  const [showCode, setShowCode]       = React.useState(false); // F4: birreas privadas
+  const [codeInput, setCodeInput]     = React.useState('');
+  const [codeLoading, setCodeLoading] = React.useState(false);
   const { events, loading, error, fetchEvents } = useEventStore();
 
   // Reload on every focus (tab switch or back-navigate). El filtro ahora se
@@ -74,7 +78,54 @@ export default function EventsScreen({ navigation }) {
               <Text style={[styles.chipText, filter === f && styles.chipTextActive]}>{f}</Text>
             </TouchableOpacity>
           ))}
+          {/* F4: entrada a birreas privadas por código */}
+          <TouchableOpacity
+            style={[styles.chip, { borderColor: COLORS.gold }]}
+            onPress={() => setShowCode((v) => !v)}
+            hitSlop={{ top: 4, bottom: 4, left: 4, right: 4 }}
+          >
+            <Text style={[styles.chipText, { color: COLORS.gold }]}>🔑 Tengo un código</Text>
+          </TouchableOpacity>
         </View>
+
+        {showCode && (
+          <View style={styles.codeRow}>
+            <TextInput
+              style={styles.codeInput}
+              placeholder="EV-XXXXXX"
+              placeholderTextColor={COLORS.gray}
+              autoCapitalize="characters"
+              value={codeInput}
+              onChangeText={setCodeInput}
+            />
+            <TouchableOpacity
+              style={[styles.chip, styles.chipActive, { borderColor: COLORS.gold, backgroundColor: COLORS.gold }]}
+              disabled={codeLoading}
+              onPress={async () => {
+                const code = codeInput.trim();
+                if (!code) return;
+                setCodeLoading(true);
+                try {
+                  const { data, error: cErr } = await supabase.rpc('get_event_by_code', { p_code: code });
+                  if (cErr) throw cErr;
+                  const ev = Array.isArray(data) ? data[0] : data;
+                  if (!ev?.id) {
+                    Alert.alert('Código inválido', 'No encontramos una birrea activa con ese código.');
+                  } else {
+                    setShowCode(false); setCodeInput('');
+                    navigation.navigate('EventDetail', { eventId: ev.id });
+                  }
+                } catch (e) {
+                  Alert.alert('Error', e.message ?? 'No se pudo buscar el código.');
+                } finally {
+                  setCodeLoading(false);
+                }
+              }}
+            >
+              <Text style={[styles.chipText, { color: COLORS.bg, fontFamily: FONTS.bodyBold }]}>{codeLoading ? '...' : 'ENTRAR'}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {loading && events.length === 0
           ? <EventListSkeleton />
@@ -115,6 +166,8 @@ const styles = StyleSheet.create({
   kicker:          { fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.neon, letterSpacing: 1.6 },
   title:           { fontFamily: FONTS.heading, fontSize: 38, color: COLORS.white, letterSpacing: 4, marginTop: 2 },
   filterRow:       { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, paddingHorizontal: SPACING.md, marginVertical: SPACING.md },
+  codeRow:         { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.md, marginBottom: SPACING.md, alignItems: 'center' },
+  codeInput:       { flex: 1, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.gold, borderRadius: RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: 9, color: COLORS.white, fontFamily: FONTS.bodySemiBold, letterSpacing: 1 },
   chip:            { paddingHorizontal: SPACING.md, paddingVertical: 10, minHeight: 40, justifyContent: 'center', borderRadius: RADIUS.sm, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.line },
   chipActive:      { backgroundColor: COLORS.red, borderColor: COLORS.red2 },
   chipText:        { fontFamily: FONTS.bodyBold, color: COLORS.gray2, fontSize: 12, letterSpacing: 1, textTransform: 'uppercase' },

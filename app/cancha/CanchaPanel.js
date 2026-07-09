@@ -1,393 +1,1082 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Modal, Alert, ActivityIndicator, FlatList,
-  KeyboardAvoidingView, Platform, Linking,
+  Alert, ActivityIndicator, Linking, Switch, RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { COLORS, FONTS, SPACING, RADIUS } from '../../constants/theme';
+import { useFocusEffect } from '@react-navigation/native';
+import { COLORS, FONTS, SPACING, RADIUS, TYPE, withAlpha } from '../../constants/theme';
 import { supabase } from '../../lib/supabase';
 import useAuthStore from '../../store/authStore';
-import { DateField, TimeField } from '../../components/DateTimeField';
+import { useAppRefresh } from '../../hooks/useAppRefresh';
+import { TimeField } from '../../components/DateTimeField';
+import ResponsiveContainer from '../../components/ResponsiveContainer';
+import { Card, Chip, Field, BottomSheetModal, ScreenHeader, PressableScale } from '../../components/ui';
 
-// ── helpers ────────────────────────────────────────────────────────────────
-function fmtDate(d) {
-  if (!d) return '';
-  const dt = typeof d === 'string' ? new Date(d + 'T00:00:00') : d;
-  return dt.toLocaleDateString('es-PA', { weekday: 'short', day: '2-digit', month: 'short' });
+// ═══════════════════════════════════════════════════════════════════════════
+// CanchaPanel — panel del administrador de cancha (rol cancha_admin).
+// Rediseño 2026-07-05: reemplaza el modelo LEGACY de cancha_slots (muerto,
+// 0 filas) por el flujo v3 de cancha_reservas (abono → aprobación → saldo)
+// + cancha_bloqueos_externos vía RPC. Ver contrato completo en las
+// migraciones supabase/migrations/20260704000*_canchas_v3_*.sql.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HEIGHT_PER_MIN   = 1.5;  // px por minuto de duración en los bloques de agenda
+const MIN_BLOCK_HEIGHT = 50;   // alto mínimo de una franja (tap target + legible)
+
+const DEPORTES   = ['Fútbol', 'Fútbol Sala', 'Pádel', 'Volleyball', 'Basketball'];
+const FORMATOS   = [5, 6, 7, 8, 9, 11];
+const DIAS_LABEL = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+const CANALES    = [['interno', 'Interno'], ['whatsapp', 'WhatsApp'], ['llamada', 'Llamada'], ['presencial', 'Presencial']];
+
+// ── helpers de fecha/hora ────────────────────────────────────────────────
+function todayIso() { return new Date().toISOString().slice(0, 10); }
+function addDays(dateStr, n) {
+  const d = new Date(dateStr + 'T12:00:00');
+  d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
 }
-function fmtTime(t) {
-  if (!t) return '';
-  return t.slice(0, 5);
+function dayOfWeek(dateStr) { return new Date(dateStr + 'T12:00:00').getDay(); }
+function pad2(n) { return n.toString().padStart(2, '0'); }
+function toMin(hhmmss) {
+  if (!hhmmss) return 0;
+  const [h, m] = hhmmss.slice(0, 5).split(':').map(Number);
+  return h * 60 + m;
 }
-function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+function toHHMM(min) { return `${pad2(Math.floor(min / 60))}:${pad2(min % 60)}`; }
+function fmtHora(hhmmss) { return (hhmmss ?? '').slice(0, 5); }
+
+function fmtDateChip(dateStr) {
+  const d = new Date(dateStr + 'T12:00:00');
+  const dow = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'][d.getDay()];
+  const mes = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][d.getMonth()];
+  return { dia: d.getDate(), mes, dow };
+}
+function fmtFechaCorta(dateStr) {
+  if (!dateStr) return '';
+  const { dia, mes, dow } = fmtDateChip(dateStr);
+  return `${dow} ${pad2(dia)} ${mes}`;
 }
 
-// ── Panel principal ───────────────────────────────────────────────────────
+function openWhatsApp(telefono, mensaje) {
+  const digits = (telefono ?? '').replace(/\D/g, '');
+  const num = digits.startsWith('507') ? digits : '507' + digits;
+  const url = `https://wa.me/${num}?text=${encodeURIComponent(mensaje)}`;
+  Linking.openURL(url).catch(() => Alert.alert('Error', 'No se pudo abrir WhatsApp'));
+}
+
+function humanizeRpcError(code) {
+  if (!code) return 'Ocurrió un error inesperado.';
+  if (typeof code === 'string' && code.startsWith('invalid_status')) {
+    return `La reserva ya cambió de estado (${code.split(':')[1] ?? ''}).`;
+  }
+  const map = {
+    abono_no_pagado:   'El gestor todavía no pagó el abono — no se puede aprobar.',
+    reserva_not_found: 'La reserva ya no existe.',
+    forbidden:         'No tenés permiso sobre esta cancha.',
+  };
+  return map[code] ?? code;
+}
+
+// ── visual por estado de una reserva (colores del timeline/solicitudes) ──
+function reservaVisual(r) {
+  // v4: toda solicitud pending espera la decisión de la cancha (aún sin pago)
+  if (r.status === 'pending') {
+    return { bg: COLORS.gold, label: 'POR APROBAR' };
+  }
+  if (r.status === 'completed') {
+    return { bg: COLORS.gray, label: 'JUGADA' };
+  }
+  // v4: aprobada con ventana de pago abierta (el gestor debe pagar el abono)
+  if (r.status === 'approved' && r.estado_pago === 'pendiente') {
+    return { bg: COLORS.gold, label: 'APROBADA · ESPERANDO ABONO', dashed: true };
+  }
+  if (r.status === 'approved' && r.estado_pago === 'pagado') {
+    return { bg: COLORS.blue2, label: 'PAGADA' };
+  }
+  if (r.status === 'approved' && (r.estado_pago === 'abono_pagado' || r.estado_pago === 'no_requerido')) {
+    const saldo = Math.max(0, Number(r.monto_total || 0) - Number(r.deposito_pagado || 0) - Number(r.saldo_pagado || 0));
+    return { bg: COLORS.neon, label: `CONFIRMADA · saldo $${saldo.toFixed(2)}` };
+  }
+  return { bg: COLORS.line, label: (r.estado_pago || r.status || '').toUpperCase() || '—' };
+}
+
+// ── grilla de la agenda (ticks de la franja horaria de un día) ───────────
+function stepMinutosDe(horario, cancha) {
+  return (horario?.medias_horas || cancha?.permite_media_hora_extra) ? 30 : 60;
+}
+
+function gridPoints(horario, cancha) {
+  if (!horario) return [];
+  const stepMin = stepMinutosDe(horario, cancha);
+  const openMin = toMin(horario.hora_apertura);
+  const closeMin = toMin(horario.hora_cierre);
+  const points = [];
+  for (let m = openMin; m <= closeMin; m += stepMin) points.push(toHHMM(m));
+  return points;
+}
+
+// Arma las filas del timeline: reserva / bloqueo / libre, una por franja,
+// con alto proporcional a la duración cuando hay algo que ocupa el bloque.
+function buildAgendaRows({ horario, reservas, bloqueos, cancha }) {
+  if (!horario) return [];
+  const stepMin = stepMinutosDe(horario, cancha);
+  let openMin  = toMin(horario.hora_apertura);
+  let closeMin = toMin(horario.hora_cierre);
+
+  // Defensivo: si hay reservas/bloqueos fuera del horario configurado
+  // (ej. horario editado después de crear la reserva), igual se muestran.
+  reservas.forEach((r) => {
+    openMin  = Math.min(openMin, toMin(r.hora_inicio));
+    closeMin = Math.max(closeMin, toMin(r.hora_fin));
+  });
+  bloqueos.forEach((b) => {
+    openMin  = Math.min(openMin, toMin(b.hora_inicio));
+    closeMin = Math.max(closeMin, toMin(b.hora_fin));
+  });
+
+  const rows = [];
+  let cur = openMin;
+  while (cur < closeMin) {
+    const reserva = reservas.find((r) => toMin(r.hora_inicio) === cur);
+    const bloqueo = !reserva ? bloqueos.find((b) => toMin(b.hora_inicio) === cur) : null;
+    if (reserva) {
+      const dur = Math.max(stepMin, toMin(reserva.hora_fin) - toMin(reserva.hora_inicio));
+      rows.push({ type: 'reserva', key: `r_${reserva.reserva_id}`, time: toHHMM(cur), durationMin: dur, data: reserva });
+      cur += dur;
+    } else if (bloqueo) {
+      const dur = Math.max(stepMin, toMin(bloqueo.hora_fin) - toMin(bloqueo.hora_inicio));
+      rows.push({ type: 'bloqueo', key: `b_${bloqueo.bloqueo_id}`, time: toHHMM(cur), durationMin: dur, data: bloqueo });
+      cur += dur;
+    } else {
+      rows.push({ type: 'free', key: `f_${toHHMM(cur)}`, time: toHHMM(cur), durationMin: stepMin });
+      cur += stepMin;
+    }
+  }
+  return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Panel principal
+// ═══════════════════════════════════════════════════════════════════════════
 export default function CanchaPanel() {
   const user = useAuthStore((s) => s.user);
-  const [canchas,     setCanchas]     = useState([]);
-  const [slotsMap,    setSlotsMap]    = useState({});
-  const [tarifasMap,  setTarifasMap]  = useState({});
-  const [reservas,    setReservas]    = useState([]); // solicitudes pendientes
-  const [loading,     setLoading]     = useState(true);
-  const [editingCancha,    setEditingCancha]    = useState(null);
-  const [showCanchaModal,  setShowCanchaModal]  = useState(false);
-  const [newSlotForCanchaId, setNewSlotForCanchaId] = useState(null);
 
-  const fetchAll = useCallback(async () => {
-    if (!user?.id) { setLoading(false); return; }
-    setLoading(true);
+  const [canchas,          setCanchas]          = useState([]);
+  const [loadingCanchas,   setLoadingCanchas]   = useState(true);
+  const [selectedCanchaId, setSelectedCanchaId] = useState(null);
+  const [selectedDate,     setSelectedDate]     = useState(todayIso());
+
+  const [reservas,    setReservas]    = useState([]); // get_reservas_del_dia (todas las canchas del owner)
+  const [bloqueos,    setBloqueos]    = useState([]); // get_bloqueos_del_dia
+  const [horarioDia,  setHorarioDia]  = useState(null);
+  const [loadingDia,  setLoadingDia]  = useState(true);
+  const [dotDates,    setDotDates]    = useState(new Set());
+
+  const [liquidacion,        setLiquidacion]        = useState(0);
+  const [loadingLiquidacion, setLoadingLiquidacion] = useState(true);
+
+  const [nowMs, setNowMs] = useState(Date.now());
+
+  // Sheets (dato "sticky": no se limpia al cerrar para no ver el contenido
+  // parpadear vacío durante la animación de salida del BottomSheetModal).
+  const [reservaSheetData,    setReservaSheetData]    = useState(null);
+  const [reservaSheetVisible, setReservaSheetVisible] = useState(false);
+  const [bloqueoSheetData,    setBloqueoSheetData]    = useState(null);
+  const [bloqueoSheetVisible, setBloqueoSheetVisible] = useState(false);
+  const [motivoData,          setMotivoData]          = useState(null); // { mode: 'rechazar'|'cancelar', reserva }
+  const [motivoVisible,       setMotivoVisible]        = useState(false);
+  const [bloquearPrefill,     setBloquearPrefill]     = useState('');
+  const [bloquearVisible,     setBloquearVisible]     = useState(false);
+  const [configExisting,      setConfigExisting]      = useState(null);
+  const [configVisible,       setConfigVisible]       = useState(false);
+
+  const selectedCancha = canchas.find((c) => c.id === selectedCanchaId) ?? null;
+
+  const dates = useMemo(() => Array.from({ length: 14 }, (_, i) => addDays(todayIso(), i)), []);
+
+  // ── Fetchers ────────────────────────────────────────────────────────────
+  const fetchLiquidacionForIds = useCallback(async (ids) => {
+    if (!ids?.length) { setLiquidacion(0); setLoadingLiquidacion(false); return; }
+    setLoadingLiquidacion(true);
     try {
-      const { data: list, error: cErr } = await supabase
+      const { data, error } = await supabase
+        .from('cancha_reservas')
+        .select('deposito_pagado, saldo_pagado')
+        .in('cancha_id', ids)
+        .eq('liquidada', false)
+        .in('estado_pago', ['abono_pagado', 'pagado']);
+      if (error) throw error;
+      const total = (data ?? []).reduce(
+        (acc, r) => acc + Number(r.deposito_pagado || 0) + Number(r.saldo_pagado || 0), 0);
+      setLiquidacion(total);
+    } catch (_e) {
+      // sección informativa: fallo silencioso, no bloquea el resto del panel
+    } finally {
+      setLoadingLiquidacion(false);
+    }
+  }, []);
+
+  const fetchCanchas = useCallback(async () => {
+    if (!user?.id) { setLoadingCanchas(false); return; }
+    setLoadingCanchas(true);
+    try {
+      const { data, error } = await supabase
         .from('canchas')
         .select('*')
         .eq('owner_id', user.id)
         .order('created_at', { ascending: true });
-      if (cErr) throw cErr;
-      setCanchas(list ?? []);
-
-      if (list?.length) {
-        const ids = list.map((c) => c.id);
-        const [slotsRes, tarifasRes] = await Promise.all([
-          supabase
-            .from('cancha_slots')
-            .select(`
-              id, cancha_id, fecha, hora_inicio, hora_fin, precio_hora, tarifa_id,
-              visibility, reserved_for_gestor_id, status, notas,
-              cliente_externo_nombre, cliente_externo_telefono,
-              tarifa:tarifa_id ( id, deporte, formato_jpe, descripcion, precio_hora ),
-              reserved_for_gestor:reserved_for_gestor_id ( id, nombre ),
-              cancha_slot_reservas ( id, status, gestor:gestor_id ( id, nombre, telefono ) )
-            `)
-            .in('cancha_id', ids)
-            .gte('fecha', todayIso())
-            .order('fecha', { ascending: true })
-            .order('hora_inicio', { ascending: true }),
-          supabase
-            .from('cancha_tarifas')
-            .select('id, cancha_id, deporte, formato_jpe, descripcion, precio_hora')
-            .in('cancha_id', ids)
-            .eq('activo', true)
-            .order('precio_hora', { ascending: true }),
-        ]);
-
-        const sm = {};
-        const tm = {};
-        ids.forEach((id) => { sm[id] = []; tm[id] = []; });
-        (slotsRes.data ?? []).forEach((s) => { sm[s.cancha_id]?.push(s); });
-        (tarifasRes.data ?? []).forEach((t) => { tm[t.cancha_id]?.push(t); });
-        setSlotsMap(sm);
-        setTarifasMap(tm);
-
-        // Cargar solicitudes pendientes del nuevo flujo (cancha_reservas)
-        if (ids.length) {
-          const { data: resData } = await supabase
-            .from('cancha_reservas')
-            .select(`
-              id, cancha_id, tarifa_id, fecha, hora_inicio, hora_fin,
-              status, monto_total, deposito_pagado, created_at,
-              tarifa:tarifa_id ( deporte, formato_jpe ),
-              gestor:gestor_id ( id, nombre, telefono )
-            `)
-            .in('cancha_id', ids)
-            .eq('status', 'pending')
-            .order('fecha', { ascending: true })
-            .order('hora_inicio', { ascending: true });
-          setReservas(resData ?? []);
-        } else {
-          setReservas([]);
-        }
-      }
+      if (error) throw error;
+      const list = data ?? [];
+      setCanchas(list);
+      setSelectedCanchaId((prev) => (prev && list.some((c) => c.id === prev)) ? prev : (list[0]?.id ?? null));
+      fetchLiquidacionForIds(list.map((c) => c.id));
     } catch (e) {
-      Alert.alert('Error', e.message ?? 'No se pudo cargar');
+      Alert.alert('Error', e.message ?? 'No se pudieron cargar tus canchas');
     } finally {
-      setLoading(false);
+      setLoadingCanchas(false);
     }
-  }, [user?.id]);
+  }, [user?.id, fetchLiquidacionForIds]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  const fetchDia = useCallback(async () => {
+    if (!selectedCanchaId) {
+      setReservas([]); setBloqueos([]); setHorarioDia(null); setLoadingDia(false);
+      return;
+    }
+    setLoadingDia(true);
+    try {
+      const dow = dayOfWeek(selectedDate);
+      const [reservasRes, bloqueosRes, horarioRes] = await Promise.all([
+        supabase.rpc('get_reservas_del_dia', { p_fecha: selectedDate }),
+        supabase.rpc('get_bloqueos_del_dia', { p_fecha: selectedDate }),
+        supabase.from('cancha_horarios').select('*')
+          .eq('cancha_id', selectedCanchaId).eq('dia_semana', dow)
+          .eq('activo', true).is('tarifa_id', null).maybeSingle(),
+      ]);
+      if (reservasRes.error) throw reservasRes.error;
+      const fetchedAt = Date.now();
+      const withExpiry = (reservasRes.data ?? []).map((r) => ({
+        ...r,
+        _expiraAtMs: r.segundos_hasta_expiracion != null
+          ? fetchedAt + Number(r.segundos_hasta_expiracion) * 1000
+          : null,
+      }));
+      setReservas(withExpiry);
+      setBloqueos(bloqueosRes.error ? [] : (bloqueosRes.data ?? []));
+      setHorarioDia(horarioRes.data ?? null);
+    } catch (e) {
+      Alert.alert('Error', e.message ?? 'No se pudo cargar la agenda del día');
+    } finally {
+      setLoadingDia(false);
+    }
+  }, [selectedCanchaId, selectedDate]);
 
-  function openNewCancha() { setEditingCancha(null); setShowCanchaModal(true); }
-  function openEditCancha(c) { setEditingCancha(c); setShowCanchaModal(true); }
+  const fetchDots = useCallback(async () => {
+    if (!selectedCanchaId) { setDotDates(new Set()); return; }
+    try {
+      const { data, error } = await supabase
+        .from('cancha_reservas')
+        .select('fecha')
+        .eq('cancha_id', selectedCanchaId)
+        .in('fecha', dates)
+        .in('status', ['pending', 'approved', 'completed']);
+      if (error) throw error;
+      setDotDates(new Set((data ?? []).map((r) => r.fecha)));
+    } catch (_e) {
+      // decorativo, fallo silencioso
+    }
+  }, [selectedCanchaId, dates]);
 
-  if (loading) {
+  const refetchEverything = useCallback(async () => {
+    await fetchCanchas();
+    await fetchDia();
+    fetchDots();
+  }, [fetchCanchas, fetchDia, fetchDots]);
+
+  useEffect(() => { fetchCanchas(); }, [fetchCanchas]);
+  useEffect(() => { fetchDia(); }, [fetchDia]);
+  useEffect(() => { fetchDots(); }, [fetchDots]);
+  useFocusEffect(useCallback(() => { fetchDia(); }, [fetchDia]));
+
+  const { refreshing, onRefresh } = useAppRefresh(refetchEverything);
+
+  // ── Derivados del día seleccionado (scopeados a la cancha seleccionada) ──
+  const reservasCancha = useMemo(
+    () => reservas.filter((r) => r.cancha_id === selectedCanchaId && !['cancelled', 'rejected'].includes(r.status)),
+    [reservas, selectedCanchaId]);
+  const bloqueosCancha = useMemo(
+    () => bloqueos.filter((b) => b.cancha_id === selectedCanchaId),
+    [bloqueos, selectedCanchaId]);
+
+  // v4: TODA solicitud pending se aprueba/rechaza (el abono se paga después de aprobar)
+  const paraAprobar = useMemo(
+    () => reservasCancha.filter((r) => r.status === 'pending'),
+    [reservasCancha]);
+  // v4: aprobadas con la ventana de pago del abono abierta (countdown)
+  const holds = useMemo(
+    () => reservasCancha.filter((r) => r.status === 'approved' && r.estado_pago === 'pendiente'),
+    [reservasCancha]);
+
+  const statReservas   = reservasCancha.length;
+  const statPorAprobar = paraAprobar.length;
+  const statRecaudado  = reservasCancha.reduce(
+    (acc, r) => acc + Number(r.deposito_pagado || 0) + Number(r.saldo_pagado || 0), 0);
+
+  const agendaRows = useMemo(
+    () => buildAgendaRows({ horario: horarioDia, reservas: reservasCancha, bloqueos: bloqueosCancha, cancha: selectedCancha }),
+    [horarioDia, reservasCancha, bloqueosCancha, selectedCancha]);
+
+  // Countdown en vivo de los holds impagos (solo corre mientras hay alguno)
+  useEffect(() => {
+    if (holds.length === 0) return undefined;
+    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [holds.length]);
+
+  // ── Handlers de sheets ────────────────────────────────────────────────
+  function openReservaDetail(r) { setReservaSheetData(r); setReservaSheetVisible(true); }
+  function closeReservaDetail() { setReservaSheetVisible(false); }
+  function openBloqueoDetail(b) { setBloqueoSheetData(b); setBloqueoSheetVisible(true); }
+  function closeBloqueoDetail() { setBloqueoSheetVisible(false); }
+  function openMotivo(mode, reserva) {
+    setReservaSheetVisible(false);
+    setMotivoData({ mode, reserva });
+    setMotivoVisible(true);
+  }
+  function closeMotivo() { setMotivoVisible(false); }
+  function openLibre(hora) { setBloquearPrefill(hora); setBloquearVisible(true); }
+  function closeBloquear() { setBloquearVisible(false); }
+  function openConfig(cancha) { setConfigExisting(cancha ?? null); setConfigVisible(true); }
+  function closeConfig() { setConfigVisible(false); }
+
+  // ── Estados de carga / vacío ────────────────────────────────────────────
+  if (loadingCanchas) {
     return (
-      <SafeAreaView style={styles.container}>
-        <ActivityIndicator color={COLORS.red} size="large" style={{ marginTop: 80 }} />
+      <SafeAreaView style={styles.safe}>
+        <ActivityIndicator color={COLORS.neon} size="large" style={{ marginTop: 80 }} />
+      </SafeAreaView>
+    );
+  }
+
+  if (canchas.length === 0) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <ResponsiveContainer>
+          <ScrollView contentContainerStyle={{ padding: SPACING.md }}>
+            <ScreenHeader title="Mi Cancha" />
+            <EmptyCanchaCard onCreate={() => openConfig(null)} />
+          </ScrollView>
+        </ResponsiveContainer>
+        <ConfigSheet
+          visible={configVisible} onClose={closeConfig}
+          onSaved={async () => { await fetchCanchas(); fetchDia(); fetchDots(); }}
+          userId={user?.id} existing={configExisting}
+        />
       </SafeAreaView>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={{ padding: SPACING.md, paddingBottom: SPACING.xxl }}>
-        <View style={styles.headerRow}>
-          <Text style={[styles.title, { flex: 1 }]}>Mis Canchas</Text>
-          <TouchableOpacity style={styles.primaryBtn} onPress={openNewCancha}>
-            <Text style={styles.primaryBtnText}>+ Nueva cancha</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Solicitudes de reserva pendientes */}
-        {reservas.length > 0 && (
-          <View style={{ marginBottom: SPACING.md }}>
-            <Text style={[styles.section, { color: COLORS.gold }]}>
-              Solicitudes pendientes ({reservas.length})
-            </Text>
-            {reservas.map((r) => (
-              <ReservaRequestCard key={r.id} reserva={r} canchasMap={Object.fromEntries(canchas.map(c => [c.id, c]))} onResolved={fetchAll} />
-            ))}
-          </View>
-        )}
-
-        {canchas.length === 0 && (
-          <View style={styles.emptyWrap}>
-            <Text style={styles.emptyText}>No tenés canchas registradas aún.</Text>
-          </View>
-        )}
-
-        {canchas.map((cancha) => {
-          const slots   = slotsMap[cancha.id] ?? [];
-          const tarifas = tarifasMap[cancha.id] ?? [];
-          return (
-            <View key={cancha.id} style={styles.canchaSection}>
-              <View style={styles.canchaHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.canchaTitle}>{cancha.nombre}</Text>
-                  {!!cancha.direccion && <Text style={styles.subText}>{cancha.direccion}</Text>}
-                  {tarifas.length > 0 && (
-                    <Text style={styles.subText}>
-                      {tarifas.map((t) => `${t.formato_jpe}vs${t.formato_jpe} $${Number(t.precio_hora).toFixed(0)}/h`).join(' · ')}
-                    </Text>
-                  )}
-                </View>
-                <TouchableOpacity onPress={() => openEditCancha(cancha)} style={{ paddingLeft: 8 }}>
-                  <Text style={styles.linkText}>Editar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={{ paddingLeft: 12 }}
-                  onPress={() => Alert.alert(
-                    'Eliminar cancha',
-                    `¿Eliminás "${cancha.nombre}"? Se borrarán todos sus slots, tarifas y horarios.`,
-                    [
-                      { text: 'Cancelar', style: 'cancel' },
-                      { text: 'Eliminar', style: 'destructive', onPress: async () => {
-                        const { error } = await supabase.from('canchas').delete().eq('id', cancha.id);
-                        if (error) Alert.alert('Error', error.message);
-                        else fetchAll();
-                      }},
-                    ]
-                  )}
-                >
-                  <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.red, fontSize: 18 }}>🗑</Text>
-                </TouchableOpacity>
-              </View>
-
+    <SafeAreaView style={styles.safe}>
+      <ResponsiveContainer>
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: SPACING.xxl }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.neon} />}
+        >
+          <ScreenHeader
+            title={selectedCancha?.nombre ?? 'Mi Cancha'}
+            subtitle={selectedCancha?.direccion || undefined}
+            right={
               <TouchableOpacity
-                style={[styles.primaryBtn, { alignSelf: 'flex-start', marginBottom: SPACING.sm }]}
-                onPress={() => setNewSlotForCanchaId(cancha.id)}
+                onPress={refetchEverything}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityLabel="Actualizar"
               >
-                <Text style={styles.primaryBtnText}>+ Nuevo slot</Text>
+                <Text style={styles.refreshIcon}>⟳</Text>
               </TouchableOpacity>
+            }
+          />
 
-              {slots.length === 0 ? (
-                <Text style={[styles.subText, { marginBottom: SPACING.sm }]}>Sin slots publicados.</Text>
-              ) : (
-                slots.map((s) => (
-                  <SlotCard key={s.id} slot={s} onChange={fetchAll} canchaName={cancha.nombre} />
-                ))
-              )}
+          {canchas.length > 1 && (
+            <ScrollView
+              horizontal showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.canchaChipsRow}
+            >
+              {canchas.map((c) => (
+                <Chip key={c.id} label={c.nombre} active={c.id === selectedCanchaId}
+                  color={COLORS.gold} onPress={() => setSelectedCanchaId(c.id)} />
+              ))}
+            </ScrollView>
+          )}
+
+          {/* ── Stats del día ── */}
+          <View style={styles.statsRow}>
+            <StatTile label="Reservas" value={String(statReservas)} />
+            <StatTile label="Por aprobar" value={String(statPorAprobar)} color={statPorAprobar > 0 ? COLORS.gold : undefined} />
+            <StatTile label="Recaudado" value={`$${statRecaudado.toFixed(2)}`} color={COLORS.neon} />
+          </View>
+
+          {/* ── Solicitudes por aprobar ── */}
+          {(paraAprobar.length + holds.length) > 0 && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>SOLICITUDES POR APROBAR</Text>
+              {paraAprobar.map((r) => (
+                <SolicitudCard
+                  key={r.reserva_id} reserva={r} fecha={selectedDate}
+                  onAprobado={refetchEverything}
+                  onRechazar={(reserva) => openMotivo('rechazar', reserva)}
+                />
+              ))}
+              {holds.map((r) => (
+                <HoldCard key={r.reserva_id} reserva={r} fecha={selectedDate} nowMs={nowMs} />
+              ))}
             </View>
-          );
-        })}
-      </ScrollView>
+          )}
 
-      <CanchaFormModal
-        visible={showCanchaModal}
-        onClose={() => setShowCanchaModal(false)}
-        onSaved={fetchAll}
-        userId={user.id}
-        existing={editingCancha}
+          {/* ── Agenda ── */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>AGENDA</Text>
+            <DateStrip dates={dates} selectedDate={selectedDate} onSelect={setSelectedDate} dotDates={dotDates} />
+
+            {loadingDia ? (
+              <ActivityIndicator color={COLORS.neon} style={{ marginTop: SPACING.lg }} />
+            ) : (
+              <AgendaTimeline
+                rows={agendaRows}
+                onOpenReserva={openReservaDetail}
+                onOpenBloqueo={openBloqueoDetail}
+                onOpenLibre={openLibre}
+              />
+            )}
+          </View>
+
+          {/* ── Configuración ── */}
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>CONFIGURACIÓN</Text>
+            <Card onPress={() => openConfig(selectedCancha)} style={styles.configRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.configRowTitle}>{selectedCancha?.nombre ?? 'Tu cancha'}</Text>
+                <Text style={styles.configRowSub}>Tarifas, horarios, abono y hora y media</Text>
+              </View>
+              <Text style={styles.configRowArrow}>⚙</Text>
+            </Card>
+            <TouchableOpacity onPress={() => openConfig(null)} style={{ alignSelf: 'flex-start', marginTop: SPACING.sm }}>
+              <Text style={styles.addLink}>+ Nueva cancha</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* ── Liquidación (solo lectura) ── */}
+          <LiquidacionCard total={liquidacion} loading={loadingLiquidacion} />
+        </ScrollView>
+      </ResponsiveContainer>
+
+      {/* ── Sheets ── */}
+      <ReservaDetailSheet
+        visible={reservaSheetVisible} reserva={reservaSheetData}
+        fecha={selectedDate} cancha={selectedCancha}
+        onClose={closeReservaDetail}
+        onChanged={refetchEverything}
+        onRechazar={(r) => openMotivo('rechazar', r)}
+        onCancelar={(r) => openMotivo('cancelar', r)}
       />
-
-      {newSlotForCanchaId && (
-        <NewSlotModal
-          visible={!!newSlotForCanchaId}
-          onClose={() => setNewSlotForCanchaId(null)}
-          onSaved={fetchAll}
-          canchaId={newSlotForCanchaId}
-          tarifas={tarifasMap[newSlotForCanchaId] ?? []}
-        />
-      )}
+      <BloqueoDetailSheet
+        visible={bloqueoSheetVisible} bloqueo={bloqueoSheetData}
+        fecha={selectedDate}
+        onClose={closeBloqueoDetail}
+        onChanged={refetchEverything}
+      />
+      <MotivoSheet
+        visible={motivoVisible} data={motivoData}
+        onClose={closeMotivo}
+        onDone={refetchEverything}
+      />
+      <BloquearHorarioSheet
+        visible={bloquearVisible} prefillHora={bloquearPrefill}
+        horario={horarioDia} cancha={selectedCancha}
+        canchaId={selectedCanchaId} fecha={selectedDate}
+        onClose={closeBloquear}
+        onDone={refetchEverything}
+      />
+      <ConfigSheet
+        visible={configVisible} onClose={closeConfig}
+        onSaved={async () => { await fetchCanchas(); fetchDia(); fetchDots(); }}
+        userId={user?.id} existing={configExisting}
+      />
     </SafeAreaView>
   );
 }
 
-// ── helpers WhatsApp ───────────────────────────────────────────────────────
-function openWhatsApp(telefono, mensaje) {
-  const num = telefono.replace(/\D/g, '');
-  const url = `https://wa.me/${num.startsWith('507') ? '' : '507'}${num}?text=${encodeURIComponent(mensaje)}`;
-  Linking.openURL(url).catch(() => Alert.alert('Error', 'No se pudo abrir WhatsApp'));
+// ═══════════════════════════════════════════════════════════════════════════
+// Stat tile
+// ═══════════════════════════════════════════════════════════════════════════
+function StatTile({ label, value, color }) {
+  return (
+    <Card variant="glass" style={styles.statTile}>
+      <Text style={[styles.statValue, color && { color }]}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </Card>
+  );
 }
 
-// ── Slot card ──────────────────────────────────────────────────────────────
-function SlotCard({ slot, onChange, canchaName }) {
-  const reserva = slot.cancha_slot_reservas?.find((r) => r.status === 'reserved' || r.status === 'converted');
-  const isReservedForGestor = slot.visibility === 'reserved_for_gestor';
-  const isBlockedExternal   = slot.visibility === 'blocked_external';
-  const reservedFor  = slot.reserved_for_gestor?.nombre;
-  const claimedBy    = reserva?.gestor?.nombre;
-  const claimedByTel = reserva?.gestor?.telefono;
+// ═══════════════════════════════════════════════════════════════════════════
+// Solicitud por aprobar
+// ═══════════════════════════════════════════════════════════════════════════
+function SolicitudCard({ reserva, fecha, onAprobado, onRechazar }) {
+  const [loading, setLoading] = useState(false);
+  const sinAbono = reserva.estado_pago === 'no_requerido' || !(reserva.deposito_requerido > 0);
+  const abonoYaPagado = Number(reserva.deposito_pagado || 0) > 0;
+  const montoLine = sinAbono
+    ? `$${Number(reserva.monto_total || 0).toFixed(2)} · sin abono`
+    : abonoYaPagado
+      ? `$${Number(reserva.monto_total || 0).toFixed(2)} · abono pagado $${Number(reserva.deposito_pagado || 0).toFixed(2)}`
+      : `$${Number(reserva.monto_total || 0).toFixed(2)} · al aprobar se le pide el abono de $${Number(reserva.deposito_requerido || 0).toFixed(2)}`;
 
-  const STATUS_COLORS = {
-    available: COLORS.green,
-    claimed:   COLORS.gold,
-    expired:   COLORS.gray,
-    cancelled: COLORS.gray,
-  };
-
-  async function handleCancel() {
-    Alert.alert(
-      'Cancelar slot',
-      '¿Eliminar este horario? Si un gestor lo reclamó, se le notificará.',
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Sí',
-          style: 'destructive',
-          onPress: async () => {
-            const { error } = await supabase
-              .from('cancha_slots')
-              .update({ status: 'cancelled' })
-              .eq('id', slot.id);
-            if (error) Alert.alert('Error', error.message);
-            else onChange();
-          },
-        },
-      ],
-    );
-  }
-
-  function handleWaGestor() {
-    if (!claimedByTel) { Alert.alert('Sin teléfono', 'El gestor no tiene teléfono registrado.'); return; }
-    const msg = `Hola, te escribo por el slot del ${fmtDate(slot.fecha)} ${fmtTime(slot.hora_inicio)}-${fmtTime(slot.hora_fin)} en ${canchaName ?? 'la cancha'}.`;
-    openWhatsApp(claimedByTel, msg);
-  }
-
-  function handleWaExterno() {
-    if (!slot.cliente_externo_telefono) { Alert.alert('Sin teléfono', 'No hay teléfono del cliente externo.'); return; }
-    const msg = `Hola ${slot.cliente_externo_nombre ?? 'cliente'}, confirmo tu reserva del ${fmtDate(slot.fecha)} ${fmtTime(slot.hora_inicio)}-${fmtTime(slot.hora_fin)}.`;
-    openWhatsApp(slot.cliente_externo_telefono, msg);
+  async function handleAprobar() {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('aprobar_cancha_reserva', { p_reserva_id: reserva.reserva_id });
+      if (error) throw new Error(error.message);
+      if (data?.ok === false) { Alert.alert('No se pudo aprobar', humanizeRpcError(data.error)); return; }
+      if (data?.abono_pendiente) {
+        Alert.alert('Solicitud aprobada', `Le avisamos a ${reserva.gestor_nombre ?? 'el gestor'} para que pague el abono de $${Number(data.abono_pendiente).toFixed(2)}. El horario queda asegurado cuando pague.`);
+      }
+      onAprobado();
+    } catch (e) {
+      Alert.alert('Error', e.message ?? 'No se pudo aprobar');
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
-    <View style={[styles.card, isBlockedExternal && styles.cardExternal]}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.cardDate}>{fmtDate(slot.fecha)}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          {isBlockedExternal && (
-            <View style={[styles.badge, { backgroundColor: COLORS.orange ?? '#E67E22' }]}>
-              <Text style={styles.badgeText}>EXTERNO</Text>
-            </View>
-          )}
-          <View style={[styles.badge, { backgroundColor: STATUS_COLORS[slot.status] }]}>
-            <Text style={styles.badgeText}>{slot.status.toUpperCase()}</Text>
-          </View>
+    <Card style={styles.solicitudCard}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.solicitudNombre}>{reserva.gestor_nombre ?? 'Gestor'}</Text>
+          {!!reserva.gestor_telefono && <Text style={styles.solicitudSub}>{reserva.gestor_telefono}</Text>}
         </View>
+        <View style={styles.solicitudBadge}><Text style={styles.solicitudBadgeText}>POR APROBAR</Text></View>
       </View>
-      <Text style={styles.cardTime}>{fmtTime(slot.hora_inicio)} – {fmtTime(slot.hora_fin)}</Text>
-      {slot.tarifa ? (
-        <Text style={styles.tarifaText}>
-          {slot.tarifa.deporte} {slot.tarifa.formato_jpe}vs{slot.tarifa.formato_jpe}
-          {slot.tarifa.descripcion ? ` · ${slot.tarifa.descripcion}` : ''}
-          {' · '}${Number(slot.tarifa.precio_hora).toFixed(2)}/h
-        </Text>
-      ) : slot.precio_hora != null ? (
-        <Text style={styles.subText}>${Number(slot.precio_hora).toFixed(2)} / hora</Text>
-      ) : null}
-
-      {isReservedForGestor && (
-        <Text style={styles.lockText}>Bloqueado para: {reservedFor ?? '—'}</Text>
+      <Text style={styles.solicitudFecha}>{fmtFechaCorta(fecha)} · {fmtHora(reserva.hora_inicio)}–{fmtHora(reserva.hora_fin)}</Text>
+      <Text style={styles.solicitudMonto}>{montoLine}</Text>
+      {reserva.es_combinada && !!reserva.canchas_base_nombres?.length && (
+        <Text style={styles.solicitudCombo}>Combo: {reserva.canchas_base_nombres.join(' + ')}</Text>
       )}
-      {isBlockedExternal && (
-        <View>
-          <Text style={styles.externalText}>
-            Cliente externo: {slot.cliente_externo_nombre ?? '—'}
-          </Text>
-          {!!slot.cliente_externo_telefono && (
-            <Text style={styles.subText}>{slot.cliente_externo_telefono}</Text>
-          )}
-        </View>
-      )}
-      {claimedBy && (
-        <Text style={styles.claimText}>Reclamado por: {claimedBy}</Text>
-      )}
-      {!!slot.notas && <Text style={styles.subText}>{slot.notas}</Text>}
-
-      <View style={styles.cardActions}>
-        {claimedBy && claimedByTel && (
-          <TouchableOpacity style={styles.waBtn} onPress={handleWaGestor}>
-            <Text style={styles.waBtnText}>WhatsApp gestor</Text>
-          </TouchableOpacity>
-        )}
-        {isBlockedExternal && slot.cliente_externo_telefono && (
-          <TouchableOpacity style={styles.waBtn} onPress={handleWaExterno}>
-            <Text style={styles.waBtnText}>WhatsApp cliente</Text>
-          </TouchableOpacity>
-        )}
-        {slot.status === 'available' && (
-          <TouchableOpacity style={styles.dangerBtn} onPress={handleCancel}>
-            <Text style={styles.dangerBtnText}>Cancelar slot</Text>
-          </TouchableOpacity>
-        )}
+      <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
+        <PressableScale style={[styles.btnPrimary, { flex: 1 }]} onPress={handleAprobar} disabled={loading}>
+          {loading ? <ActivityIndicator color={COLORS.bg} /> : <Text style={styles.btnPrimaryText}>APROBAR</Text>}
+        </PressableScale>
+        <PressableScale style={[styles.btnDangerOutline, { flex: 1 }]} onPress={() => onRechazar(reserva)} disabled={loading}>
+          <Text style={styles.btnDangerOutlineText}>RECHAZAR</Text>
+        </PressableScale>
       </View>
+    </Card>
+  );
+}
+
+function HoldCard({ reserva, fecha, nowMs }) {
+  const remaining = reserva._expiraAtMs != null ? Math.max(0, Math.round((reserva._expiraAtMs - nowMs) / 1000)) : null;
+  const label = remaining != null
+    ? (remaining > 0 ? `Expira en ${Math.floor(remaining / 60)}:${pad2(remaining % 60)}` : 'Por expirar')
+    : 'Esperando abono';
+  return (
+    <Card style={[styles.solicitudCard, styles.holdCard]}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={styles.holdNombre}>{reserva.gestor_nombre ?? 'Gestor'}</Text>
+        <Text style={styles.holdBadge}>ESPERANDO ABONO</Text>
+      </View>
+      <Text style={styles.solicitudFecha}>{fmtFechaCorta(fecha)} · {fmtHora(reserva.hora_inicio)}–{fmtHora(reserva.hora_fin)}</Text>
+      <Text style={styles.holdSub}>{label}</Text>
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Agenda: strip de 14 días + timeline vertical
+// ═══════════════════════════════════════════════════════════════════════════
+function DateStrip({ dates, selectedDate, onSelect, dotDates }) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateStripRow}>
+      {dates.map((d) => {
+        const active = d === selectedDate;
+        const { dia, mes, dow } = fmtDateChip(d);
+        const hasDot = dotDates.has(d);
+        return (
+          <PressableScale key={d} onPress={() => onSelect(d)} style={[styles.dateChip, active && styles.dateChipActive]}>
+            <Text style={[styles.dateChipDow, active && styles.dateChipTextActive]}>{dow}</Text>
+            <Text style={[styles.dateChipDia, active && styles.dateChipTextActive]}>{dia}</Text>
+            <Text style={[styles.dateChipMes, active && styles.dateChipTextActive]}>{mes}</Text>
+            <View style={[styles.dateDot, { opacity: hasDot ? 1 : 0 }, active && { backgroundColor: COLORS.bg }]} />
+          </PressableScale>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+function AgendaTimeline({ rows, onOpenReserva, onOpenBloqueo, onOpenLibre }) {
+  if (rows.length === 0) {
+    return <Text style={styles.emptyTimelineText}>La cancha no opera este día.</Text>;
+  }
+  return (
+    <View style={{ gap: 6, marginTop: SPACING.sm }}>
+      {rows.map((row) => {
+        if (row.type === 'reserva') return <ReservaBlock key={row.key} row={row} onPress={() => onOpenReserva(row.data)} />;
+        if (row.type === 'bloqueo') return <BloqueoBlock key={row.key} row={row} onPress={() => onOpenBloqueo(row.data)} />;
+        return <FreeRow key={row.key} row={row} onPress={() => onOpenLibre(row.time)} />;
+      })}
     </View>
   );
 }
 
-// ── Modal: Registrar / editar cancha ───────────────────────────────────────
-const DEPORTES    = ['Fútbol', 'Fútbol Sala', 'Pádel', 'Volleyball', 'Basketball'];
-const FORMATOS    = [5, 6, 7, 8, 9, 11];
-const DIAS_LABEL  = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-const DURACIONES  = [30, 60, 90, 120];
-
-function emptyTarifa() {
-  return { _key: Date.now(), deporte: 'Fútbol', formato_jpe: 7, precio_hora: '', descripcion: '', bloqueaActivo: false, bloqueos: [] };
+function ReservaBlock({ row, onPress }) {
+  const r = row.data;
+  const visual = reservaVisual(r);
+  const height = Math.max(MIN_BLOCK_HEIGHT, row.durationMin * HEIGHT_PER_MIN);
+  return (
+    <PressableScale
+      onPress={onPress}
+      style={[
+        styles.block, { height, backgroundColor: withAlpha(visual.bg, '1F'), borderColor: visual.bg },
+        visual.dashed && styles.blockDashed,
+      ]}
+    >
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={[styles.blockTime, { color: visual.bg }]}>{fmtHora(r.hora_inicio)}–{fmtHora(r.hora_fin)}</Text>
+        <Text style={[styles.blockBadge, { color: visual.bg }]} numberOfLines={1}>{visual.label}</Text>
+      </View>
+      <Text style={styles.blockTitle} numberOfLines={1}>{r.gestor_nombre ?? 'Gestor'} · {r.codigo_reserva}</Text>
+      {r.es_combinada && !!r.canchas_base_nombres?.length && (
+        <Text style={styles.blockSub} numberOfLines={1}>Combo: {r.canchas_base_nombres.join(' + ')}</Text>
+      )}
+    </PressableScale>
+  );
 }
 
-function CanchaFormModal({ visible, onClose, onSaved, userId, existing }) {
-  const [nombre,            setNombre]            = useState('');
-  const [direccion,         setDireccion]         = useState('');
-  const [requiereDeposito,  setRequiereDeposito]  = useState(false);
-  const [porcentajeDeposito,setPorcentajeDeposito]= useState('50');
-  const [abonoTipo,         setAbonoTipo]         = useState('porcentaje'); // ninguno|fijo|porcentaje|total
-  const [abonoMontoFijo,    setAbonoMontoFijo]    = useState('');
-  const [duracionMax,       setDuracionMax]       = useState(120);
-  const [telefono,    setTelefono]    = useState('');
-  const [tarifas,     setTarifas]     = useState([emptyTarifa()]);
-  // Horarios de operación
-  const [diasActivos,   setDiasActivos]   = useState([1,2,3,4,5,6]); // Lun–Sáb por default
-  const [apertura,      setApertura]      = useState('08:00');
-  const [cierre,        setCierre]        = useState('22:00');
-  const [duracionSlot,  setDuracionSlot]  = useState(60);
-  const [horarioLibre,  setHorarioLibre]  = useState(false); // usuario elige rango libre
-  const [saving,        setSaving]        = useState(false);
+function BloqueoBlock({ row, onPress }) {
+  const b = row.data;
+  const height = Math.max(MIN_BLOCK_HEIGHT, row.durationMin * HEIGHT_PER_MIN);
+  return (
+    <PressableScale
+      onPress={onPress}
+      style={[styles.block, { height, backgroundColor: withAlpha(COLORS.red2, '1F'), borderColor: COLORS.red2 }]}
+    >
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <Text style={[styles.blockTime, { color: COLORS.red2 }]}>{fmtHora(b.hora_inicio)}–{fmtHora(b.hora_fin)}</Text>
+        <Text style={[styles.blockBadge, { color: COLORS.red2 }]}>{(b.fuente_canal ?? 'interno').toUpperCase()}</Text>
+      </View>
+      <Text style={styles.blockTitle} numberOfLines={1}>BLOQUEADO · {b.cliente_nombre ?? 'Sin nombre'}</Text>
+    </PressableScale>
+  );
+}
+
+function FreeRow({ row, onPress }) {
+  const height = Math.max(MIN_BLOCK_HEIGHT, row.durationMin * HEIGHT_PER_MIN);
+  return (
+    <PressableScale onPress={onPress} style={[styles.freeRow, { height }]}>
+      <Text style={styles.freeRowText}>+  {fmtHora(row.time)} libre — tocá para bloquear</Text>
+    </PressableScale>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Detalle de reserva (BottomSheetModal)
+// ═══════════════════════════════════════════════════════════════════════════
+function DetailRow({ label, value, highlight }) {
+  return (
+    <View style={styles.detailRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={[styles.detailValue, highlight && { color: COLORS.gold }]}>{value}</Text>
+    </View>
+  );
+}
+
+function ReservaDetailSheet({ visible, reserva, fecha, cancha, onClose, onChanged, onRechazar, onCancelar }) {
+  const [loading, setLoading] = useState(false);
+  const [notasCobro, setNotasCobro] = useState('');
+
+  useEffect(() => { if (visible) setNotasCobro(''); }, [visible, reserva?.reserva_id]);
+
+  const r = reserva ?? {};
+  const visual = reservaVisual(r);
+  const saldoPendiente = Math.max(0, Number(r.monto_total || 0) - Number(r.deposito_pagado || 0) - Number(r.saldo_pagado || 0));
+  const puedeAprobar       = r.status === 'pending';
+  const puedeMarcarCobrado = ['pending', 'approved'].includes(r.status) && ['pendiente', 'abono_pagado', 'no_requerido'].includes(r.estado_pago);
+  const puedeCancelar      = ['pending', 'approved'].includes(r.status);
+
+  async function handleAprobar() {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('aprobar_cancha_reserva', { p_reserva_id: r.reserva_id });
+      if (error) throw new Error(error.message);
+      if (data?.ok === false) { Alert.alert('No se pudo aprobar', humanizeRpcError(data.error)); return; }
+      onChanged(); onClose();
+    } catch (e) {
+      Alert.alert('Error', e.message ?? 'No se pudo aprobar');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleMarcarCobrado() {
+    setLoading(true);
+    try {
+      const { error } = await supabase.rpc('marcar_reserva_pagada_admin', {
+        p_reserva_id: r.reserva_id, p_notas: notasCobro.trim() || null,
+      });
+      if (error) throw new Error(error.message);
+      Alert.alert('Listo', 'Se registró el cobro en sitio.');
+      onChanged(); onClose();
+    } catch (e) {
+      Alert.alert('Error', e.message ?? 'No se pudo registrar el cobro');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleWhatsApp() {
+    if (!r.gestor_telefono) { Alert.alert('Sin teléfono', 'El gestor no tiene teléfono registrado.'); return; }
+    const msg = `Hola ${r.gestor_nombre ?? ''}, te escribimos de ${cancha?.nombre ?? 'la cancha'} sobre tu reserva ${r.codigo_reserva ?? ''} del ${fmtFechaCorta(fecha)} ${fmtHora(r.hora_inicio)}–${fmtHora(r.hora_fin)}.`;
+    openWhatsApp(r.gestor_telefono, msg);
+  }
+
+  return (
+    <BottomSheetModal
+      visible={visible} onClose={onClose}
+      title={r.codigo_reserva ?? 'Reserva'}
+      subtitle={`${fmtFechaCorta(fecha)} · ${fmtHora(r.hora_inicio)}–${fmtHora(r.hora_fin)}`}
+    >
+      <View style={[styles.detailBadge, { backgroundColor: withAlpha(visual.bg, '22'), borderColor: visual.bg }]}>
+        <Text style={[styles.detailBadgeText, { color: visual.bg }]}>{visual.label}</Text>
+      </View>
+
+      <DetailRow label="Gestor" value={r.gestor_nombre ?? '—'} />
+      {!!r.gestor_telefono && <DetailRow label="Teléfono" value={r.gestor_telefono} />}
+      {!!r.gestor_email && <DetailRow label="Correo" value={r.gestor_email} />}
+      <DetailRow label="Canal" value={(r.canal ?? 'app').toUpperCase()} />
+      {r.es_combinada && !!r.canchas_base_nombres?.length && (
+        <DetailRow label="Combo" value={r.canchas_base_nombres.join(' + ')} />
+      )}
+      <DetailRow label="Total" value={`$${Number(r.monto_total || 0).toFixed(2)}`} />
+      <DetailRow label="Abono pagado" value={`$${Number(r.deposito_pagado || 0).toFixed(2)}`} />
+      <DetailRow label="Saldo pagado" value={`$${Number(r.saldo_pagado || 0).toFixed(2)}`} />
+      {saldoPendiente > 0 && <DetailRow label="Saldo pendiente" value={`$${saldoPendiente.toFixed(2)}`} highlight />}
+      {!!r.motivo_rechazo && <DetailRow label="Motivo rechazo" value={r.motivo_rechazo} />}
+      {!!r.notas && <DetailRow label="Notas" value={r.notas} />}
+
+      <View style={{ gap: SPACING.sm, marginTop: SPACING.md }}>
+        {puedeAprobar && (
+          <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+            <PressableScale style={[styles.btnPrimary, { flex: 1 }]} onPress={handleAprobar} disabled={loading}>
+              {loading ? <ActivityIndicator color={COLORS.bg} /> : <Text style={styles.btnPrimaryText}>APROBAR</Text>}
+            </PressableScale>
+            <PressableScale style={[styles.btnDangerOutline, { flex: 1 }]} onPress={() => onRechazar(r)} disabled={loading}>
+              <Text style={styles.btnDangerOutlineText}>RECHAZAR</Text>
+            </PressableScale>
+          </View>
+        )}
+        {puedeMarcarCobrado && (
+          <>
+            <Field label="Nota de cobro (opcional)" value={notasCobro} onChangeText={setNotasCobro}
+              placeholder="Ej: pagó en efectivo en recepción" />
+            <PressableScale style={styles.btnGold} onPress={handleMarcarCobrado} disabled={loading}>
+              {loading ? <ActivityIndicator color={COLORS.bg} /> : <Text style={styles.btnGoldText}>MARCAR COBRADO EN SITIO</Text>}
+            </PressableScale>
+          </>
+        )}
+        {!!r.gestor_telefono && (
+          <PressableScale style={styles.btnWhatsapp} onPress={handleWhatsApp}>
+            <Text style={styles.btnWhatsappText}>WHATSAPP AL GESTOR</Text>
+          </PressableScale>
+        )}
+        {puedeCancelar && (
+          <PressableScale style={styles.btnDangerOutline} onPress={() => onCancelar(r)}>
+            <Text style={styles.btnDangerOutlineText}>CANCELAR RESERVA</Text>
+          </PressableScale>
+        )}
+      </View>
+    </BottomSheetModal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Detalle de bloqueo externo
+// ═══════════════════════════════════════════════════════════════════════════
+function BloqueoDetailSheet({ visible, bloqueo, fecha, onClose, onChanged }) {
+  const [loading, setLoading] = useState(false);
+  const b = bloqueo ?? {};
+
+  async function handleQuitar() {
+    setLoading(true);
+    try {
+      const { error } = await supabase.rpc('eliminar_bloqueo_externo', { p_bloqueo_id: b.bloqueo_id });
+      if (error) throw new Error(error.message);
+      onChanged(); onClose();
+    } catch (e) {
+      Alert.alert('Error', e.message ?? 'No se pudo quitar el bloqueo');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <BottomSheetModal
+      visible={visible} onClose={onClose} title="Bloqueo"
+      subtitle={`${fmtFechaCorta(fecha)} · ${fmtHora(b.hora_inicio)}–${fmtHora(b.hora_fin)}`}
+    >
+      <DetailRow label="Cliente / actividad" value={b.cliente_nombre ?? '—'} />
+      <DetailRow label="Canal" value={(b.fuente_canal ?? 'interno').toUpperCase()} />
+      {Number(b.monto_acordado) > 0 && <DetailRow label="Monto acordado" value={`$${Number(b.monto_acordado).toFixed(2)}`} />}
+      {b.es_combinada && <DetailRow label="Combo" value="Sí" />}
+      {!!b.nota_interna && <DetailRow label="Nota" value={b.nota_interna} />}
+      <PressableScale style={[styles.btnDangerOutline, { marginTop: SPACING.md }]} onPress={handleQuitar} disabled={loading}>
+        {loading ? <ActivityIndicator color={COLORS.red2} /> : <Text style={styles.btnDangerOutlineText}>QUITAR BLOQUEO</Text>}
+      </PressableScale>
+    </BottomSheetModal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Motivo compartido: Rechazar solicitud / Cancelar reserva (admin)
+// ═══════════════════════════════════════════════════════════════════════════
+function MotivoSheet({ visible, data, onClose, onDone }) {
+  const [motivo, setMotivo]   = useState('');
+  const [loading, setLoading] = useState(false);
+  const mode    = data?.mode ?? 'rechazar';
+  const reserva = data?.reserva ?? {};
+  const isRechazar = mode === 'rechazar';
+
+  useEffect(() => { if (visible) setMotivo(''); }, [visible, data]);
+
+  async function handleConfirm() {
+    setLoading(true);
+    try {
+      const rpcName = isRechazar ? 'rechazar_cancha_reserva' : 'cancelar_cancha_reserva_admin';
+      const params = isRechazar
+        ? { p_reserva_id: reserva.reserva_id, p_motivo: motivo.trim() || null }
+        : { p_reserva_id: reserva.reserva_id, p_notas: motivo.trim() || null };
+      const { data: res, error } = await supabase.rpc(rpcName, params);
+      if (error) throw new Error(error.message);
+      if (res?.ok === false) { Alert.alert('No se pudo completar', humanizeRpcError(res.error)); return; }
+      const reembolso = Number(res?.reembolso || 0);
+      Alert.alert(
+        isRechazar ? 'Solicitud rechazada' : 'Reserva cancelada',
+        reembolso > 0
+          ? `Reembolsamos $${reembolso.toFixed(2)} a los créditos de ${reserva.gestor_nombre ?? 'el gestor'}.`
+          : 'No había pagos que reembolsar.'
+      );
+      onClose(); onDone();
+    } catch (e) {
+      Alert.alert('Error', e.message ?? 'No se pudo completar la acción');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <BottomSheetModal
+      visible={visible} onClose={onClose}
+      title={isRechazar ? 'Rechazar solicitud' : 'Cancelar reserva'}
+      subtitle={`${reserva.gestor_nombre ?? 'Gestor'} · ${fmtHora(reserva.hora_inicio)}–${fmtHora(reserva.hora_fin)}`}
+      footer={
+        <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+          <TouchableOpacity style={[styles.btnGhost, { flex: 1 }]} onPress={onClose} disabled={loading}>
+            <Text style={styles.btnGhostText}>Volver</Text>
+          </TouchableOpacity>
+          <PressableScale style={[styles.btnDanger, { flex: 1 }]} onPress={handleConfirm} disabled={loading}>
+            {loading
+              ? <ActivityIndicator color={COLORS.white} />
+              : <Text style={styles.btnDangerText}>{isRechazar ? 'Rechazar' : 'Cancelar reserva'}</Text>}
+          </PressableScale>
+        </View>
+      }
+    >
+      <Field
+        label={isRechazar ? 'Motivo (opcional, se lo mostramos al gestor)' : 'Nota interna (opcional)'}
+        value={motivo} onChangeText={setMotivo} multiline
+        style={{ height: 90, textAlignVertical: 'top' }}
+        placeholder={isRechazar ? 'Ej: la cancha está en mantenimiento ese horario' : 'Ej: lluvia, cancha inhabilitada'}
+      />
+    </BottomSheetModal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Bloquear horario (crear_bloqueo_externo)
+// ═══════════════════════════════════════════════════════════════════════════
+function BloquearHorarioSheet({ visible, prefillHora, horario, cancha, canchaId, fecha, onClose, onDone }) {
+  const [horaInicio, setHoraInicio] = useState('');
+  const [horaFin,    setHoraFin]    = useState('');
+  const [nombre,     setNombre]     = useState('Uso interno');
+  const [telefono,   setTelefono]   = useState('');
+  const [canal,      setCanal]      = useState('interno');
+  const [monto,      setMonto]      = useState('');
+  const [nota,       setNota]       = useState('');
+  const [saving,     setSaving]     = useState(false);
+
+  const points = useMemo(() => gridPoints(horario, cancha), [horario, cancha]);
+  const inicioOptions = points.slice(0, -1);
+  const finOptions = useMemo(
+    () => points.filter((p) => horaInicio && toMin(p) > toMin(horaInicio)),
+    [points, horaInicio]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const ini = prefillHora && inicioOptions.includes(prefillHora) ? prefillHora : (inicioOptions[0] ?? '');
+    setHoraInicio(ini);
+    setNombre('Uso interno'); setTelefono(''); setCanal('interno'); setMonto(''); setNota('');
+    // Solo al abrir el sheet (no en cada tecleo): las opciones dependen de `horario`/`cancha`, estables mientras está abierto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, prefillHora]);
+
+  useEffect(() => {
+    if (!visible) return;
+    if (!finOptions.includes(horaFin)) setHoraFin(finOptions[0] ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, horaInicio, finOptions.length]);
+
+  async function handleSave() {
+    if (!horaInicio || !horaFin) { Alert.alert('Faltan horas', 'Elegí hora de inicio y fin.'); return; }
+    setSaving(true);
+    try {
+      const { data, error } = await supabase.rpc('crear_bloqueo_externo', {
+        p_cancha_id:        canchaId,
+        p_fecha:            fecha,
+        p_hora_inicio:      horaInicio + ':00',
+        p_hora_fin:         horaFin + ':00',
+        p_cliente_nombre:   nombre.trim() || 'Uso interno',
+        p_cliente_telefono: telefono.trim() || null,
+        p_fuente_canal:     canal,
+        p_monto_acordado:   monto ? Number(monto) : 0,
+        p_nota_interna:     nota.trim() || null,
+      });
+      if (error) throw new Error(error.message);
+      const row = Array.isArray(data) ? data[0] : data;
+      onClose();
+      onDone();
+      if (row?.tiene_conflictos) {
+        Alert.alert(
+          'Bloqueo creado con conflictos',
+          'Igual quedó creado. Choca con:\n\n• ' + (row.conflictos_detalle ?? []).join('\n• ')
+        );
+      } else {
+        Alert.alert('Bloqueo creado', 'El horario quedó bloqueado.');
+      }
+    } catch (e) {
+      Alert.alert('Error', e.message ?? 'No se pudo crear el bloqueo');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <BottomSheetModal
+      visible={visible} onClose={onClose} title="Bloquear horario"
+      footer={
+        <PressableScale style={styles.btnPrimary} onPress={handleSave} disabled={saving}>
+          {saving ? <ActivityIndicator color={COLORS.bg} /> : <Text style={styles.btnPrimaryText}>BLOQUEAR HORARIO</Text>}
+        </PressableScale>
+      }
+    >
+      <Text style={styles.formLabel}>Desde</Text>
+      <View style={styles.chipWrapRow}>
+        {inicioOptions.map((p) => (
+          <Chip key={p} label={fmtHora(p)} active={horaInicio === p} color={COLORS.blue2} onPress={() => setHoraInicio(p)} />
+        ))}
+      </View>
+      <Text style={styles.formLabel}>Hasta</Text>
+      <View style={styles.chipWrapRow}>
+        {finOptions.map((p) => (
+          <Chip key={p} label={fmtHora(p)} active={horaFin === p} color={COLORS.blue2} onPress={() => setHoraFin(p)} />
+        ))}
+      </View>
+      <Field label="Cliente / actividad" value={nombre} onChangeText={setNombre} placeholder="Uso interno" />
+      <Field label="Teléfono (opcional)" value={telefono} onChangeText={setTelefono} keyboardType="phone-pad" placeholder="6000-0000" />
+      <Text style={styles.formLabel}>Canal</Text>
+      <View style={styles.chipWrapRow}>
+        {CANALES.map(([val, lbl]) => (
+          <Chip key={val} label={lbl} active={canal === val} color={COLORS.blue2} onPress={() => setCanal(val)} />
+        ))}
+      </View>
+      <Field label="Monto acordado ($, opcional)" value={monto} onChangeText={setMonto} keyboardType="decimal-pad" placeholder="0.00" />
+      <Field label="Nota (opcional)" value={nota} onChangeText={setNota} multiline
+        style={{ height: 70, textAlignVertical: 'top' }} placeholder="Detalles del acuerdo" />
+    </BottomSheetModal>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Liquidación (solo lectura)
+// ═══════════════════════════════════════════════════════════════════════════
+function LiquidacionCard({ total, loading }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>LIQUIDACIÓN</Text>
+      <Card variant="glass">
+        {loading ? (
+          <ActivityIndicator color={COLORS.gold} style={{ marginVertical: SPACING.sm }} />
+        ) : (
+          <Text style={styles.liquidacionAmount}>${total.toFixed(2)}</Text>
+        )}
+        <Text style={styles.liquidacionLabel}>Recaudado por la app (pendiente de transferirte)</Text>
+        <Text style={styles.liquidacionNote}>Birrea2Play te transfiere por Yappy.</Text>
+      </Card>
+    </View>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Estado vacío: sin canchas registradas
+// ═══════════════════════════════════════════════════════════════════════════
+function EmptyCanchaCard({ onCreate }) {
+  return (
+    <Card variant="glass" style={{ alignItems: 'center', padding: SPACING.xl, gap: SPACING.sm, marginTop: SPACING.lg }}>
+      <Text style={{ fontSize: 40 }}>🏟️</Text>
+      <Text style={styles.emptyTitle}>Todavía no tenés canchas registradas</Text>
+      <Text style={styles.emptySub}>Registrá tu cancha para empezar a recibir reservas de gestores.</Text>
+      <PressableScale style={styles.btnPrimary} onPress={onCreate}>
+        <Text style={styles.btnPrimaryText}>+ REGISTRAR MI CANCHA</Text>
+      </PressableScale>
+    </Card>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Configuración de cancha (tarifas, horarios, abono, hora y media, hold)
+// ═══════════════════════════════════════════════════════════════════════════
+function emptyTarifa() {
+  return { _key: `${Date.now()}_${Math.random()}`, deporte: 'Fútbol', formato_jpe: 7, precio_hora: '', descripcion: '', bloqueaActivo: false, bloqueos: [] };
+}
+
+function ConfigSheet({ visible, onClose, onSaved, userId, existing }) {
+  const [nombre,             setNombre]             = useState('');
+  const [direccion,          setDireccion]          = useState('');
+  const [telefono,           setTelefono]           = useState('');
+  const [tarifas,            setTarifas]            = useState([emptyTarifa()]);
+  const [diasActivos,        setDiasActivos]        = useState([1, 2, 3, 4, 5, 6]);
+  const [apertura,           setApertura]           = useState('08:00');
+  const [cierre,             setCierre]             = useState('22:00');
+  const [abonoTipo,          setAbonoTipo]          = useState('porcentaje');
+  const [porcentajeDeposito, setPorcentajeDeposito] = useState('50');
+  const [abonoMontoFijo,     setAbonoMontoFijo]     = useState('');
+  const [permiteMediaHoraExtra, setPermiteMediaHoraExtra] = useState(false);
+  const [holdMinutos,        setHoldMinutos]        = useState('2880');
+  const [saving,             setSaving]             = useState(false);
+  const [deleting,           setDeleting]           = useState(false);
 
   useEffect(() => {
     if (!visible) return;
     setNombre(existing?.nombre ?? '');
     setDireccion(existing?.direccion ?? '');
     setTelefono(existing?.telefono ?? '');
-    setRequiereDeposito(existing?.requiere_deposito ?? false);
-    setPorcentajeDeposito((existing?.porcentaje_deposito ?? 50).toString());
     setAbonoTipo(existing?.abono_tipo ?? (existing?.requiere_deposito ? 'porcentaje' : 'ninguno'));
-    setAbonoMontoFijo((existing?.abono_monto_fijo ?? '').toString());
-    setDuracionMax(existing?.duracion_max_minutos ?? 120);
+    setPorcentajeDeposito((existing?.porcentaje_deposito ?? 50).toString());
+    setAbonoMontoFijo(existing?.abono_monto_fijo != null ? String(existing.abono_monto_fijo) : '');
+    setPermiteMediaHoraExtra(!!existing?.permite_media_hora_extra);
+    setHoldMinutos((existing?.hold_minutos ?? 2880).toString());
 
     if (existing?.id) {
-      // Cargar tarifas
       supabase.from('cancha_tarifas')
         .select('id, deporte, formato_jpe, descripcion, precio_hora, bloquea_tarifas')
         .eq('cancha_id', existing.id).eq('activo', true)
@@ -400,69 +1089,52 @@ function CanchaFormModal({ visible, onClose, onSaved, userId, existing }) {
             bloqueos: t.bloquea_tarifas ?? [],
           })) : [emptyTarifa()]);
         });
-      // Cargar horarios existentes
       supabase.from('cancha_horarios')
-        .select('dia_semana, hora_apertura, hora_cierre, duracion_slot_min, horario_libre')
+        .select('dia_semana, hora_apertura, hora_cierre')
         .eq('cancha_id', existing.id).is('tarifa_id', null).eq('activo', true)
         .then(({ data }) => {
           if (data?.length) {
-            setDiasActivos(data.map((h) => h.dia_semana));
+            setDiasActivos(data.map((h) => h.dia_semana).sort((a, b) => a - b));
             setApertura(data[0].hora_apertura?.slice(0, 5) ?? '08:00');
             setCierre(data[0].hora_cierre?.slice(0, 5) ?? '22:00');
-            setDuracionSlot(data[0].duracion_slot_min ?? 60);
-            setHorarioLibre(data[0].horario_libre ?? false);
           } else {
-            setDiasActivos([1,2,3,4,5,6]);
-            setApertura('08:00');
-            setCierre('22:00');
-            setDuracionSlot(60);
+            setDiasActivos([1, 2, 3, 4, 5, 6]); setApertura('08:00'); setCierre('22:00');
           }
         });
     } else {
       setTarifas([emptyTarifa()]);
-      setDiasActivos([1,2,3,4,5,6]);
-      setApertura('08:00');
-      setCierre('22:00');
-      setDuracionSlot(60);
+      setDiasActivos([1, 2, 3, 4, 5, 6]);
+      setApertura('08:00'); setCierre('22:00');
     }
   }, [visible, existing]);
 
-  function updTarifa(key, field, val) {
-    setTarifas((prev) => prev.map((t) => t._key === key ? { ...t, [field]: val } : t));
-  }
-  function addTarifa() { setTarifas((prev) => [...prev, { ...emptyTarifa(), _key: Date.now() }]); }
+  function updTarifa(key, field, val) { setTarifas((prev) => prev.map((t) => t._key === key ? { ...t, [field]: val } : t)); }
+  function addTarifa() { setTarifas((prev) => [...prev, emptyTarifa()]); }
   function removeTarifa(key) { setTarifas((prev) => prev.filter((t) => t._key !== key)); }
-  function toggleDia(d) {
-    setDiasActivos((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a,b) => a-b));
-  }
+  function toggleDia(d) { setDiasActivos((prev) => prev.includes(d) ? prev.filter((x) => x !== d) : [...prev, d].sort((a, b) => a - b)); }
 
   async function handleSave() {
     if (!nombre.trim()) { Alert.alert('Falta nombre', 'El nombre de la cancha es obligatorio.'); return; }
     const tarifasValidas = tarifas.filter((t) => t.precio_hora !== '' && Number(t.precio_hora) > 0);
-    if (tarifasValidas.length === 0) {
-      Alert.alert('Falta precio', 'Ingresá el precio por hora de al menos una sub-cancha.'); return;
-    }
-    if (diasActivos.length === 0) {
-      Alert.alert('Falta horario', 'Seleccioná al menos un día de operación.'); return;
-    }
-    if (!apertura || !cierre || cierre <= apertura) {
-      Alert.alert('Horario inválido', 'El cierre debe ser mayor que la apertura (ej: 08:00 – 22:00).'); return;
-    }
+    if (tarifasValidas.length === 0) { Alert.alert('Falta precio', 'Ingresá el precio por hora de al menos un formato.'); return; }
+    if (diasActivos.length === 0) { Alert.alert('Falta horario', 'Seleccioná al menos un día de operación.'); return; }
+    if (!apertura || !cierre || cierre <= apertura) { Alert.alert('Horario inválido', 'El cierre debe ser mayor que la apertura.'); return; }
+    if (abonoTipo === 'fijo' && !(Number(abonoMontoFijo) > 0)) { Alert.alert('Falta el monto', 'Ingresá el monto fijo de abono.'); return; }
 
     setSaving(true);
     try {
-      // 1. Guardar la cancha
       let canchaId = existing?.id;
       const payload = {
-        nombre: nombre.trim(), direccion: direccion.trim() || null,
-        telefono: telefono.trim() || null, precio_hora: null,
-        // Legacy booleans (compatibilidad)
-        requiere_deposito:   abonoTipo !== 'ninguno',
-        porcentaje_deposito: abonoTipo === 'porcentaje' ? (Number(porcentajeDeposito) || 50) : 0,
-        // Nuevo modelo
-        abono_tipo:          abonoTipo,
-        abono_monto_fijo:    abonoTipo === 'fijo' ? (Number(abonoMontoFijo) || null) : null,
-        duracion_max_minutos: duracionMax,
+        nombre:                nombre.trim(),
+        direccion:              direccion.trim() || null,
+        telefono:               telefono.trim() || null,
+        requiere_deposito:      abonoTipo !== 'ninguno',
+        porcentaje_deposito:    abonoTipo === 'porcentaje' ? (Number(porcentajeDeposito) || 50) : 0,
+        abono_tipo:             abonoTipo,
+        abono_monto_fijo:       abonoTipo === 'fijo' ? (Number(abonoMontoFijo) || null) : null,
+        duracion_max_minutos:   120,
+        permite_media_hora_extra: permiteMediaHoraExtra,
+        hold_minutos:           Number(holdMinutos) > 0 ? Number(holdMinutos) : 2880,
       };
       if (canchaId) {
         const { error } = await supabase.from('canchas').update(payload).eq('id', canchaId);
@@ -473,7 +1145,6 @@ function CanchaFormModal({ visible, onClose, onSaved, userId, existing }) {
         canchaId = data.id;
       }
 
-      // 2. Desactivar tarifas antiguas que ya no están
       if (existing?.id) {
         const idsActuales = tarifasValidas.filter((t) => t.id).map((t) => t.id);
         const { error } = await supabase.from('cancha_tarifas').update({ activo: false })
@@ -482,7 +1153,6 @@ function CanchaFormModal({ visible, onClose, onSaved, userId, existing }) {
         if (error) console.warn('Warn deactivate tarifas:', error.message);
       }
 
-      // 3. Guardar tarifas y construir mapa _key → id
       const keyToId = {};
       for (const t of tarifasValidas) {
         const tarifaPayload = {
@@ -491,45 +1161,35 @@ function CanchaFormModal({ visible, onClose, onSaved, userId, existing }) {
           descripcion: t.descripcion?.trim() || null,
           precio_hora: Number(t.precio_hora),
           activo:      true,
-          cancha:      '',
         };
         if (t.id) {
           const { error } = await supabase.from('cancha_tarifas').update(tarifaPayload).eq('id', t.id);
           if (error) throw new Error('Error actualizando tarifa: ' + error.message);
           keyToId[t._key] = t.id;
         } else {
-          const { data: tData, error } = await supabase
-            .from('cancha_tarifas')
-            .insert({ ...tarifaPayload, cancha_id: canchaId })
-            .select('id').single();
+          const { data: tData, error } = await supabase.from('cancha_tarifas')
+            .insert({ ...tarifaPayload, cancha_id: canchaId }).select('id').single();
           if (error) throw new Error('Error insertando tarifa: ' + error.message);
           keyToId[t._key] = tData.id;
         }
       }
 
-      // 3b. Actualizar bloquea_tarifas ahora que tenemos todos los IDs
       for (const t of tarifasValidas) {
         const myId = keyToId[t._key];
         if (!myId) continue;
-        // Resolver _key → id (para tarifas nuevas) o uuid directo (para existentes)
         const bloqueoIds = (t.bloqueos ?? []).map((k) => keyToId[k] ?? k).filter(Boolean);
-        const { error } = await supabase
-          .from('cancha_tarifas')
-          .update({ bloquea_tarifas: bloqueoIds })
-          .eq('id', myId);
+        const { error } = await supabase.from('cancha_tarifas').update({ bloquea_tarifas: bloqueoIds }).eq('id', myId);
         if (error) console.warn('Warn bloqueos:', error.message);
       }
 
-      // 4. Guardar horarios: borrar y recrear
       await supabase.from('cancha_horarios').delete().eq('cancha_id', canchaId).is('tarifa_id', null);
       for (const dia of diasActivos) {
         const { error } = await supabase.from('cancha_horarios').insert({
-          cancha_id: canchaId, tarifa_id: null,
-          dia_semana: dia,
-          hora_apertura: apertura + ':00',
-          hora_cierre: cierre + ':00',
-          duracion_slot_min: horarioLibre ? 30 : duracionSlot,
-          horario_libre: horarioLibre,
+          cancha_id: canchaId, tarifa_id: null, dia_semana: dia,
+          hora_apertura: apertura + ':00', hora_cierre: cierre + ':00',
+          // El motor v3 valida duración por horas completas (+30 si permite_media_hora_extra)
+          // en crear_cancha_reserva; estos 3 valores quedan fijos y ya no gobiernan la duración.
+          duracion_slot_min: 60, horario_libre: true, medias_horas: false,
         });
         if (error) throw new Error('Error guardando horario día ' + dia + ': ' + error.message);
       }
@@ -543,742 +1203,288 @@ function CanchaFormModal({ visible, onClose, onSaved, userId, existing }) {
     }
   }
 
-  return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalRoot}>
-        <View style={styles.modalCard}>
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <Text style={styles.modalTitle}>{existing ? 'Editar cancha' : 'Registrar cancha'}</Text>
-
-          <Text style={styles.label}>Nombre *</Text>
-          <TextInput value={nombre} onChangeText={setNombre} style={styles.input} placeholder="Fredy Sport Center" placeholderTextColor={COLORS.gray} />
-
-          <Text style={styles.label}>Dirección</Text>
-          <TextInput value={direccion} onChangeText={setDireccion} style={styles.input} placeholder="Calle, distrito, referencia" placeholderTextColor={COLORS.gray} />
-
-          <Text style={styles.label}>Teléfono</Text>
-          <TextInput value={telefono} onChangeText={setTelefono} style={styles.input} keyboardType="phone-pad" placeholder="6000-0000" placeholderTextColor={COLORS.gray} />
-
-          {/* ── Sub-canchas / tarifas ── */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: SPACING.md, marginBottom: 4 }}>
-            <Text style={[styles.label, { flex: 1, marginTop: 0 }]}>Sub-canchas / formatos *</Text>
-            <TouchableOpacity onPress={addTarifa}>
-              <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.gold, fontSize: 13 }}>+ Agregar</Text>
-            </TouchableOpacity>
-          </View>
-          {tarifas.map((t, idx) => (
-            <View key={t._key} style={styles.tarifaRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                <Text style={[styles.label, { flex: 1, marginTop: 0 }]}>Sub-cancha {idx + 1}</Text>
-                {tarifas.length > 1 && (
-                  <TouchableOpacity onPress={() => removeTarifa(t._key)}>
-                    <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.red, fontSize: 20, lineHeight: 22 }}>×</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-
-              <Text style={styles.label}>Deporte</Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                <View style={{ flexDirection: 'row', gap: 6 }}>
-                  {DEPORTES.map((d) => (
-                    <TouchableOpacity key={d}
-                      style={[styles.toggle, t.deporte === d && styles.toggleActive, { paddingHorizontal: 10 }]}
-                      onPress={() => updTarifa(t._key, 'deporte', d)}
-                    >
-                      <Text style={[styles.toggleText, t.deporte === d && styles.toggleTextActive]}>{d}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </ScrollView>
-
-              <Text style={styles.label}>Formato</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 }}>
-                {FORMATOS.map((f) => (
-                  <TouchableOpacity key={f}
-                    style={[styles.toggle, t.formato_jpe === f && styles.toggleActive, { minWidth: 52 }]}
-                    onPress={() => updTarifa(t._key, 'formato_jpe', f)}
-                  >
-                    <Text style={[styles.toggleText, t.formato_jpe === f && styles.toggleTextActive]}>{f}vs{f}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Precio / hora ($) *</Text>
-                  <TextInput
-                    value={t.precio_hora}
-                    onChangeText={(v) => updTarifa(t._key, 'precio_hora', v)}
-                    style={styles.input}
-                    keyboardType="decimal-pad"
-                    placeholder="50.00"
-                    placeholderTextColor={COLORS.gray}
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.label}>Descripción (ej: Canchas 1+2)</Text>
-                  <TextInput
-                    value={t.descripcion}
-                    onChangeText={(v) => updTarifa(t._key, 'descripcion', v)}
-                    style={styles.input}
-                    placeholder="Opcional"
-                    placeholderTextColor={COLORS.gray}
-                  />
-                </View>
-              </View>
-
-              {/* Bloqueo de otras sub-canchas */}
-              <TouchableOpacity
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 }}
-                onPress={() => updTarifa(t._key, 'bloqueaActivo', !t.bloqueaActivo)}
-              >
-                <View style={[styles.toggle, { width: 22, height: 22, borderRadius: 4, alignItems: 'center', justifyContent: 'center', padding: 0 },
-                  t.bloqueaActivo && styles.toggleActive]}>
-                  {t.bloqueaActivo && <Text style={{ color: COLORS.neon, fontSize: 14, lineHeight: 16 }}>✓</Text>}
-                </View>
-                <Text style={{ fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray }}>
-                  ¿Bloquea otras sub-canchas al reservar?
-                </Text>
-              </TouchableOpacity>
-
-              {t.bloqueaActivo && tarifas.filter((o) => o._key !== t._key).length > 0 && (
-                <View style={{ marginTop: 6 }}>
-                  <Text style={[styles.label, { fontSize: 12 }]}>
-                    Seleccioná cuáles quedan bloqueadas:
-                  </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                    {tarifas.filter((o) => o._key !== t._key).map((other) => {
-                      const isSelected = (t.bloqueos ?? []).includes(other._key) || (t.bloqueos ?? []).includes(other.id);
-                      const otherKey   = other.id ?? other._key;
-                      return (
-                        <TouchableOpacity key={other._key}
-                          style={[styles.toggle, isSelected && styles.toggleActive, { paddingHorizontal: 10 }]}
-                          onPress={() => {
-                            const cur = t.bloqueos ?? [];
-                            updTarifa(t._key, 'bloqueos',
-                              isSelected ? cur.filter((k) => k !== otherKey && k !== other._key)
-                                         : [...cur, otherKey]);
-                          }}
-                        >
-                          <Text style={[styles.toggleText, isSelected && styles.toggleTextActive]}>
-                            {other.deporte ?? 'Sub-cancha'} {other.formato_jpe}vs{other.formato_jpe}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-              )}
-            </View>
-          ))}
-
-          {/* ── Horarios de operación ── */}
-          <Text style={[styles.label, { marginTop: SPACING.md }]}>Horarios de operación *</Text>
-          <Text style={{ fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, marginBottom: 8 }}>
-            Los gestores verán los espacios disponibles en estos días y horas.
-          </Text>
-
-          <Text style={styles.label}>Días activos</Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: SPACING.sm }}>
-            {DIAS_LABEL.map((d, i) => (
-              <TouchableOpacity key={i}
-                style={[styles.toggle, diasActivos.includes(i) && styles.toggleActive, { minWidth: 44 }]}
-                onPress={() => toggleDia(i)}
-              >
-                <Text style={[styles.toggleText, diasActivos.includes(i) && styles.toggleTextActive]}>{d}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 8 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Apertura (HH:MM)</Text>
-              <TextInput value={apertura} onChangeText={setApertura} style={styles.input}
-                placeholder="08:00" placeholderTextColor={COLORS.gray} />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Cierre (HH:MM)</Text>
-              <TextInput value={cierre} onChangeText={setCierre} style={styles.input}
-                placeholder="22:00" placeholderTextColor={COLORS.gray} />
-            </View>
-          </View>
-
-          {/* Horario libre / Horario fijo */}
-          <TouchableOpacity
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, marginBottom: 4 }}
-            onPress={() => setHorarioLibre((v) => !v)}
-          >
-            <View style={[styles.toggle, { width: 24, height: 24, borderRadius: 4, alignItems: 'center', justifyContent: 'center', padding: 0 },
-              horarioLibre && styles.toggleActive]}>
-              {horarioLibre && <Text style={{ color: COLORS.neon, fontSize: 14, lineHeight: 16 }}>✓</Text>}
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: FONTS.bodySemiBold ?? FONTS.bodyBold, fontSize: 13, color: COLORS.white }}>
-                Horario libre (el usuario elige el rango)
-              </Text>
-              <Text style={{ fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray }}>
-                Permite escoger hora inicio y fin como un calendario. Si está desactivado, el tiempo es fijo.
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {!horarioLibre && (
-            <>
-              <Text style={styles.label}>Duración de cada slot</Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginBottom: SPACING.md }}>
-                {DURACIONES.filter(d => d >= 60).map((d) => (
-                  <TouchableOpacity key={d}
-                    style={[styles.toggle, duracionSlot === d && styles.toggleActive, { flex: 1, alignItems: 'center' }]}
-                    onPress={() => setDuracionSlot(d)}
-                  >
-                    <Text style={[styles.toggleText, duracionSlot === d && styles.toggleTextActive]}>
-                      {d === 60 ? '1h' : d === 90 ? '1.5h' : '2h'}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </>
-          )}
-
-          {/* ── Configuración de abono ── */}
-          <Text style={[styles.label, { marginTop: SPACING.md }]}>Tipo de abono</Text>
-          <View style={{ flexDirection: 'row', gap: 6, marginBottom: SPACING.sm, flexWrap: 'wrap' }}>
-            {[['ninguno','Sin abono'],['porcentaje','Porcentaje'],['fijo','Monto fijo'],['total','Pago total']].map(([val, lbl]) => (
-              <TouchableOpacity key={val}
-                style={[styles.toggle, abonoTipo === val && styles.toggleActive, { paddingHorizontal: 10, alignItems: 'center' }]}
-                onPress={() => setAbonoTipo(val)}
-              >
-                <Text style={[styles.toggleText, abonoTipo === val && styles.toggleTextActive, { fontSize: 12 }]}>{lbl}</Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-
-          {abonoTipo === 'porcentaje' && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: SPACING.sm }}>
-              <Text style={[styles.label, { marginTop: 0 }]}>Porcentaje</Text>
-              <View style={{ flexDirection: 'row', gap: 6 }}>
-                {['25','30','50','100'].map((p) => (
-                  <TouchableOpacity key={p}
-                    style={[styles.toggle, porcentajeDeposito === p && styles.toggleActive, { minWidth: 44, alignItems: 'center' }]}
-                    onPress={() => setPorcentajeDeposito(p)}
-                  >
-                    <Text style={[styles.toggleText, porcentajeDeposito === p && styles.toggleTextActive]}>{p}%</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          )}
-
-          {abonoTipo === 'fijo' && (
-            <View style={{ marginBottom: SPACING.sm }}>
-              <Text style={styles.label}>Monto fijo de abono ($)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Ej: 10.00"
-                placeholderTextColor={COLORS.gray}
-                value={abonoMontoFijo}
-                onChangeText={setAbonoMontoFijo}
-                keyboardType="decimal-pad"
-              />
-            </View>
-          )}
-
-          {abonoTipo !== 'ninguno' && (
-            <Text style={{ fontFamily: FONTS.body, fontSize: 11, color: COLORS.gray, marginBottom: SPACING.sm }}>
-              {abonoTipo === 'total' ? 'El gestor paga el 100% al reservar.' :
-               abonoTipo === 'fijo'  ? `El gestor paga $${abonoMontoFijo || '?'} al reservar. El saldo lo paga en la cancha.` :
-               `El gestor paga el ${porcentajeDeposito}% al reservar. El saldo lo paga en la cancha.`}
-            </Text>
-          )}
-
-          <View style={styles.modalActions}>
-            <TouchableOpacity style={styles.secondaryBtn} onPress={onClose} disabled={saving}>
-              <Text style={styles.secondaryBtnText}>Cancelar</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.primaryBtn} onPress={handleSave} disabled={saving}>
-              {saving
-                ? <ActivityIndicator color={COLORS.white} />
-                : <Text style={styles.primaryBtnText}>Guardar</Text>}
-            </TouchableOpacity>
-          </View>
-          </ScrollView>
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-// ── Modal: Nuevo slot ──────────────────────────────────────────────────────
-function NewSlotModal({ visible, onClose, onSaved, canchaId, precioDefault, tarifas }) {
-  const [fecha,         setFecha]         = useState(todayIso());
-  const [horaIni,       setHoraIni]       = useState('18:00');
-  const [horaFin,       setHoraFin]       = useState('20:00');
-  const [precio,        setPrecio]        = useState(precioDefault?.toString() ?? '');
-  const [tarifaId,      setTarifaId]      = useState(null);
-  const [notas,         setNotas]         = useState('');
-  const [visibility,    setVisibility]    = useState('public');
-  const [reservedFor,   setReservedFor]   = useState(null);
-  const [externoNombre, setExternoNombre] = useState('');
-  const [externoTel,    setExternoTel]    = useState('');
-  const [showGestorPicker, setShowGestorPicker] = useState(false);
-  const [saving,        setSaving]        = useState(false);
-
-  useEffect(() => {
-    if (visible) {
-      setFecha(todayIso());
-      setHoraIni('18:00');
-      setHoraFin('20:00');
-      setPrecio(precioDefault?.toString() ?? '');
-      setTarifaId(null);
-      setNotas('');
-      setVisibility('public');
-      setReservedFor(null);
-      setExternoNombre('');
-      setExternoTel('');
-    }
-  }, [visible, precioDefault]);
-
-  function selectTarifa(t) {
-    setTarifaId(t.id);
-    setPrecio(t.precio_hora?.toString() ?? '');
-  }
-
-  async function handleSave() {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
-      Alert.alert('Fecha inválida', 'Usa formato YYYY-MM-DD.');
-      return;
-    }
-    if (!/^\d{2}:\d{2}$/.test(horaIni) || !/^\d{2}:\d{2}$/.test(horaFin)) {
-      Alert.alert('Hora inválida', 'Usa formato HH:MM (24h).');
-      return;
-    }
-    if (horaFin <= horaIni) {
-      Alert.alert('Horas inválidas', 'La hora fin debe ser mayor que la de inicio.');
-      return;
-    }
-    if (visibility === 'reserved_for_gestor' && !reservedFor) {
-      Alert.alert('Falta gestor', 'Seleccioná el gestor para quien queda bloqueado el slot.');
-      return;
-    }
-    if (visibility === 'blocked_external' && !externoNombre.trim()) {
-      Alert.alert('Falta nombre', 'Ingresá el nombre del cliente externo.');
-      return;
-    }
-    setSaving(true);
-    try {
-      const { error } = await supabase.from('cancha_slots').insert({
-        cancha_id:                canchaId,
-        tarifa_id:                tarifaId ?? null,
-        fecha,
-        hora_inicio:              horaIni + ':00',
-        hora_fin:                 horaFin + ':00',
-        precio_hora:              precio ? Number(precio) : null,
-        visibility,
-        reserved_for_gestor_id:   visibility === 'reserved_for_gestor' ? reservedFor.id : null,
-        cliente_externo_nombre:   visibility === 'blocked_external' ? externoNombre.trim() : null,
-        cliente_externo_telefono: visibility === 'blocked_external' ? (externoTel.trim() || null) : null,
-        notas:                    notas.trim() || null,
-      });
-      if (error) throw error;
-      onSaved();
-      onClose();
-    } catch (e) {
-      Alert.alert('Error', e.message ?? 'No se pudo crear el slot');
-    } finally {
-      setSaving(false);
-    }
+  function handleDelete() {
+    if (!existing?.id) return;
+    Alert.alert('Eliminar cancha', `¿Eliminás "${existing.nombre}"? Se borran sus tarifas y horarios.`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar', style: 'destructive', onPress: async () => {
+          setDeleting(true);
+          try {
+            const { error } = await supabase.from('canchas').delete().eq('id', existing.id);
+            if (error) throw error;
+            onSaved(); onClose();
+          } catch (e) {
+            Alert.alert('Error', e.message ?? 'No se pudo eliminar');
+          } finally {
+            setDeleting(false);
+          }
+        },
+      },
+    ]);
   }
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalRoot}>
-        <View style={styles.modalCard}>
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-            <Text style={styles.modalTitle}>Nuevo slot</Text>
-
-            <Text style={styles.label}>Fecha</Text>
-            <DateField value={fecha} onChange={setFecha} style={styles.input} />
-
-            <View style={styles.row}>
-              <View style={{ flex: 1, marginRight: SPACING.sm }}>
-                <Text style={styles.label}>Inicio</Text>
-                <TimeField value={horaIni} onChange={setHoraIni} style={styles.input} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Fin</Text>
-                <TimeField value={horaFin} onChange={setHoraFin} style={styles.input} />
-              </View>
-            </View>
-
-            {tarifas.length > 0 && (
-              <>
-                <Text style={styles.label}>Formato / tarifa</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: SPACING.sm }}>
-                  <View style={{ flexDirection: 'row', gap: 8 }}>
-                    {tarifas.map((t) => (
-                      <TouchableOpacity
-                        key={t.id}
-                        style={[styles.tarifaChip, tarifaId === t.id && styles.tarifaChipActive]}
-                        onPress={() => selectTarifa(t)}
-                      >
-                        <Text style={[styles.tarifaChipText, tarifaId === t.id && { color: COLORS.white }]}>
-                          {t.deporte} {t.formato_jpe}vs{t.formato_jpe}
-                        </Text>
-                        <Text style={[styles.tarifaChipPrice, tarifaId === t.id && { color: COLORS.gold }]}>
-                          ${Number(t.precio_hora).toFixed(2)}/h
-                        </Text>
-                        {!!t.descripcion && (
-                          <Text style={[styles.tarifaChipSub, tarifaId === t.id && { color: COLORS.gray2 }]}>
-                            {t.descripcion}
-                          </Text>
-                        )}
-                      </TouchableOpacity>
-                    ))}
-                  </View>
-                </ScrollView>
-              </>
-            )}
-
-            <Text style={styles.label}>Precio por hora ($)</Text>
-            <TextInput value={precio} onChangeText={setPrecio} style={styles.input} keyboardType="decimal-pad" placeholder="25.00" placeholderTextColor={COLORS.gray} />
-
-            <Text style={styles.label}>Notas</Text>
-            <TextInput value={notas} onChangeText={setNotas} style={[styles.input, { height: 60 }]} multiline placeholder="Cancha sintética, iluminación, etc." placeholderTextColor={COLORS.gray} />
-
-            <Text style={styles.label}>Tipo de slot</Text>
-            <View style={styles.toggleRow}>
-              <TouchableOpacity
-                style={[styles.toggle, visibility === 'public' && styles.toggleActive]}
-                onPress={() => setVisibility('public')}
-              >
-                <Text style={[styles.toggleText, visibility === 'public' && styles.toggleTextActive]}>
-                  Publico
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggle, visibility === 'reserved_for_gestor' && styles.toggleActive]}
-                onPress={() => setVisibility('reserved_for_gestor')}
-              >
-                <Text style={[styles.toggleText, visibility === 'reserved_for_gestor' && styles.toggleTextActive]}>
-                  Para gestor
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.toggle, visibility === 'blocked_external' && styles.toggleActiveExternal]}
-                onPress={() => setVisibility('blocked_external')}
-              >
-                <Text style={[styles.toggleText, visibility === 'blocked_external' && styles.toggleTextActive]}>
-                  Externo
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {visibility === 'reserved_for_gestor' && (
-              <TouchableOpacity style={styles.gestorPickerBtn} onPress={() => setShowGestorPicker(true)}>
-                <Text style={styles.gestorPickerText}>
-                  {reservedFor ? `Gestor: ${reservedFor.nombre}` : 'Elegir gestor'}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {visibility === 'blocked_external' && (
-              <View style={styles.externalBox}>
-                <Text style={styles.label}>Nombre del cliente *</Text>
-                <TextInput
-                  value={externoNombre}
-                  onChangeText={setExternoNombre}
-                  style={styles.input}
-                  placeholder="Juan Perez / Empresa X"
-                  placeholderTextColor={COLORS.gray}
-                />
-                <Text style={styles.label}>Telefono (WhatsApp)</Text>
-                <TextInput
-                  value={externoTel}
-                  onChangeText={setExternoTel}
-                  style={styles.input}
-                  keyboardType="phone-pad"
-                  placeholder="6000-0000"
-                  placeholderTextColor={COLORS.gray}
-                />
-              </View>
-            )}
-
-            <View style={styles.modalActions}>
-              <TouchableOpacity style={styles.secondaryBtn} onPress={onClose} disabled={saving}>
-                <Text style={styles.secondaryBtnText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.primaryBtn} onPress={handleSave} disabled={saving}>
-                {saving
-                  ? <ActivityIndicator color={COLORS.white} />
-                  : <Text style={styles.primaryBtnText}>Crear slot</Text>}
-              </TouchableOpacity>
-            </View>
-          </ScrollView>
-
-          <GestorPickerModal
-            visible={showGestorPicker}
-            onClose={() => setShowGestorPicker(false)}
-            onPick={(g) => { setReservedFor(g); setShowGestorPicker(false); }}
-          />
+    <BottomSheetModal
+      visible={visible} onClose={onClose}
+      title={existing ? 'Editar cancha' : 'Registrar cancha'}
+      footer={
+        <View style={{ gap: SPACING.sm }}>
+          <PressableScale style={styles.btnPrimary} onPress={handleSave} disabled={saving}>
+            {saving ? <ActivityIndicator color={COLORS.bg} /> : <Text style={styles.btnPrimaryText}>GUARDAR</Text>}
+          </PressableScale>
+          {!!existing?.id && (
+            <TouchableOpacity onPress={handleDelete} disabled={deleting} style={{ alignItems: 'center', paddingVertical: 6 }}>
+              <Text style={styles.deleteLink}>{deleting ? 'Eliminando…' : 'Eliminar esta cancha'}</Text>
+            </TouchableOpacity>
+          )}
         </View>
-      </KeyboardAvoidingView>
-    </Modal>
-  );
-}
-
-// ── Modal: Selector de gestor ─────────────────────────────────────────────
-function GestorPickerModal({ visible, onClose, onPick }) {
-  const [query, setQuery]   = useState('');
-  const [items, setItems]   = useState([]);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!visible) return;
-    let cancelled = false;
-    setLoading(true);
-    (async () => {
-      let q = supabase
-        .from('users')
-        .select('id, nombre, correo')
-        .eq('role', 'gestor')
-        .order('nombre', { ascending: true })
-        .limit(30);
-      if (query.trim()) q = q.ilike('nombre', `%${query.trim()}%`);
-      const { data, error } = await q;
-      if (!cancelled) {
-        if (error) Alert.alert('Error', error.message);
-        else setItems(data ?? []);
-        setLoading(false);
       }
-    })();
-    return () => { cancelled = true; };
-  }, [query, visible]);
+    >
+      <Field label="Nombre *" value={nombre} onChangeText={setNombre} placeholder="Fredy Sport Center" />
+      <Field label="Dirección" value={direccion} onChangeText={setDireccion} placeholder="Calle, distrito, referencia" />
+      <Field label="Teléfono" value={telefono} onChangeText={setTelefono} keyboardType="phone-pad" placeholder="6000-0000" />
 
-  return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.modalRoot}>
-        <View style={styles.modalCard}>
-          <Text style={styles.modalTitle}>Elegir gestor</Text>
-          <TextInput
-            value={query}
-            onChangeText={setQuery}
-            style={styles.input}
-            placeholder="Buscar por nombre"
-            placeholderTextColor={COLORS.gray}
-          />
-          {loading ? (
-            <ActivityIndicator color={COLORS.red} style={{ marginVertical: SPACING.md }} />
-          ) : (
-            <FlatList
-              data={items}
-              keyExtractor={(it) => it.id}
-              style={{ maxHeight: 280 }}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={styles.gestorRow} onPress={() => onPick(item)}>
-                  <Text style={styles.gestorName}>{item.nombre}</Text>
-                  <Text style={styles.subText}>{item.correo}</Text>
-                </TouchableOpacity>
-              )}
-              ListEmptyComponent={
-                <Text style={styles.subText}>Sin gestores que coincidan.</Text>
-              }
-            />
-          )}
-          <TouchableOpacity style={styles.secondaryBtn} onPress={onClose}>
-            <Text style={styles.secondaryBtnText}>Cerrar</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: SPACING.md, marginBottom: 4 }}>
+        <Text style={[styles.formLabel, { flex: 1, marginTop: 0 }]}>Formatos / sub-canchas *</Text>
+        <TouchableOpacity onPress={addTarifa}><Text style={styles.addLink}>+ Agregar</Text></TouchableOpacity>
+      </View>
+      {tarifas.map((t, idx) => (
+        <Card key={t._key} style={styles.tarifaCard}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+            <Text style={[styles.formLabel, { flex: 1, marginTop: 0 }]}>Formato {idx + 1}</Text>
+            {tarifas.length > 1 && (
+              <TouchableOpacity onPress={() => removeTarifa(t._key)}><Text style={styles.removeX}>×</Text></TouchableOpacity>
+            )}
+          </View>
+
+          <Text style={styles.formLabel}>Deporte</Text>
+          <View style={styles.chipWrapRow}>
+            {DEPORTES.map((d) => (
+              <Chip key={d} label={d} active={t.deporte === d} color={COLORS.neon} onPress={() => updTarifa(t._key, 'deporte', d)} />
+            ))}
+          </View>
+
+          <Text style={styles.formLabel}>Formato</Text>
+          <View style={styles.chipWrapRow}>
+            {FORMATOS.map((f) => (
+              <Chip key={f} label={`${f}v${f}`} active={t.formato_jpe === f} color={COLORS.neon} onPress={() => updTarifa(t._key, 'formato_jpe', f)} />
+            ))}
+          </View>
+
+          <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+            <View style={{ flex: 1 }}>
+              <Field label="Precio / hora ($) *" value={t.precio_hora} onChangeText={(v) => updTarifa(t._key, 'precio_hora', v)}
+                keyboardType="decimal-pad" placeholder="50.00" />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Field label="Descripción" value={t.descripcion} onChangeText={(v) => updTarifa(t._key, 'descripcion', v)}
+                placeholder="Ej: Canchas 1+2" />
+            </View>
+          </View>
+
+          <TouchableOpacity style={styles.checkRow} onPress={() => updTarifa(t._key, 'bloqueaActivo', !t.bloqueaActivo)}>
+            <View style={[styles.checkbox, t.bloqueaActivo && styles.checkboxActive]}>
+              {t.bloqueaActivo && <Text style={styles.checkboxMark}>✓</Text>}
+            </View>
+            <Text style={styles.checkLabel}>¿Bloquea otros formatos al reservar?</Text>
           </TouchableOpacity>
+
+          {t.bloqueaActivo && tarifas.filter((o) => o._key !== t._key).length > 0 && (
+            <View style={{ marginTop: 6 }}>
+              <Text style={[styles.formLabel, { fontSize: 11 }]}>Quedan bloqueados:</Text>
+              <View style={styles.chipWrapRow}>
+                {tarifas.filter((o) => o._key !== t._key).map((other) => {
+                  const otherKey = other.id ?? other._key;
+                  const isSel = (t.bloqueos ?? []).includes(otherKey) || (t.bloqueos ?? []).includes(other._key);
+                  return (
+                    <Chip key={other._key} label={`${other.deporte ?? 'Formato'} ${other.formato_jpe}v${other.formato_jpe}`}
+                      active={isSel} color={COLORS.gold}
+                      onPress={() => {
+                        const cur = t.bloqueos ?? [];
+                        updTarifa(t._key, 'bloqueos', isSel
+                          ? cur.filter((k) => k !== otherKey && k !== other._key)
+                          : [...cur, otherKey]);
+                      }} />
+                  );
+                })}
+              </View>
+            </View>
+          )}
+        </Card>
+      ))}
+
+      <Text style={[styles.formLabel, { marginTop: SPACING.md }]}>Días activos</Text>
+      <View style={styles.chipWrapRow}>
+        {DIAS_LABEL.map((d, i) => (
+          <Chip key={i} label={d} active={diasActivos.includes(i)} color={COLORS.blue2} onPress={() => toggleDia(i)} />
+        ))}
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.formLabel}>Apertura</Text>
+          <TimeField value={apertura} onChange={setApertura} style={styles.timeInput} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.formLabel}>Cierre</Text>
+          <TimeField value={cierre} onChange={setCierre} style={styles.timeInput} />
         </View>
       </View>
-    </Modal>
-  );
-}
 
-// ── Solicitud de reserva (card para cancha_admin) ─────────────────────────
-function fmt12c(h) {
-  const [hr, mn] = h.split(':').map(Number);
-  return `${hr % 12 || 12}:${mn.toString().padStart(2, '0')}${hr >= 12 ? 'pm' : 'am'}`;
-}
+      <View style={styles.switchRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.switchTitle}>Permitir hora y media (+30 min)</Text>
+          <Text style={styles.switchSub}>El gestor puede reservar 1.5h además de horas completas. Nunca bloques de 30 min sueltos.</Text>
+        </View>
+        <Switch value={permiteMediaHoraExtra} onValueChange={setPermiteMediaHoraExtra}
+          trackColor={{ false: COLORS.line, true: COLORS.neon }} thumbColor={COLORS.white} />
+      </View>
 
-function ReservaRequestCard({ reserva, canchasMap, onResolved }) {
-  const [loading, setLoading] = useState(false);
-  const gestor = reserva.gestor ?? {};
-  const tarifa = reserva.tarifa ?? {};
+      <Field label="Plazo para pagar el abono tras aprobar (min — 2880 = 48h)" value={holdMinutos} onChangeText={setHoldMinutos}
+        keyboardType="number-pad" placeholder="2880" style={{ maxWidth: 100 }} />
 
-  function fmtFecha(d) {
-    if (!d) return '';
-    const dt  = new Date(d + 'T12:00:00');
-    const dias = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-    const mes  = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
-    return `${dias[dt.getDay()]} ${dt.getDate()} ${mes[dt.getMonth()]}`;
-  }
+      <Text style={[styles.formLabel, { marginTop: SPACING.md }]}>Tipo de abono</Text>
+      <View style={styles.chipWrapRow}>
+        {[['ninguno', 'Sin abono'], ['porcentaje', 'Porcentaje'], ['fijo', 'Monto fijo'], ['total', 'Pago total']].map(([val, lbl]) => (
+          <Chip key={val} label={lbl} active={abonoTipo === val} color={COLORS.gold} onPress={() => setAbonoTipo(val)} />
+        ))}
+      </View>
 
-  async function respond(newStatus) {
-    setLoading(true);
-    try {
-      const { error } = await supabase.from('cancha_reservas').update({ status: newStatus }).eq('id', reserva.id);
-      if (error) throw error;
-      onResolved();
-    } catch (e) {
-      Alert.alert('Error', e.message ?? 'No se pudo actualizar');
-    } finally {
-      setLoading(false);
-    }
-  }
+      {abonoTipo === 'porcentaje' && (
+        <>
+          <Text style={styles.formLabel}>Porcentaje</Text>
+          <View style={styles.chipWrapRow}>
+            {['25', '30', '50', '100'].map((p) => (
+              <Chip key={p} label={`${p}%`} active={porcentajeDeposito === p} color={COLORS.gold} onPress={() => setPorcentajeDeposito(p)} />
+            ))}
+          </View>
+        </>
+      )}
 
-  const canchaName = reserva.cancha_id ? (canchasMap[reserva.cancha_id]?.nombre ?? '') : '';
+      {abonoTipo === 'fijo' && (
+        <Field label="Monto fijo de abono ($)" value={abonoMontoFijo} onChangeText={setAbonoMontoFijo} keyboardType="decimal-pad" placeholder="10.00" />
+      )}
 
-  return (
-    <View style={styles.reservaCard}>
-      <View style={{ marginBottom: SPACING.xs }}>
-        <Text style={styles.reservaGestor}>{gestor.nombre ?? 'Gestor'}</Text>
-        {!!gestor.telefono && <Text style={styles.reservaDetail}>{gestor.telefono}</Text>}
-        <Text style={styles.reservaDetail}>
-          {fmtFecha(reserva.fecha)}  {reserva.hora_inicio ? fmt12c(reserva.hora_inicio) : ''}
-          {reserva.hora_fin ? ` – ${fmt12c(reserva.hora_fin)}` : ''}
+      {abonoTipo !== 'ninguno' && (
+        <Text style={styles.hintText}>
+          {abonoTipo === 'total' ? 'El gestor paga el 100% al reservar.'
+            : abonoTipo === 'fijo' ? `El gestor paga $${abonoMontoFijo || '?'} al reservar. El saldo lo paga por la app o en la cancha.`
+            : `El gestor paga el ${porcentajeDeposito}% al reservar. El saldo lo paga por la app o en la cancha.`}
         </Text>
-        {tarifa.deporte && (
-          <Text style={styles.reservaDetail}>
-            {tarifa.deporte} {tarifa.formato_jpe}v{tarifa.formato_jpe}
-          </Text>
-        )}
-        {canchaName && <Text style={styles.reservaDetail}>{canchaName}</Text>}
-        {reserva.monto_total > 0 && (
-          <Text style={[styles.reservaDetail, { color: COLORS.gold }]}>
-            ${Number(reserva.monto_total).toFixed(2)}
-            {reserva.deposito_pagado > 0 ? ` · abono $${Number(reserva.deposito_pagado).toFixed(2)}` : ''}
-          </Text>
-        )}
-      </View>
-      <View style={{ flexDirection: 'row', gap: SPACING.sm }}>
-        <TouchableOpacity
-          style={[styles.primaryBtn, { flex: 1, backgroundColor: COLORS.neon + '22', borderWidth: 1, borderColor: COLORS.neon }]}
-          onPress={() => respond('approved')} disabled={loading}
-        >
-          {loading ? <ActivityIndicator size="small" color={COLORS.neon} />
-            : <Text style={[styles.primaryBtnText, { color: COLORS.neon }]}>✓ Aprobar</Text>}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.primaryBtn, { flex: 1, backgroundColor: COLORS.red + '22', borderWidth: 1, borderColor: COLORS.red }]}
-          onPress={() => respond('rejected')} disabled={loading}
-        >
-          <Text style={[styles.primaryBtnText, { color: COLORS.red }]}>✗ Rechazar</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+      )}
+    </BottomSheetModal>
   );
 }
 
-// ── Estilos ────────────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════
+// Estilos
+// ═══════════════════════════════════════════════════════════════════════════
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg },
-  emptyWrap: { padding: SPACING.lg, alignItems: 'center', marginTop: SPACING.xl },
-  title:      { fontFamily: FONTS.heading, fontSize: 28, color: COLORS.white, letterSpacing: 1 },
-  subText:    { fontFamily: FONTS.body, fontSize: 13, color: COLORS.gray2, marginTop: 2 },
-  section:    { fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.white, marginTop: SPACING.lg, marginBottom: SPACING.sm, letterSpacing: 0.5 },
-  emptyText:  { fontFamily: FONTS.body, fontSize: 14, color: COLORS.gray2, textAlign: 'center', marginVertical: SPACING.md },
-  linkText:   { fontFamily: FONTS.bodySemiBold, fontSize: 13, color: COLORS.gold },
+  safe: { flex: 1, backgroundColor: COLORS.bg },
 
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.md },
-  row:       { flexDirection: 'row', alignItems: 'center', marginTop: SPACING.sm },
+  refreshIcon: { fontSize: 22, color: COLORS.neon, fontFamily: FONTS.bodyBold },
 
-  primaryBtn: {
-    backgroundColor: COLORS.red, paddingVertical: 12, paddingHorizontal: SPACING.md,
-    borderRadius: RADIUS.md, alignItems: 'center', minWidth: 140,
+  canchaChipsRow: { paddingHorizontal: SPACING.md, gap: SPACING.sm, paddingBottom: SPACING.sm },
+
+  statsRow: { flexDirection: 'row', gap: SPACING.sm, paddingHorizontal: SPACING.md, marginTop: SPACING.sm },
+  statTile: { flex: 1, alignItems: 'flex-start', minHeight: 76 },
+  statValue: { fontFamily: FONTS.heading, fontSize: TYPE.h2, color: COLORS.white, letterSpacing: 0.5 },
+  statLabel: { fontFamily: FONTS.body, fontSize: TYPE.caption, color: COLORS.gray, marginTop: 2 },
+
+  section: { paddingHorizontal: SPACING.md, marginTop: SPACING.lg },
+  sectionTitle: { fontFamily: FONTS.bodyBold, fontSize: TYPE.small, color: COLORS.gray2, letterSpacing: 1.2, marginBottom: SPACING.sm },
+
+  solicitudCard: { borderColor: COLORS.gold, borderWidth: 1, marginBottom: SPACING.sm },
+  solicitudNombre: { fontFamily: FONTS.bodyBold, fontSize: TYPE.h3, color: COLORS.white },
+  solicitudSub: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray2, marginTop: 1 },
+  solicitudBadge: { backgroundColor: withAlpha(COLORS.gold, '22'), borderRadius: RADIUS.full, paddingHorizontal: SPACING.sm, paddingVertical: 3 },
+  solicitudBadgeText: { fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gold, letterSpacing: 0.5 },
+  solicitudFecha: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.body, color: COLORS.white, marginTop: SPACING.sm },
+  solicitudMonto: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray2, marginTop: 2 },
+  solicitudCombo: { fontFamily: FONTS.body, fontSize: TYPE.caption, color: COLORS.gray, marginTop: 2 },
+
+  holdCard: { opacity: 0.6, borderColor: COLORS.line },
+  holdNombre: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.body, color: COLORS.gray2 },
+  holdBadge: { fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.gray, letterSpacing: 0.5 },
+  holdSub: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray, marginTop: 2 },
+
+  btnPrimary: { backgroundColor: COLORS.neon, borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+  btnPrimaryText: { fontFamily: FONTS.bodyBold, fontSize: TYPE.small, color: COLORS.bg, letterSpacing: 0.5 },
+  btnGold: { backgroundColor: COLORS.gold, borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+  btnGoldText: { fontFamily: FONTS.bodyBold, fontSize: TYPE.small, color: COLORS.bg, letterSpacing: 0.5 },
+  btnDangerOutline: { borderWidth: 1, borderColor: COLORS.red2, borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+  btnDangerOutlineText: { fontFamily: FONTS.bodyBold, fontSize: TYPE.small, color: COLORS.red2, letterSpacing: 0.5 },
+  btnDanger: { backgroundColor: COLORS.red2, borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+  btnDangerText: { fontFamily: FONTS.bodyBold, fontSize: TYPE.small, color: COLORS.white, letterSpacing: 0.5 },
+  btnGhost: { backgroundColor: COLORS.card2, borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+  btnGhostText: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.small, color: COLORS.gray2 },
+  btnWhatsapp: { backgroundColor: '#25D366', borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', minHeight: 44 },
+  btnWhatsappText: { fontFamily: FONTS.bodyBold, fontSize: TYPE.small, color: '#fff', letterSpacing: 0.5 },
+
+  dateStripRow: { gap: SPACING.xs, paddingBottom: SPACING.sm },
+  dateChip: { width: 56, paddingVertical: SPACING.sm, borderRadius: RADIUS.md, borderWidth: 1, borderColor: COLORS.line, alignItems: 'center', backgroundColor: COLORS.card },
+  dateChipActive: { borderColor: COLORS.neon, backgroundColor: COLORS.neon },
+  dateChipDow: { fontFamily: FONTS.body, fontSize: 10, color: COLORS.gray, textTransform: 'uppercase' },
+  dateChipDia: { fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white },
+  dateChipMes: { fontFamily: FONTS.body, fontSize: 10, color: COLORS.gray },
+  dateChipTextActive: { color: COLORS.bg },
+  dateDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: COLORS.gold, marginTop: 3 },
+
+  block: { borderRadius: RADIUS.md, borderWidth: 1, padding: SPACING.sm, justifyContent: 'center' },
+  blockDashed: { borderStyle: 'dashed' },
+  blockTime: { fontFamily: FONTS.bodyBold, fontSize: TYPE.small },
+  blockBadge: { fontFamily: FONTS.bodyBold, fontSize: 10, letterSpacing: 0.5, flexShrink: 1, textAlign: 'right' },
+  blockTitle: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.body, color: COLORS.white, marginTop: 2 },
+  blockSub: { fontFamily: FONTS.body, fontSize: TYPE.caption, color: COLORS.gray2, marginTop: 1 },
+
+  freeRow: {
+    borderRadius: RADIUS.md, borderWidth: 1, borderStyle: 'dashed', borderColor: COLORS.line,
+    justifyContent: 'center', paddingHorizontal: SPACING.sm,
   },
-  primaryBtnText: { fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 14, letterSpacing: 0.5 },
+  freeRowText: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray },
 
+  emptyTimelineText: { fontFamily: FONTS.body, fontSize: TYPE.body, color: COLORS.gray, textAlign: 'center', marginTop: SPACING.lg, marginBottom: SPACING.sm },
 
-  secondaryBtn: {
-    backgroundColor: COLORS.card2, paddingVertical: 12, paddingHorizontal: SPACING.md,
-    borderRadius: RADIUS.md, alignItems: 'center', minWidth: 100, marginRight: SPACING.sm,
-  },
-  secondaryBtnText: { fontFamily: FONTS.bodySemiBold, color: COLORS.gray2, fontSize: 13 },
+  detailBadge: { alignSelf: 'flex-start', borderWidth: 1, borderRadius: RADIUS.full, paddingHorizontal: SPACING.sm, paddingVertical: 4, marginBottom: SPACING.sm },
+  detailBadgeText: { fontFamily: FONTS.bodyBold, fontSize: 11, letterSpacing: 0.5 },
+  detailRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 5, borderBottomWidth: 1, borderBottomColor: COLORS.line },
+  detailLabel: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray },
+  detailValue: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.small, color: COLORS.white, flexShrink: 1, textAlign: 'right', marginLeft: SPACING.sm },
 
-  dangerBtn: {
-    backgroundColor: 'transparent', borderWidth: 1, borderColor: COLORS.red,
-    paddingVertical: 8, borderRadius: RADIUS.sm, alignItems: 'center', marginTop: SPACING.sm,
-  },
-  dangerBtnText: { fontFamily: FONTS.bodySemiBold, color: COLORS.red, fontSize: 12 },
+  configRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  configRowTitle: { fontFamily: FONTS.bodyBold, fontSize: TYPE.h3, color: COLORS.white },
+  configRowSub: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray2, marginTop: 2 },
+  configRowArrow: { fontSize: 20, color: COLORS.gold },
+  addLink: { fontFamily: FONTS.bodyBold, fontSize: TYPE.small, color: COLORS.gold },
 
-  card: {
-    backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.md,
-    marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.card2,
-  },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  cardDate:   { fontFamily: FONTS.bodyBold, fontSize: 13, color: COLORS.white, textTransform: 'uppercase' },
-  cardTime:   { fontFamily: FONTS.heading, fontSize: 22, color: COLORS.gold, marginTop: 4 },
-  lockText:      { fontFamily: FONTS.bodySemiBold, fontSize: 12, color: COLORS.purple2, marginTop: 4 },
-  claimText:     { fontFamily: FONTS.bodySemiBold, fontSize: 12, color: COLORS.green, marginTop: 4 },
-  externalText:  { fontFamily: FONTS.bodySemiBold, fontSize: 12, color: '#E67E22', marginTop: 4 },
-  cardExternal:  { borderColor: '#E67E22' },
-  cardActions:   { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: SPACING.sm },
-  waBtn: {
-    backgroundColor: '#25D366', paddingVertical: 7, paddingHorizontal: 12,
-    borderRadius: RADIUS.sm, alignItems: 'center',
-  },
-  waBtnText: { fontFamily: FONTS.bodyBold, color: '#fff', fontSize: 12 },
+  formLabel: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.caption, color: COLORS.gray, textTransform: 'uppercase', letterSpacing: 1, marginTop: SPACING.sm, marginBottom: 6 },
+  chipWrapRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: SPACING.sm },
+  tarifaCard: { marginBottom: SPACING.sm },
+  removeX: { fontFamily: FONTS.bodyBold, color: COLORS.red2, fontSize: 20, lineHeight: 22 },
 
-  badge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: RADIUS.full },
-  badgeText: { fontFamily: FONTS.bodyBold, fontSize: 10, color: COLORS.white, letterSpacing: 0.5 },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, paddingVertical: 4 },
+  checkbox: { width: 22, height: 22, borderRadius: 4, borderWidth: 1, borderColor: COLORS.line, alignItems: 'center', justifyContent: 'center' },
+  checkboxActive: { backgroundColor: withAlpha(COLORS.gold, '33'), borderColor: COLORS.gold },
+  checkboxMark: { color: COLORS.gold, fontSize: 14, lineHeight: 16 },
+  checkLabel: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray2 },
 
-  modalRoot: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', padding: SPACING.md },
-  modalCard: { backgroundColor: COLORS.bg2, borderRadius: RADIUS.lg, padding: SPACING.lg, maxHeight: '90%' },
-  modalTitle: { fontFamily: FONTS.heading, fontSize: 22, color: COLORS.white, marginBottom: SPACING.md, letterSpacing: 1 },
-  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: SPACING.md },
-
-  label: { fontFamily: FONTS.bodySemiBold, fontSize: 12, color: COLORS.gray2, marginTop: SPACING.sm, marginBottom: 4, letterSpacing: 0.3 },
-  input: {
-    backgroundColor: COLORS.card, color: COLORS.white, paddingHorizontal: SPACING.md,
-    paddingVertical: 10, borderRadius: RADIUS.sm, fontFamily: FONTS.body, fontSize: 14,
-    borderWidth: 1, borderColor: COLORS.card2,
+  timeInput: {
+    backgroundColor: COLORS.bg2, color: COLORS.white, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm,
+    borderRadius: RADIUS.md, fontFamily: FONTS.body, fontSize: TYPE.body, borderWidth: 1, borderColor: COLORS.line, width: '100%',
   },
 
-  toggleRow: { flexDirection: 'row', marginTop: 4 },
-  toggle: {
-    flex: 1, paddingVertical: 10, borderRadius: RADIUS.sm,
-    backgroundColor: COLORS.card, alignItems: 'center', marginRight: SPACING.sm,
-    borderWidth: 1, borderColor: COLORS.card2,
-  },
-  toggleActive:         { backgroundColor: COLORS.purple, borderColor: COLORS.purple2 },
-  toggleActiveExternal: { backgroundColor: '#5D4037', borderColor: '#E67E22' },
-  externalBox: { backgroundColor: COLORS.card, borderRadius: RADIUS.sm, padding: SPACING.sm, marginTop: SPACING.sm, borderWidth: 1, borderColor: '#E67E22' },
-  toggleText:   { fontFamily: FONTS.bodySemiBold, fontSize: 12, color: COLORS.gray2 },
-  toggleTextActive: { color: COLORS.white },
+  switchRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginTop: SPACING.md, paddingVertical: SPACING.sm },
+  switchTitle: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.body, color: COLORS.white },
+  switchSub: { fontFamily: FONTS.body, fontSize: TYPE.caption, color: COLORS.gray, marginTop: 2 },
 
-  gestorPickerBtn: {
-    backgroundColor: COLORS.card, borderRadius: RADIUS.sm, padding: SPACING.md,
-    marginTop: SPACING.sm, borderWidth: 1, borderColor: COLORS.purple,
-  },
-  gestorPickerText: { fontFamily: FONTS.bodySemiBold, color: COLORS.white, fontSize: 14 },
+  hintText: { fontFamily: FONTS.body, fontSize: TYPE.caption, color: COLORS.gray, marginTop: 4, marginBottom: SPACING.sm },
+  deleteLink: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.red2 },
 
-  gestorRow: { paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.card2 },
-  gestorName: { fontFamily: FONTS.bodyBold, fontSize: 14, color: COLORS.white },
+  liquidacionAmount: { fontFamily: FONTS.heading, fontSize: 30, color: COLORS.neon, letterSpacing: 0.5 },
+  liquidacionLabel: { fontFamily: FONTS.bodySemiBold, fontSize: TYPE.small, color: COLORS.white, marginTop: 4 },
+  liquidacionNote: { fontFamily: FONTS.body, fontSize: TYPE.caption, color: COLORS.gray, marginTop: 2 },
 
-  reservaCard: {
-    backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.md,
-    marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.gold,
-  },
-  reservaGestor: { fontFamily: FONTS.bodyBold, fontSize: 15, color: COLORS.white, marginBottom: 2 },
-  reservaDetail: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, marginBottom: 1 },
-
-  canchaSection: {
-    backgroundColor: COLORS.card, borderRadius: RADIUS.md, padding: SPACING.md,
-    marginBottom: SPACING.md, borderWidth: 1, borderColor: COLORS.card2,
-  },
-  canchaHeader: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: SPACING.sm },
-  canchaTitle:  { fontFamily: FONTS.heading, fontSize: 20, color: COLORS.white, letterSpacing: 0.5 },
-
-  tarifaText: { fontFamily: FONTS.bodySemiBold, fontSize: 12, color: COLORS.gold, marginTop: 4 },
-  tarifaRow: {
-    backgroundColor: COLORS.card, borderRadius: RADIUS.sm, padding: SPACING.sm,
-    marginBottom: SPACING.sm, borderWidth: 1, borderColor: COLORS.card2,
-  },
-  tarifaChip: {
-    backgroundColor: COLORS.card, borderRadius: RADIUS.sm, padding: SPACING.sm,
-    borderWidth: 1, borderColor: COLORS.card2, minWidth: 110, alignItems: 'center',
-  },
-  tarifaChipActive: { borderColor: COLORS.gold, backgroundColor: COLORS.gold + '22' },
-  tarifaChipText:   { fontFamily: FONTS.bodyBold, fontSize: 12, color: COLORS.gray2 },
-  tarifaChipPrice:  { fontFamily: FONTS.heading, fontSize: 16, color: COLORS.gray, marginTop: 2 },
-  tarifaChipSub:    { fontFamily: FONTS.body, fontSize: 10, color: COLORS.gray, marginTop: 1 },
+  emptyTitle: { fontFamily: FONTS.bodyBold, fontSize: TYPE.h3, color: COLORS.white, textAlign: 'center' },
+  emptySub: { fontFamily: FONTS.body, fontSize: TYPE.small, color: COLORS.gray2, textAlign: 'center' },
 });

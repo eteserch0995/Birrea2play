@@ -18,7 +18,7 @@ export default function CancelRegistrationModal({
   // Política de devoluciones (2026-06-04): cancelar siempre se puede.
   // ≥48h antes del evento → 100% a créditos | <48h → 50% a créditos.
   // Siempre en créditos internos, sin importar el método de pago original.
-  const isPaid    = (metodoPago === 'wallet' || metodoPago === 'yappy_boton') && amount > 0;
+  const isPaid    = (metodoPago === 'wallet' || metodoPago === 'yappy_boton' || metodoPago === 'mixto') && amount > 0;
   const isCash    = metodoPago === 'efectivo';
   const hasGuests = guestCount > 0;
   const refund100 = (amount ?? 0).toFixed(2);

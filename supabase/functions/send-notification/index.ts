@@ -107,8 +107,11 @@ async function sendEmailsViaResend(
   return out;
 }
 
-// Auth básica (modo user_ids): admin_secret, x-admin-key=service, o JWT válido.
+// Auth básica (modo user_ids): x-sync-secret interno, admin_secret, x-admin-key=service, o JWT válido.
 async function isAuthorized(req: Request, body: { admin_secret?: string }): Promise<boolean> {
+  // Disparador interno (crons / server-side) vía x-sync-secret — mismo secreto que usan los otros crons.
+  const syncSecret = req.headers.get('x-sync-secret');
+  if (syncSecret && syncSecret === (Deno.env.get('SYNC_SECRET') ?? '9f3c1ade7b62408d5e1142aa0c7be93d6f08a214')) return true;
   if (ADMIN_BROADCAST && body.admin_secret && body.admin_secret === ADMIN_BROADCAST) return true;
   const adminKey = req.headers.get('x-admin-key');
   if (adminKey && SUPABASE_SERVICE_KEY && adminKey === SUPABASE_SERVICE_KEY) return true;
@@ -266,7 +269,26 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Email desactivado — solo web push.
+    // ── Email de respaldo (Resend) ──────────────────────────────────────────
+    // Estaba con las funciones auxiliares (renderEmailHtml/sendEmailsViaResend)
+    // ya construidas pero nunca invocadas, y force_email se recibia (arriba)
+    // pero jamas se usaba — "Email desactivado" quedo pisando codigo real.
+    // Hallazgo confirmado 2026-07-07: con la ventana de waitlist bajando a 10
+    // minutos (waitlist-notify manda force_email:true a proposito) depender
+    // solo de web push opt-in deja a la mayoria de una lista de espera sin
+    // ningun aviso real y su cupo se pierde en silencio.
+    // force_email=true -> se manda a TODOS los que tengan correo (refuerza la
+    // entrega para avisos de alto riesgo / ventana corta); si no, es respaldo
+    // normal: solo a quienes el push NO alcanzo. Si RESEND_API_KEY no esta
+    // configurada, sendEmailsViaResend ya no-opea sola — mismo comportamiento
+    // "silencioso si falta config" que documentaba el comentario original.
+    const emailTargets = users.filter(u => !!u.correo && (force_email === true || !reached.has(u.id)));
+    if (emailTargets.length) {
+      const html = renderEmailHtml(title, msgBody, url);
+      const { sent, failed } = await sendEmailsViaResend(emailTargets.map(u => u.correo!), title, html);
+      result.email.sent = sent;
+      result.email.failed = failed;
+    }
 
     return json({ ok: true, result });
   } catch (e) {

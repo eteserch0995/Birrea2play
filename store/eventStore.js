@@ -38,6 +38,7 @@ const useEventStore = create((set, get) => ({
         .from('events')
         .select('*')
         .eq('visible', true)   // Solo eventos visibles para jugadores
+        .or('es_privado.is.null,es_privado.eq.false') // F4: privadas solo con código
         .order('fecha');
 
       if (filter && filter !== 'Todos') {

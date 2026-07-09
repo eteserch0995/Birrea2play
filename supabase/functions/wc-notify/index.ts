@@ -75,22 +75,17 @@ Deno.serve(async (req) => {
 
       const { data: ev } = await supabase
         .from('events')
-        .select('id, nombre, fecha, lugar, status, visible')
+        .select('id, nombre, fecha, lugar, status, visible, es_privado')
         .eq('id', eventId)
         .maybeSingle();
-      if (!ev || ev.visible !== true || ev.status !== 'open') {
-        return json({ ok: true, mode, skipped: 'evento no publicado/visible' });
+      if (!ev || ev.visible !== true || ev.status !== 'open' || ev.es_privado === true) {
+        return json({ ok: true, mode, skipped: 'evento no publicado/visible/publico' });
       }
 
-      // Ultimos 50 usuarios REALES (con login). Excluye los sin auth_id.
-      const { data: us } = await supabase
-        .from('users')
-        .select('id')
-        .not('auth_id', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(50);
-      const ids = (us ?? []).map((u: { id: string }) => u.id);
-
+      // F4 2026-07-05 (decisión Sergio): notificar a TODOS los usuarios
+      // (antes: solo los últimos 50). broadcast = push a todos + email de
+      // respaldo a quienes no recibieron push. También dispara cuando una
+      // birrea PRIVADA pasa a pública (el trigger cubre esa transición).
       let fecha = '';
       try {
         if (ev.fecha) {
@@ -98,13 +93,19 @@ Deno.serve(async (req) => {
         }
       } catch { /* sin fecha legible */ }
 
-      const res = await sendTo(
-        ids,
-        'Nuevo evento disponible',
-        `${ev.nombre}${fecha ? ' — ' + fecha : ''}${ev.lugar ? ' · ' + ev.lugar : ''}. Inscribite antes de que se llene.`,
-        'https://birrea2play.com',
-      );
-      return json({ ok: true, mode, event: ev.nombre, ...res });
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/send-notification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': SERVICE_KEY },
+        body: JSON.stringify({
+          broadcast: true,
+          title: 'Nuevo evento disponible',
+          body: `${ev.nombre}${fecha ? ' — ' + fecha : ''}${ev.lugar ? ' · ' + ev.lugar : ''}. Inscribite antes de que se llene.`,
+          url: 'https://birrea2play.com',
+          force_email: true,
+        }),
+      });
+      const out = await r.json().catch(() => ({}));
+      return json({ ok: true, mode, event: ev.nombre, status: r.status, result: out });
     }
 
     // ── Aviso general (broadcast a TODOS, solo push; email desactivado) ──

@@ -37,6 +37,7 @@ import WCFlyerModal from './components/WCFlyerModal';
 import RecaudoFlyerModal from './components/RecaudoFlyerModal';
 import InstallCloud from './components/InstallCloud';
 import InstallHandoff from './components/InstallHandoff';
+import RequiredInstallWall from './components/RequiredInstallWall';
 import ErrorBoundary from './components/ErrorBoundary';
 import useWcStore from './store/wcStore';
 import { captureRefFromUrl } from './lib/referral';
@@ -348,6 +349,11 @@ export default function App() {
       }
       if (cancelled) return;
 
+      // Campaña Recaudo Solidario (Venezuela) DESACTIVADA 2026-07-05 (decisión Sergio).
+      // Reactivar: volver RECAUDO_CAMPANA_ACTIVA a true (y RECAUDO_FOCUS en HomeScreen).
+      const RECAUDO_CAMPANA_ACTIVA = false;
+      if (!RECAUDO_CAMPANA_ACTIVA) return;
+
       const storageKey = `${RECAUDO_FLYER_KEY_PREFIX}:${user.id}`;
       const lastDay = await AsyncStorage.getItem(storageKey).catch(() => null);
       if (cancelled) return;
@@ -491,6 +497,8 @@ export default function App() {
           />
           {Platform.OS === 'web' && <InstallCloud />}
           {Platform.OS === 'web' && <InstallHandoff />}
+          {/* Muro DURO instalar+notifs (flag remoto install_gate.required) — va al final: tapa todo */}
+          {Platform.OS === 'web' && <RequiredInstallWall />}
         </SafeAreaProvider>
       </GestureHandlerRootView>
     </ErrorBoundary>

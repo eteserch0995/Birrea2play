@@ -173,24 +173,33 @@ serve(async (req) => {
 
   // Determinar tipo + ids ANTES de cobrar (era despues de createOrder).
   const rawTipo = payload.tipo ?? 'recarga';
-  const tipo    = ['evento', 'invitado', 'recarga', 'compra_tienda', 'wc_enrollment', 'abono_cancha', 'donacion', 'rifa'].includes(rawTipo) ? rawTipo : 'recarga';
-  const event_id          = (tipo === 'evento' || tipo === 'rifa') ? (payload.event_id ?? null) : null;
+  const tipo    = ['evento', 'invitado', 'recarga', 'compra_tienda', 'wc_enrollment', 'abono_cancha', 'saldo_cancha', 'membresia_club', 'mixto', 'donacion', 'rifa'].includes(rawTipo) ? rawTipo : 'recarga';
+  const event_id          = (tipo === 'evento' || tipo === 'rifa' || tipo === 'mixto') ? (payload.event_id ?? null) : null;
   const guest_id          = tipo === 'invitado'      ? (payload.guest_id          ?? null) : null;
   const wc_enrollment_id  = tipo === 'wc_enrollment' ? (payload.wc_enrollment_id  ?? null) : null;
-  const cancha_reserva_id = tipo === 'abono_cancha'  ? (payload.cancha_reserva_id ?? null) : null;
+  const cancha_reserva_id = (tipo === 'abono_cancha' || tipo === 'saldo_cancha') ? (payload.cancha_reserva_id ?? null) : null;
 
   if (tipo === 'wc_enrollment' && !wc_enrollment_id) return jsonRes({ error: 'wc_enrollment_id requerido' }, 400);
-  if (tipo === 'abono_cancha'  && !cancha_reserva_id) return jsonRes({ error: 'cancha_reserva_id requerido' }, 400);
-  if ((tipo === 'evento' || tipo === 'rifa') && !event_id) return jsonRes({ error: 'event_id requerido' }, 400);
+  if ((tipo === 'abono_cancha' || tipo === 'saldo_cancha') && !cancha_reserva_id) return jsonRes({ error: 'cancha_reserva_id requerido' }, 400);
+  if ((tipo === 'evento' || tipo === 'rifa' || tipo === 'mixto') && !event_id) return jsonRes({ error: 'event_id requerido' }, 400);
   if (tipo === 'invitado' && !guest_id) return jsonRes({ error: 'guest_id requerido' }, 400);
 
   // VALIDACION DE MONTO server-side: el cobro debe cubrir el precio real del recurso.
   // Cierra el subpago (ej. $0.01) en evento/invitado — el monto NO se confia del cliente.
   if (tipo === 'evento') {
-    const { data: ev } = await supabaseAdmin.from('events').select('precio').eq('id', event_id).maybeSingle();
+    // Fee INCLUIDO en el precio (2026-07-05): el jugador paga lo que dice el evento;
+    // la retención del $0.50 sale de la ganancia del gestor (server-side, app_fee).
+    // Socio del Club: paga precio con 10% de descuento.
+    const { data: ev } = await supabaseAdmin.from('events').select('precio, created_by').eq('id', event_id).maybeSingle();
     if (!ev) return jsonRes({ error: 'Evento no encontrado' }, 404);
-    if (amount + 0.001 < Number(ev.precio)) {
-      return jsonRes({ error: `Monto insuficiente: el evento cuesta $${Number(ev.precio).toFixed(2)}` }, 400);
+    let costEv = Number(ev.precio);
+    try {
+      const hoyPA = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama' }).format(new Date());
+      const { data: memb } = await supabaseAdmin.from('club_membresias').select('vence_el').eq('user_id', profile.id).maybeSingle();
+      if (memb?.vence_el && hoyPA <= memb.vence_el && costEv > 0) costEv = Number((costEv * 0.9).toFixed(2));
+    } catch { /* sin membresía */ }
+    if (amount + 0.001 < costEv) {
+      return jsonRes({ error: `Monto insuficiente: la inscripción cuesta $${costEv.toFixed(2)}` }, 400);
     }
   } else if (tipo === 'invitado') {
     const { data: g } = await supabaseAdmin.from('event_guests').select('event_id').eq('id', guest_id).maybeSingle();
@@ -198,7 +207,49 @@ serve(async (req) => {
     const { data: ev2 } = await supabaseAdmin.from('events').select('precio').eq('id', g.event_id).maybeSingle();
     if (!ev2) return jsonRes({ error: 'Evento no encontrado' }, 404);
     if (amount + 0.001 < Number(ev2.precio)) {
-      return jsonRes({ error: `Monto insuficiente: el evento cuesta $${Number(ev2.precio).toFixed(2)}` }, 400);
+      return jsonRes({ error: `Monto insuficiente: la inscripción cuesta $${Number(ev2.precio).toFixed(2)}` }, 400);
+    }
+  } else if (tipo === 'abono_cancha') {
+    // El RPC de confirmación acredita deposito_requerido completo → exigir que el cobro lo cubra.
+    const { data: cr } = await supabaseAdmin.from('cancha_reservas')
+      .select('deposito_requerido, monto_total, status').eq('id', cancha_reserva_id).maybeSingle();
+    if (!cr) return jsonRes({ error: 'Reserva no encontrada' }, 404);
+    // v4: el abono se paga DESPUÉS de que la cancha aprueba
+    if (cr.status !== 'approved') return jsonRes({ error: 'La cancha aún no confirmó tu solicitud' }, 400);
+    const abono = Number(cr.deposito_requerido ?? cr.monto_total ?? 0);
+    if (amount + 0.001 < abono) {
+      return jsonRes({ error: `Monto insuficiente: el abono es $${abono.toFixed(2)}` }, 400);
+    }
+  } else if (tipo === 'saldo_cancha') {
+    const { data: cr } = await supabaseAdmin.from('cancha_reservas')
+      .select('monto_total, deposito_pagado, saldo_pagado, status').eq('id', cancha_reserva_id).maybeSingle();
+    if (!cr) return jsonRes({ error: 'Reserva no encontrada' }, 404);
+    if (cr.status !== 'approved') return jsonRes({ error: 'La reserva no está confirmada por la cancha' }, 400);
+    const saldo = Math.max(Number(cr.monto_total ?? 0) - Number(cr.deposito_pagado ?? 0) - Number(cr.saldo_pagado ?? 0), 0);
+    if (saldo <= 0) return jsonRes({ error: 'La reserva ya está pagada por completo' }, 400);
+    if (amount + 0.001 < saldo) {
+      return jsonRes({ error: `Monto insuficiente: el saldo es $${saldo.toFixed(2)}` }, 400);
+    }
+  } else if (tipo === 'membresia_club') {
+    // Carné de Socio: $5.00/mes fijo (decisión Sergio 2026-07-05)
+    if (amount + 0.001 < 5) {
+      return jsonRes({ error: 'La membresía de socio cuesta $5.00' }, 400);
+    }
+  } else if (tipo === 'mixto') {
+    // Pago mixto (créditos + Yappy). La parte Yappy debe cubrir al menos
+    // (precio_socio − saldo de créditos actual). Cierra el subpago por llamada
+    // cruda con amount bajo (la UI ya lo calcula bien). precio_para = mismo
+    // precio socio-aware que usa completar_mixto_por_orden. El caso residual —
+    // que el saldo baje entre este request y el IPN — lo detecta y deja rastro
+    // completar_mixto_por_orden (oversell_alerts 'mixto_shortfall').
+    const { data: precioServer } = await supabaseAdmin.rpc('precio_para', { p_event_id: event_id, p_user_id: profile.id });
+    if (precioServer == null) return jsonRes({ error: 'No se pudo validar el precio del evento' }, 400);
+    const costEv = Number(precioServer);
+    const { data: w } = await supabaseAdmin.from('wallets').select('balance').eq('user_id', profile.id).maybeSingle();
+    const saldo = Number(w?.balance ?? 0);
+    const minYappy = Math.max(Number((costEv - saldo).toFixed(2)), 1);
+    if (amount + 0.001 < minYappy) {
+      return jsonRes({ error: `Monto Yappy insuficiente para el pago mixto (mínimo $${minYappy.toFixed(2)})` }, 400);
     }
   }
   // rifa: amount = cantidad de tickets ($1 c/u), ya validado >= 1.
@@ -231,7 +282,7 @@ serve(async (req) => {
 
     // FAIL-CLOSED: si no podemos registrar la orden, NO confirmamos el cobro (evita cobros
     // huerfanos que el IPN no podria atribuir). Con la constraint de tipo ya alineada
-    // (abono_cancha/rifa), el insert no deberia fallar por tipo.
+    // (abono_cancha/saldo_cancha/rifa), el insert no deberia fallar por tipo.
     if (dbErr) {
       console.error('YAPPY_DB_SAVE_ERROR', { orderId, error: dbErr.message });
       return jsonRes({ error: 'No se pudo registrar la orden. Intentá de nuevo.' }, 500);

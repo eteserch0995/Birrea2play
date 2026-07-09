@@ -125,6 +125,7 @@ function AdminDashboard({ navigation }) {
     { label: 'Club Birreoso',icon: '🎁', route: 'AdminClub' },
     { label: 'Rifa',         icon: '🎟️', route: 'AdminRaffle' },
     { label: 'Canchas',      icon: '🏟', route: 'AdminCanchas' },
+    { label: 'Empresas',     icon: '🏢', route: 'AdminEmpresas' },
   ];
 
   const authUser = useAuthStore((s) => s.user);
@@ -729,6 +730,7 @@ function AdminWallets({ navigation }) {
   // mismo wallet hasta terminar — evita race conditions financieras al
   // tocar +/- rápido o doble-tap.
   const [adjusting, setAdjusting] = useState(null);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     supabase.from('wallets').select('*, users(nombre)').order('balance', { ascending: false })
@@ -772,6 +774,10 @@ function AdminWallets({ navigation }) {
   }
 
   const total = wallets.reduce((s, w) => s + (w.balance ?? 0), 0);
+  // Búsqueda por nombre insensible a mayúsculas y acentos.
+  const norm = (s) => (s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const q = norm(search.trim());
+  const filtered = q ? wallets.filter((w) => norm(w.users?.nombre).includes(q)) : wallets;
   if (loading) return <ActivityIndicator style={{ flex: 1 }} color={COLORS.red} />;
   return (
     <SafeAreaView style={styles.safe}>
@@ -780,8 +786,27 @@ function AdminWallets({ navigation }) {
         <Text style={styles.totalLabel}>TOTAL DE CRÉDITOS INTERNOS</Text>
         <Text style={styles.totalVal}>${total.toFixed(2)}</Text>
       </View>
+      <View style={styles.walletSearchWrap}>
+        <TextInput
+          style={styles.walletSearch}
+          placeholder="🔎 Buscar por nombre…"
+          placeholderTextColor={COLORS.gray}
+          value={search}
+          onChangeText={setSearch}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+        {q ? (
+          <TouchableOpacity style={styles.walletSearchClear} onPress={() => setSearch('')}>
+            <Text style={styles.walletSearchClearText}>✕</Text>
+          </TouchableOpacity>
+        ) : null}
+      </View>
+      {q ? <Text style={styles.walletSearchCount}>{filtered.length} resultado{filtered.length === 1 ? '' : 's'}</Text> : null}
       <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.list}>
-        {wallets.map((w) => (
+        {filtered.length === 0 ? (
+          <Text style={styles.empty}>Sin resultados para "{search.trim()}"</Text>
+        ) : filtered.map((w) => (
           <View key={w.id} style={styles.card}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
               <Text style={styles.cardName}>{w.users?.nombre}</Text>
@@ -1621,7 +1646,7 @@ function AdminEvents({ navigation }) {
 function AdminManageEvent({ route, navigation }) {
   const { eventId, eventNombre, formato } = route.params ?? {};
   const user = useAuthStore((s) => s.user); // auditoría: quién carga cada resultado
-  const TABS     = ['Equipos', 'Partidos', 'Resultados', 'Ganancia', 'MVP', 'Config'];
+  const TABS     = ['Equipos', 'Partidos', 'Resultados', 'MVP', 'Config', 'Ganancia'];
   const [tab,        setTab]        = useState('Equipos');
   const [teams,      setTeams]      = useState([]);
   const [players,    setPlayers]    = useState([]);
@@ -3666,10 +3691,160 @@ function AdminCashCobro({ navigation }) {
 // ═══════════════════════════════════════════════════════════════════
 // CANCHAS DEL SISTEMA
 // ═══════════════════════════════════════════════════════════════════
+// ─── Empresas aliadas (socios corporativos, 2026-07-05) ─────────────────
+// La empresa recibe un código EMP-XXXXXX; sus colaboradores lo canjean y
+// quedan socios del Club. Confirmación: automática por dominio de correo
+// o manual acá (canjes pendientes).
+function AdminEmpresas({ navigation }) {
+  const [empresas, setEmpresas]   = useState([]);
+  const [pendientes, setPendientes] = useState([]);
+  const [loading, setLoading]     = useState(true);
+  const [nuevo, setNuevo]         = useState({ nombre: '', cupos: '20', vigencia: '', dominio: '' });
+
+  async function fetchAll() {
+    setLoading(true);
+    try {
+      const [{ data: emps }, { data: canjes }] = await Promise.all([
+        supabase.from('empresas').select('*').order('created_at', { ascending: false }),
+        supabase.from('empresa_canjes')
+          .select('id, estado, created_at, user:user_id(nombre, correo), empresa:empresa_id(nombre)')
+          .eq('estado', 'pendiente').order('created_at'),
+      ]);
+      setEmpresas(emps ?? []);
+      setPendientes(canjes ?? []);
+    } catch (e) { Alert.alert('Error', e.message); }
+    setLoading(false);
+  }
+  useEffect(() => { fetchAll(); }, []);
+
+  async function crearEmpresa() {
+    if (!nuevo.nombre.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(nuevo.vigencia.trim())) {
+      Alert.alert('Falta info', 'Nombre y vigencia (AAAA-MM-DD) son obligatorios.'); return;
+    }
+    try {
+      const { data, error } = await supabase.from('empresas').insert({
+        nombre: nuevo.nombre.trim(),
+        cupos_max: parseInt(nuevo.cupos) || 20,
+        vigente_hasta: nuevo.vigencia.trim(),
+        dominio_correo: nuevo.dominio.trim() ? (nuevo.dominio.trim().startsWith('@') ? nuevo.dominio.trim() : '@' + nuevo.dominio.trim()) : null,
+      }).select('nombre, codigo').single();
+      if (error) throw error;
+      Alert.alert('\u2705 Empresa creada', `${data.nombre}\n\nCódigo para compartir: ${data.codigo}`);
+      setNuevo({ nombre: '', cupos: '20', vigencia: '', dominio: '' });
+      fetchAll();
+    } catch (e) { Alert.alert('Error', e.message); }
+  }
+
+  async function resolver(canje, aprobar) {
+    try {
+      const { data, error } = await supabase.rpc('resolver_canje_empresa', { p_canje_id: canje.id, p_aprobar: aprobar });
+      if (error) throw error;
+      if (data?.ok === false) throw new Error(data.error);
+      fetchAll();
+    } catch (e) { Alert.alert('Error', e.message); }
+  }
+
+  async function renovar(emp) {
+    if (Platform.OS === 'web') {
+      const f = window.prompt(`Nueva vigencia para ${emp.nombre} (AAAA-MM-DD):`, emp.vigente_hasta);
+      if (!f || !/^\d{4}-\d{2}-\d{2}$/.test(f)) return;
+      try {
+        const { data, error } = await supabase.rpc('renovar_empresa', { p_empresa_id: emp.id, p_nueva_vigencia: f });
+        if (error) throw error;
+        Alert.alert('\u2705 Renovada', `${emp.nombre} hasta ${f}. Colaboradores extendidos: ${data?.colaboradores_extendidos ?? 0}.`);
+        fetchAll();
+      } catch (e) { Alert.alert('Error', e.message); }
+    }
+  }
+
+  async function toggleActiva(emp) {
+    const { error } = await supabase.from('empresas').update({ activa: !emp.activa }).eq('id', emp.id).select('id');
+    if (error) Alert.alert('Error', error.message); else fetchAll();
+  }
+
+  return (
+    <SafeAreaView style={styles.safe}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, padding: SPACING.md }}>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={{ fontFamily: FONTS.heading, fontSize: 24, color: COLORS.white }}>←</Text>
+        </TouchableOpacity>
+        <Text style={[styles.title, { flex: 1, padding: 0 }]}>EMPRESAS ALIADAS</Text>
+      </View>
+      {loading ? (
+        <ActivityIndicator color={COLORS.red} style={{ marginTop: 40 }} />
+      ) : (
+        <ScrollView contentContainerStyle={{ padding: SPACING.md, paddingBottom: SPACING.xxl }}>
+          {pendientes.length > 0 && (
+            <View style={{ marginBottom: SPACING.md }}>
+              <Text style={styles.sectionTitle}>CANJES POR CONFIRMAR ({pendientes.length})</Text>
+              {pendientes.map((c) => (
+                <View key={c.id} style={[styles.card, { marginBottom: SPACING.sm }]}>
+                  <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 14 }}>{c.user?.nombre ?? '—'}</Text>
+                  <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>{c.user?.correo ?? ''} · {c.empresa?.nombre ?? ''}</Text>
+                  <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
+                    <TouchableOpacity style={{ flex: 1, backgroundColor: COLORS.green, borderRadius: RADIUS.sm, paddingVertical: 9, alignItems: 'center' }} onPress={() => resolver(c, true)}>
+                      <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.bg, fontSize: 12 }}>ES COLABORADOR ✓</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={{ flex: 1, borderWidth: 1, borderColor: COLORS.red, borderRadius: RADIUS.sm, paddingVertical: 9, alignItems: 'center' }} onPress={() => resolver(c, false)}>
+                      <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.red, fontSize: 12 }}>RECHAZAR</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
+          <Text style={styles.sectionTitle}>NUEVA EMPRESA</Text>
+          <View style={[styles.card, { marginBottom: SPACING.md, gap: 8 }]}>
+            <TextInput style={styles.input} placeholder="Nombre de la empresa" placeholderTextColor={COLORS.gray}
+              value={nuevo.nombre} onChangeText={(v) => setNuevo((n) => ({ ...n, nombre: v }))} />
+            <TextInput style={styles.input} placeholder="Cupos de socios (default 20)" placeholderTextColor={COLORS.gray} keyboardType="number-pad"
+              value={nuevo.cupos} onChangeText={(v) => setNuevo((n) => ({ ...n, cupos: v }))} />
+            <TextInput style={styles.input} placeholder="Vigente hasta (AAAA-MM-DD)" placeholderTextColor={COLORS.gray}
+              value={nuevo.vigencia} onChangeText={(v) => setNuevo((n) => ({ ...n, vigencia: v }))} />
+            <TextInput style={styles.input} placeholder="Dominio de correo (opcional, ej: @empresa.com)" placeholderTextColor={COLORS.gray} autoCapitalize="none"
+              value={nuevo.dominio} onChangeText={(v) => setNuevo((n) => ({ ...n, dominio: v }))} />
+            <Text style={{ fontFamily: FONTS.body, color: COLORS.gray, fontSize: 11 }}>
+              Con dominio: los correos de ese dominio quedan socios AL INSTANTE al canjear. Sin dominio: cada canje queda pendiente y lo confirmás acá.
+            </Text>
+            <TouchableOpacity style={{ backgroundColor: COLORS.red, borderRadius: RADIUS.sm, paddingVertical: 10, alignItems: 'center' }} onPress={crearEmpresa}>
+              <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 13 }}>CREAR Y GENERAR CÓDIGO</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.sectionTitle}>{empresas.length} empresa{empresas.length === 1 ? '' : 's'}</Text>
+          {empresas.map((e) => (
+            <View key={e.id} style={[styles.card, { marginBottom: SPACING.sm }]}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 15, flex: 1 }}>{e.nombre}</Text>
+                <Text style={{ fontFamily: FONTS.bodyBold, color: e.activa ? COLORS.green : COLORS.gray, fontSize: 10 }}>{e.activa ? 'ACTIVA' : 'INACTIVA'}</Text>
+              </View>
+              <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.gold, fontSize: 16, marginTop: 2 }}>{e.codigo}</Text>
+              <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12 }}>
+                Cupos: {e.cupos_max} · Vigente hasta {e.vigente_hasta}{e.dominio_correo ? ` · ${e.dominio_correo}` : ' · confirmación manual'}
+              </Text>
+              <View style={{ flexDirection: 'row', gap: SPACING.sm, marginTop: SPACING.sm }}>
+                <TouchableOpacity style={{ flex: 1, backgroundColor: COLORS.navy, borderRadius: RADIUS.sm, paddingVertical: 8, alignItems: 'center', borderWidth: 1, borderColor: COLORS.line }} onPress={() => renovar(e)}>
+                  <Text style={{ fontFamily: FONTS.bodySemiBold, color: COLORS.white, fontSize: 12 }}>Renovar vigencia</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 1, borderWidth: 1, borderColor: e.activa ? COLORS.red : COLORS.green, borderRadius: RADIUS.sm, paddingVertical: 8, alignItems: 'center' }} onPress={() => toggleActiva(e)}>
+                  <Text style={{ fontFamily: FONTS.bodySemiBold, color: e.activa ? COLORS.red : COLORS.green, fontSize: 12 }}>{e.activa ? 'Desactivar' : 'Activar'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+    </SafeAreaView>
+  );
+}
+
 function AdminCanchas({ navigation }) {
   const [canchas, setCanchas]     = useState([]);
   const [loading, setLoading]     = useState(true);
   const [editModal, setEditModal] = useState(null); // null | cancha obj
+  const [porLiquidar, setPorLiquidar] = useState([]); // reservas cobradas por la app, sin transferir a la cancha
+  const [feesMes, setFeesMes]         = useState(0);  // fee $0.50/inscrito cobrado este mes
 
   async function fetchCanchas() {
     setLoading(true);
@@ -3679,7 +3854,54 @@ function AdminCanchas({ navigation }) {
       .order('nombre', { ascending: true });
     if (error) Alert.alert('Error', error.message);
     else setCanchas(data ?? []);
+
+    // Liquidación: lo que la app recaudó (abono+saldo) y aún no se transfirió a la cancha
+    try {
+      const { data: liq } = await supabase
+        .from('cancha_reservas')
+        .select('id, codigo_reserva, fecha, deposito_pagado, saldo_pagado, estado_pago, status, cancha:cancha_id(nombre)')
+        .eq('liquidada', false)
+        .in('estado_pago', ['abono_pagado', 'pagado'])
+        .in('status', ['approved', 'completed'])
+        .order('fecha', { ascending: true });
+      setPorLiquidar(liq ?? []);
+    } catch { setPorLiquidar([]); }
+
+    // Fee de plataforma cobrado en el mes (inscripciones + invitados confirmados)
+    try {
+      const inicioMes = new Date();
+      inicioMes.setDate(1); inicioMes.setHours(0, 0, 0, 0);
+      const iso = inicioMes.toISOString();
+      const [{ data: fr }, { data: fg }] = await Promise.all([
+        supabase.from('event_registrations').select('app_fee').eq('status', 'confirmed').gt('app_fee', 0).gte('created_at', iso),
+        supabase.from('event_guests').select('app_fee').eq('status', 'confirmed').gt('app_fee', 0).gte('created_at', iso),
+      ]);
+      const suma = [...(fr ?? []), ...(fg ?? [])].reduce((a, r) => a + Number(r.app_fee || 0), 0);
+      setFeesMes(suma);
+    } catch { setFeesMes(0); }
+
     setLoading(false);
+  }
+
+  async function marcarLiquidada(r) {
+    const monto = Number(r.deposito_pagado || 0) + Number(r.saldo_pagado || 0);
+    Alert.alert(
+      'Marcar liquidada',
+      `¿Ya le transferiste $${monto.toFixed(2)} a ${r.cancha?.nombre ?? 'la cancha'} por la reserva ${r.codigo_reserva}?`,
+      [
+        { text: 'No', style: 'cancel' },
+        {
+          text: 'Sí, liquidada',
+          onPress: async () => {
+            try {
+              const { error } = await supabase.rpc('marcar_reserva_liquidada', { p_reserva_id: r.id });
+              if (error) throw error;
+              fetchCanchas();
+            } catch (e) { Alert.alert('Error', e.message); }
+          },
+        },
+      ],
+    );
   }
 
   useEffect(() => { fetchCanchas(); }, []);
@@ -3705,6 +3927,44 @@ function AdminCanchas({ navigation }) {
         <ActivityIndicator color={COLORS.red} style={{ marginTop: 40 }} />
       ) : (
         <ScrollView contentContainerStyle={{ padding: SPACING.md, paddingBottom: SPACING.xxl }}>
+          {/* ── F3: dinero ── */}
+          <View style={[styles.card, { marginBottom: SPACING.md, borderColor: COLORS.green + '55' }]}>
+            <Text style={{ fontFamily: FONTS.heading, fontSize: 14, color: COLORS.green, letterSpacing: 1 }}>💵 FINANZAS</Text>
+            <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12, marginTop: 4 }}>
+              Fee de plataforma cobrado este mes: <Text style={{ color: COLORS.green, fontFamily: FONTS.bodyBold }}>${feesMes.toFixed(2)}</Text>
+            </Text>
+            <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 12, marginTop: 2 }}>
+              Reservas por liquidar a canchas: <Text style={{ color: COLORS.gold, fontFamily: FONTS.bodyBold }}>{porLiquidar.length}</Text>
+            </Text>
+          </View>
+
+          {porLiquidar.length > 0 && (
+            <View style={{ marginBottom: SPACING.md }}>
+              <Text style={styles.sectionTitle}>POR LIQUIDAR (transferir por Yappy a la cancha)</Text>
+              {porLiquidar.map((r) => {
+                const monto = Number(r.deposito_pagado || 0) + Number(r.saldo_pagado || 0);
+                return (
+                  <View key={r.id} style={[styles.card, { marginBottom: SPACING.sm, flexDirection: 'row', alignItems: 'center', gap: SPACING.sm }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.white, fontSize: 13 }}>
+                        {r.cancha?.nombre ?? 'Cancha'} · {r.codigo_reserva}
+                      </Text>
+                      <Text style={{ fontFamily: FONTS.body, color: COLORS.gray2, fontSize: 11 }}>
+                        {r.fecha} · {r.estado_pago === 'pagado' ? 'pagada completa' : 'solo abono'} · ${monto.toFixed(2)}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={{ backgroundColor: COLORS.green, borderRadius: RADIUS.sm, paddingVertical: 7, paddingHorizontal: 12 }}
+                      onPress={() => marcarLiquidada(r)}
+                    >
+                      <Text style={{ fontFamily: FONTS.bodyBold, color: COLORS.bg, fontSize: 11 }}>LIQUIDADA</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+            </View>
+          )}
+
           <Text style={styles.sectionTitle}>
             {canchas.length} cancha{canchas.length !== 1 ? 's' : ''} registrada{canchas.length !== 1 ? 's' : ''}
           </Text>
@@ -3866,6 +4126,7 @@ export default function AdminPanel() {
       <Stack.Screen name="AdminClub"           component={ClubAdminPanel} />
       <Stack.Screen name="AdminRaffle"         component={AdminRaffle} />
       <Stack.Screen name="AdminCanchas"        component={AdminCanchas} />
+      <Stack.Screen name="AdminEmpresas"       component={AdminEmpresas} />
       <Stack.Screen name="AdminQRScanner"      component={AdminQRScannerScreen} />
     </Stack.Navigator>
   );
@@ -4178,6 +4439,11 @@ const styles = StyleSheet.create({
   roleText:      { fontFamily: FONTS.bodyBold, fontSize: 11, color: COLORS.white },
   walletBalance: { fontFamily: FONTS.heading, fontSize: 22, color: COLORS.gold },
   totalCard:     { backgroundColor: COLORS.card, margin: SPACING.md, borderRadius: RADIUS.md, padding: SPACING.md, alignItems:'center', borderWidth: 1, borderColor: COLORS.gold + '40' },
+  walletSearchWrap:  { flexDirection: 'row', alignItems: 'center', marginHorizontal: SPACING.md, marginBottom: SPACING.xs, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.line, borderRadius: RADIUS.md, paddingHorizontal: 12 },
+  walletSearch:      { flex: 1, color: COLORS.white, fontFamily: FONTS.body, fontSize: 15, paddingVertical: 10 },
+  walletSearchClear: { paddingLeft: 10, paddingVertical: 6 },
+  walletSearchClearText: { color: COLORS.gray, fontSize: 16, fontFamily: FONTS.bodySemiBold },
+  walletSearchCount: { fontFamily: FONTS.body, fontSize: 12, color: COLORS.gray, marginHorizontal: SPACING.md, marginBottom: SPACING.xs },
   totalLabel:    { fontFamily: FONTS.bodyMedium, fontSize: 12, color: COLORS.gray, letterSpacing: 1 },
   totalVal:      { fontFamily: FONTS.heading, fontSize: 36, color: COLORS.gold },
   tabBtn:        { paddingHorizontal: SPACING.md, paddingVertical: 8, borderRadius: RADIUS.sm, backgroundColor: COLORS.navy },

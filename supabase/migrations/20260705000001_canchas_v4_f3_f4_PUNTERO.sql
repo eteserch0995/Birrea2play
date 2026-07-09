@@ -1,0 +1,34 @@
+-- ============================================================
+-- 2026-07-05 — PUNTERO de 3 migraciones aplicadas a prod vía MCP
+-- (contenido completo registrado en supabase_migrations.schema_migrations
+--  del proyecto rumreditrvxkcnlhawut; espejar acá en la próxima sesión)
+--
+-- 1) canchas_v4_aprobar_antes_de_pagar
+--    Flujo invertido (decisión Sergio 2026-07-05): la solicitud NO cobra;
+--    la cancha aprueba → se abre ventana de pago del abono (hold_minutos,
+--    default nuevo 240 min, tope = hora de la reserva) → abono = confirmada.
+--    Reescribe: crear_cancha_reserva (sin hold al crear), aprobar_cancha_reserva
+--    (abre ventana + devuelve abono_pendiente/pagar_antes_de), confirmar_abono_*
+--    (exigen approved; pagos Yappy tardíos reviven a approved si el slot sigue
+--    libre o reembolsan), expirar_reservas_cancha_vencidas (expira ventana de
+--    pago Y solicitudes sin respuesta pasada la hora), trigger de notificaciones
+--    con modos v4 (nueva-solicitud al CREAR, reserva-aprobada-pagar, abono-pagado,
+--    pago-vencido, solicitud-vencida).
+--
+-- 2) birrias_fee_050_cobro_real  (F3)
+--    event_registrations.app_fee + event_guests.app_fee. El jugador paga
+--    precio + app_fee_per_player (el gestor NO paga fee en su propio evento):
+--    inscribir_con_wallet debita precio+fee; inscribir_yappy_evento registra el
+--    fee realmente cobrado (dinero real nunca se rechaza); inscribir_guest_con_wallet
+--    cobra precio+fee por invitado. yappy-boton v72 exige el total en evento/invitado.
+--
+-- 3) eventos_privados_y_drop_legacy_v1  (F4)
+--    events.es_privado + access_code (único, autogenerado 'EV-XXXXXX' por trigger
+--    trg_event_access_code) + RPC get_event_by_code(text) (authenticated).
+--    _trfn_notify_new_event notifica también la transición privada→pública y
+--    wc-notify v6 hace broadcast a TODOS (antes últimos 50).
+--    DROP definitivo del legacy v1: cancha_slots, cancha_slot_reservas (CASCADE,
+--    events.cancha_slot_id queda como uuid huérfano adrede para no romper el
+--    bundle anterior), claim_cancha_slot, cancha_auto_pay, gestor_liberar_cancha.
+-- ============================================================
+select 1; -- no-op: archivo documental

@@ -47,10 +47,11 @@ export default function HomeScreen({ navigation }) {
   const [myMvps,       setMyMvps]       = React.useState([]); // [{ id, event_id, votos_totales, evento, fecha }]
   const [survivorWinner, setSurvivorWinner] = React.useState(null);
 
-  const RAFFLE_ACTIVE = new Date() < new Date('2026-07-17');
+  // Rifa oculta del Home 2026-07-05 (decisión Sergio; el módulo admin queda)
+  const RAFFLE_ACTIVE = false;
   // RECAUDO_FOCUS: oculta temporalmente en Home la rifa, el Mundial y el Club de socios
   // para dejar SOLO el botón grande de donación. Revertir = poner false.
-  const RECAUDO_FOCUS = true;
+  const RECAUDO_FOCUS = false; // Campaña Venezuela desactivada 2026-07-05 (decisión Sergio); el Home vuelve a rifa/Mundial/Club
 
   // WELCOME_BONUS_ENABLED: bono de bienvenida $1 DESACTIVADO (2026-06-29). Al liberar el
   // acceso (sin gate de instalar la app / activar notificaciones), el bono dejó de tener
@@ -246,6 +247,34 @@ export default function HomeScreen({ navigation }) {
   // literalmente en ambas ramas; unificados acá para no divergir. `rise` opcional
   // (string del dataSet t2Rise) envuelve el grupo en un View — solo la rama Tema2
   // lo usa para su animación de entrada; la rama clásica llama sin `rise`. ═══
+  // Carnet de Socio — SIEMPRE arriba del evento destacado del Home (pedido Sergio 2026-07-05)
+  function renderCarnetCard() {
+    if (RECAUDO_FOCUS) return null;
+    return (
+      <Card
+        variant="holo"
+        glow="subtle"
+        style={styles.socioCard}
+        onPress={() => navigation.navigate('Beneficios')}
+      >
+        <View style={styles.socioHeaderRow}>
+          <Text style={styles.socioIcon}>🎖</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.socioTitle}>CARNET DE SOCIO</Text>
+            <Text style={styles.socioPrice}>$5/mes</Text>
+          </View>
+          <Text style={styles.socioArrow}>→</Text>
+        </View>
+        <Text style={styles.socioBenefits}>
+          ⚽ 10% off en los eventos del mes · 🎁 1 invitado gratis · 🏷 Descuentos en comercios
+        </Text>
+        <View style={styles.socioCtaChip}>
+          <Text style={styles.socioCtaText}>HACERME SOCIO →</Text>
+        </View>
+      </Card>
+    );
+  }
+
   function renderSharedBanners({ rise } = {}) {
     const content = (
       <>
@@ -374,24 +403,14 @@ export default function HomeScreen({ navigation }) {
           );
         })()}
 
-        {mundialOn && !RECAUDO_FOCUS && <MundialQuickCard onPress={() => navigation.navigate('Mundial')} />}
+        {/* MundialQuickCard oculta del Home 2026-07-05 (decisión Sergio; el tab
+           🏆 de abajo NO se toca, sigue disponible). */}
 
-        {/* ── Banner Club de Beneficios (botón dorado) ── */}
-        {clubOn && !RECAUDO_FOCUS && (
-          <TouchableOpacity
-            style={styles.clubBanner}
-            activeOpacity={0.9}
-            onPress={() => navigation.navigate('Beneficios')}
-          >
-            <Text style={styles.clubBannerIcon}>🎁</Text>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.clubBannerKicker}>CLUB BIRREOSO</Text>
-              <Text style={styles.clubBannerTitle}>BENEFICIOS DE SOCIO</Text>
-              <Text style={styles.clubBannerSub}>Descuentos exclusivos en comercios aliados</Text>
-            </View>
-            <Text style={styles.clubBannerArrow}>→</Text>
-          </TouchableOpacity>
-        )}
+        {/* ── Carné de Socio — reemplaza el banner del Club de Beneficios.
+           Ahora SIEMPRE visible a los players, ya no depende de `clubOn` ni de
+           `club_settings.is_visible` (decisión Sergio 2026-07-05). Mismo destino
+           que el banner anterior: navigation.navigate('Beneficios'). ── */}
+        {/* Carnet de Socio movido ARRIBA del evento del Home (renderCarnetCard) — 2026-07-05 */}
 
         {/* ── Recaudo Solidario (Venezuela) — botón principal grande ──
            Gateado por RECAUDO_FOCUS: es el CTA focal del modo campaña (mismo flag que
@@ -452,6 +471,8 @@ export default function HomeScreen({ navigation }) {
           </View>
 
           {/* ── Hero: próximo evento ── */}
+          {renderCarnetCard()}
+
           <View style={t2.heroWrap} dataSet={{ t2Rise: '2' }}>
             {loading ? (
               <Card variant="glass" style={t2.heroEmptyCard}>
@@ -516,6 +537,21 @@ export default function HomeScreen({ navigation }) {
             )}
           </View>
 
+          {/* ── Más eventos (el resto de la lista, después del hero) ── */}
+          {!loading && !error && restoEventos.length > 0 && (
+            <>
+              <SectionHeader title="Más eventos" onPress={() => navigation.navigate('Eventos')} />
+              {restoEventos.map((ev) => (
+                <View key={ev.id} style={styles.cardWrap}>
+                  <EventCard
+                    event={ev}
+                    onPress={() => navigation.navigate('Eventos', { screen: 'EventDetail', params: { eventId: ev.id } })}
+                  />
+                </View>
+              ))}
+            </>
+          )}
+
           {/* ── Bento: saldo / stats / MVPs ── */}
           <View style={t2.bentoGrid}>
             <View style={t2.bentoTileWrap} dataSet={{ t2Rise: '3' }}>
@@ -572,20 +608,6 @@ export default function HomeScreen({ navigation }) {
              un View con t2Rise para que entren juntos (grupo, no individual). ── */}
           {renderSharedBanners({ rise: '4' })}
 
-          {/* ── Más eventos (el resto de la lista, después del hero) ── */}
-          {!loading && !error && restoEventos.length > 0 && (
-            <>
-              <SectionHeader title="Más eventos" onPress={() => navigation.navigate('Eventos')} />
-              {restoEventos.map((ev) => (
-                <View key={ev.id} style={styles.cardWrap}>
-                  <EventCard
-                    event={ev}
-                    onPress={() => navigation.navigate('Eventos', { screen: 'EventDetail', params: { eventId: ev.id } })}
-                  />
-                </View>
-              ))}
-            </>
-          )}
 
           {/* Invita y Gana — mismo componente, con su propio fetch interno */}
           {user?.id && <HomeReferralCard />}
@@ -627,6 +649,7 @@ export default function HomeScreen({ navigation }) {
         {/* ── Banners compartidos (rifa, bono bienvenida, perfil, Mundial, club,
            recaudo) — ver renderSharedBanners() arriba, misma función que Tema2. ── */}
         {renderSharedBanners()}
+        {renderCarnetCard()}
 
         {/* ── Próximos eventos: PRIMER bloque visible para foco en agenda ── */}
         <SectionHeader title="Próximos eventos" onPress={() => navigation.navigate('Eventos')} />
@@ -912,47 +935,61 @@ const styles = StyleSheet.create({
   m26Pill: { alignSelf: 'flex-start', backgroundColor: COLORS.gold, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 3, marginBottom: 6 },
   m26PillText: { fontFamily: FONTS.bodyBold, fontSize: 10, letterSpacing: 1.5, color: COLORS.bg },
 
-  // ── Club Banner (dorado) ──
-  clubBanner: {
+  // ── Carné de Socio (dorado, premium) — reemplaza el antiguo Club Banner ──
+  socioCard: {
     marginHorizontal: SPACING.md,
     marginTop: SPACING.sm,
     marginBottom: SPACING.sm,
     backgroundColor: COLORS.bg2,
     borderWidth: 1.5,
     borderColor: COLORS.gold,
-    borderRadius: RADIUS.md,
-    padding: SPACING.md,
+  },
+  socioHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: SPACING.sm,
-    ...SHADOWS.card,
   },
-  clubBannerIcon: { fontSize: 34, width: 50, textAlign: 'center' },
-  clubBannerKicker: {
-    fontFamily: FONTS.bodyBold,
-    fontSize: 10,
-    color: COLORS.gold,
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
-    marginBottom: 2,
-  },
-  clubBannerTitle: {
+  socioIcon: { fontSize: 32, width: 44, textAlign: 'center' },
+  socioTitle: {
     fontFamily: FONTS.heading,
-    fontSize: 26,
-    color: COLORS.white,
+    fontSize: 24,
+    color: COLORS.gold,
     letterSpacing: 1.5,
-    lineHeight: 28,
+    lineHeight: 26,
   },
-  clubBannerSub: {
-    fontFamily: FONTS.body,
-    fontSize: 12,
-    color: COLORS.gray2,
-    marginTop: 3,
+  socioPrice: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 13,
+    color: COLORS.white,
+    marginTop: 1,
   },
-  clubBannerArrow: {
+  socioArrow: {
     fontFamily: FONTS.heading,
-    fontSize: 26,
+    fontSize: 24,
     color: COLORS.gold,
+  },
+  socioBenefits: {
+    fontFamily: FONTS.body,
+    fontSize: 11.5,
+    color: COLORS.gray2,
+    marginTop: SPACING.sm,
+    lineHeight: 16,
+  },
+  socioCtaChip: {
+    alignSelf: 'flex-start',
+    marginTop: SPACING.sm,
+    backgroundColor: withAlpha(COLORS.gold, '22'),
+    borderWidth: 1,
+    borderColor: COLORS.gold,
+    borderRadius: RADIUS.full,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: 6,
+  },
+  socioCtaText: {
+    fontFamily: FONTS.bodyBold,
+    fontSize: 12,
+    color: COLORS.gold,
+    letterSpacing: 1,
   },
 
   // ── Recaudo: botón principal grande (RECAUDO_FOCUS) ──

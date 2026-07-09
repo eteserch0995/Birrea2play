@@ -10,7 +10,7 @@ import { COLORS, FONTS, SPACING, RADIUS } from '../../../constants/theme';
 import { isModo26Active } from '../../../lib/modo26';
 import { supabase } from '../../../lib/supabase';
 import useAuthStore from '../../../store/authStore';
-import { getRefundStatus, getEventStatusInfo, getTournamentWinner, freeLabel } from '../../../lib/eventHelpers';
+import { getRefundStatus, getEventStatusInfo, getTournamentWinner, freeLabel, precioConFee, appFeeDe } from '../../../lib/eventHelpers';
 import WinnerBanner from '../../../components/WinnerBanner';
 import EventDetailSkeleton from '../../../components/EventDetailSkeleton';
 import { shareEvent } from '../../../lib/shareEvent';
@@ -76,6 +76,34 @@ export default function EventDetailScreen({ route, navigation }) {
   const [cancelModal, setCancelModal] = useState(false);
   const [showInstallGate, setShowInstallGate] = useState(false);
   const [guestModal,  setGuestModal]  = useState(false);
+  // Carné de Socio: 10% off + 1 invitado gratis por ciclo (club_membresias, RLS fila propia)
+  const [esSocio, setEsSocio] = useState(false);
+  const [socioInvitadoDisponible, setSocioInvitadoDisponible] = useState(false);
+  const [invGratisOpen, setInvGratisOpen]       = useState(false);
+  const [invGratisNombre, setInvGratisNombre]   = useState('');
+  const [invGratisGenero, setInvGratisGenero]   = useState(null);
+  const [invGratisLoading, setInvGratisLoading] = useState(false);
+  useEffect(() => {
+    if (!user?.id) return;
+    (async () => {
+      try {
+        // .eq(user_id) OBLIGATORIO: el RLS deja al admin ver TODAS las membresías,
+        // sin el filtro un admin "hereda" la membresía de otro user (bug 2026-07-05)
+        const { data: m } = await supabase.from('club_membresias')
+          .select('vence_el, invitado_gratis_usado_el').eq('user_id', user.id).maybeSingle();
+        if (!m?.vence_el) return;
+        const hoyPA = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Panama' }).format(new Date());
+        const activo = hoyPA <= m.vence_el;
+        setEsSocio(activo);
+        if (activo) {
+          const inicio = new Date(`${m.vence_el}T12:00:00`);
+          inicio.setMonth(inicio.getMonth() - 1);
+          const inicioStr = inicio.toISOString().slice(0, 10);
+          setSocioInvitadoDisponible(!(m.invitado_gratis_usado_el && m.invitado_gratis_usado_el >= inicioStr));
+        }
+      } catch { /* sin membresía */ }
+    })();
+  }, [user?.id]);
   const [paying,      setPaying]      = useState(false);
   const [cancelling,  setCancelling]  = useState(false);
   const [yappyLoading,setYappyLoading]= useState(false);
@@ -308,7 +336,8 @@ export default function EventDetailScreen({ route, navigation }) {
 
   // ── Internal credits payment ───────────────────────────────────────────────
   const payWithWallet = async () => {
-    const precio = event?.precio ?? 0;
+    // F3: el jugador paga precio + fee de plataforma (el server debita el total)
+    const precio = precioConFee(event, user?.id, esSocio);
     if (precio <= 0) {
       Alert.alert('Error', 'Este evento no tiene un precio válido.');
       return;
@@ -471,12 +500,25 @@ export default function EventDetailScreen({ route, navigation }) {
             p_event_id:     event.id,
             p_wallet_monto: mixtoWallet,
             p_yappy_monto:  mixtoYappy,
+            p_order_id:     orderId, // v2: el server valida la orden Yappy executed
           })
         );
         setYappyStep('idle');
         setYappyLoading(false);
         if (error) {
-          Alert.alert('Error al confirmar inscripción', error.message + '\n\nContactá al admin — tu pago Yappy fue procesado.');
+          // El IPN de Yappy ahora completa el mixto server-side. Si ganó la carrera,
+          // este inscribir_mixto devuelve "Ya estás inscrito" → eso ES éxito.
+          if (/ya est[aá]s inscrito/i.test(error.message ?? '')) {
+            Alert.alert('¡Inscrito!', 'Tu pago mixto se confirmó y ya quedaste inscrito. ¡Nos vemos en la cancha!', [
+              { text: 'OK', onPress: fetchEvent },
+            ]);
+            return;
+          }
+          // Otro error: el pago Yappy ya se procesó y el servidor termina de confirmar
+          // la inscripción por su cuenta — pedimos refrescar en vez de asustar.
+          Alert.alert('Casi listo', 'Tu pago Yappy se procesó y el sistema está confirmando tu inscripción. Refresca en unos segundos; si no aparece, contacta al admin.', [
+            { text: 'OK', onPress: fetchEvent },
+          ]);
           return;
         }
         const precio = (mixtoWallet + mixtoYappy).toFixed(2);
@@ -494,7 +536,7 @@ export default function EventDetailScreen({ route, navigation }) {
 
   const confirmarYappyBoton = async () => {
     const phone  = yappyPhone.replace(/\D/g, '');
-    const precio = event?.precio ?? 0;
+    const precio = precioConFee(event, user?.id, esSocio); // F3: precio + fee de plataforma
     if (phone.length < 7) { Alert.alert('Error', 'Ingresa un número Yappy válido (mínimo 7 dígitos).'); return; }
     if (precio <= 0)       { Alert.alert('Error', 'Este evento no tiene un precio válido.'); return; }
     if (!(await checkCapacity())) { setYappyStep('idle'); await fetchEvent(); return; }
@@ -639,16 +681,26 @@ export default function EventDetailScreen({ route, navigation }) {
         event_id:     event.id,
         user_id:      user.id,
         metodo_pago:  'efectivo',
-        monto_pagado: event.precio ?? 0,
+        monto_pagado: precioConFee(event, user?.id, esSocio), // F3: en efectivo el gestor cobra precio+fee
+        app_fee:      appFeeDe(event, user?.id),
         status:       'pending',
       }, { onConflict: 'event_id,user_id' });
       if (regErr) throw new Error(regErr.message);
 
-      // Also create the cash_payment_request for admin tracking
+      // Also create the cash_payment_request for admin tracking.
+      // Promovido de lista de espera eligiendo efectivo: su ventana real sigue
+      // siendo de 10 min, no 4h — sin este expires_at corto, tocar "Efectivo"
+      // era un atajo trivial para estirar el cupo 24x (hallazgo confirmado
+      // 2026-07-07: metodo_pago pasa a 'efectivo' y la fila sale del alcance
+      // de expire_promoted_waitlist, que solo mira 'waitlist_promoted').
+      // expire_promoted_waitlist (cron cada 1 min) distingue este caso corto
+      // del de una solicitud de efectivo NORMAL (+4h, sin tocar) por la
+      // duracion propia de la ventana, no por una columna nueva.
       const { error: cashErr } = await supabase.from('cash_payment_requests').insert({
-        user_id:   user.id,
-        event_id:  event.id,
-        amount:    event.precio ?? 0,
+        user_id:    user.id,
+        event_id:   event.id,
+        amount:     precioConFee(event, user?.id, esSocio),
+        ...(isPromotedReg ? { expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString() } : {}),
       });
       // cash_payment_request failure is non-fatal — registration row already created
       if (cashErr) console.warn('cash_payment_requests insert failed:', cashErr.message);
@@ -656,7 +708,9 @@ export default function EventDetailScreen({ route, navigation }) {
       setPayModal(false);
       Alert.alert(
         'Pago en efectivo solicitado',
-        `Tienes 4 horas para contactar al gestor y completar el pago de $${(event.precio ?? 0).toFixed(2)}.\n\n📞 Contactá al gestor: 6325-5309 o 6122-2854.\n\nTu cupo quedó reservado. Si el pago no se confirma en 4 horas, el cupo será liberado.`,
+        isPromotedReg
+          ? `Tenés 10 minutos para contactar al gestor y completar el pago de $${precioConFee(event, user?.id, esSocio).toFixed(2)}.\n\n📞 Contactá al gestor: 6325-5309 o 6122-2854.\n\nTu cupo quedó reservado. Si el pago no se confirma en 10 minutos, el cupo será liberado y pasa al siguiente de la lista de espera.`
+          : `Tienes 4 horas para contactar al gestor y completar el pago de $${precioConFee(event, user?.id, esSocio).toFixed(2)}.\n\n📞 Contactá al gestor: 6325-5309 o 6122-2854.\n\nTu cupo quedó reservado. Si el pago no se confirma en 4 horas, el cupo será liberado.`,
         [{ text: 'OK', onPress: fetchEvent }],
       );
     } catch (e) {
@@ -791,8 +845,9 @@ export default function EventDetailScreen({ route, navigation }) {
           ? ' No se pudieron cancelar tus invitados automáticamente; el sistema los ocultará del evento y el gestor podrá limpiarlos.'
         : '';
 
-      // Avisar al promovido de la lista de espera (si lo hubo) — fire-and-forget.
-      notifyPromotedFromWaitlist(event).catch(() => {});
+      // El aviso al promovido de la lista de espera ahora es SERVER-SIDE
+      // (promote_waitlist → edge waitlist-notify), así llega venga de donde
+      // venga la cancelación y no dependa de esta sesión. Ya no se llama acá.
 
       if (result.refunded) {
         Alert.alert(
@@ -824,28 +879,6 @@ export default function EventDetailScreen({ route, navigation }) {
     } finally {
       setCancelling(false);
     }
-  };
-
-  // Aviso (push + email) al jugador recién promovido de la lista de espera.
-  // Tiene 4 horas para pagar antes de que el cupo pase al siguiente.
-  const notifyPromotedFromWaitlist = async (ev) => {
-    const { data: promoted } = await supabase
-      .from('event_registrations')
-      .select('user_id')
-      .eq('event_id', ev.id)
-      .eq('status', 'pending')
-      .eq('metodo_pago', 'waitlist_promoted')
-      .maybeSingle();
-    if (!promoted?.user_id) return;
-    await supabase.functions.invoke('send-notification', {
-      body: {
-        user_ids:    [promoted.user_id],
-        force_email: true,
-        title:       '🎉 ¡Se liberó tu cupo!',
-        body:        `Se liberó un cupo en "${ev.nombre}" y es tuyo. Entrá a Birrea2Play y completá el pago dentro de las próximas 4 horas para confirmar tu lugar — pasado ese tiempo, el cupo pasa al siguiente de la lista.`,
-        url:         'https://birrea2play.com',
-      },
-    });
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -995,7 +1028,7 @@ export default function EventDetailScreen({ route, navigation }) {
               ? <InfoRow icon="👥" label={`♂ ${capacityInfo.hombres.ocupados}/${capacityInfo.hombres.cupo}   ·   ♀ ${capacityInfo.mujeres.ocupados}/${capacityInfo.mujeres.cupo}`} />
               : <InfoRow icon="👥" label={`${capacityInfo.total.ocupados}/${event.cupos_total} jugadores`} />
           )}
-          <InfoRow icon="💵" label={(event.precio ?? 0) > 0 ? `$${(event.precio).toFixed(2)} por jugador` : freeLabel(event.deporte)} />
+          <InfoRow icon="💵" label={(event.precio ?? 0) > 0 ? `$${precioConFee(event, user?.id, esSocio).toFixed(2)} por jugador${esSocio ? ' · 🎖 −10% socio' : ''}` : freeLabel(event.deporte)} />
           {event.descripcion ? <Text style={styles.desc}>{event.descripcion}</Text> : null}
           {event.maps_url && (
             <TouchableOpacity
@@ -1148,7 +1181,7 @@ export default function EventDetailScreen({ route, navigation }) {
         {/* Si no hay usuario logueado: CTA Login con returnTo al evento */}
         {!user?.id && event.status === 'open' && (
           <View style={styles.paySection}>
-            <Text style={styles.payTitle}>INSCRIPCIÓN — {(event.precio ?? 0) > 0 ? `$${(event.precio ?? 0).toFixed(2)}` : freeLabel(event.deporte)}</Text>
+            <Text style={styles.payTitle}>INSCRIPCIÓN — {(event.precio ?? 0) > 0 ? `$${precioConFee(event, user?.id, esSocio).toFixed(2)}` : freeLabel(event.deporte)}</Text>
             <TouchableOpacity
               style={styles.btnPay}
               onPress={() => navigation.navigate('Login', { returnTo: 'EventDetail', returnParams: { eventId: event.id } })}
@@ -1163,7 +1196,7 @@ export default function EventDetailScreen({ route, navigation }) {
 
         {user?.id && canRegister && (
           <View style={styles.paySection}>
-            <Text style={styles.payTitle}>INSCRIPCIÓN — {(event.precio ?? 0) > 0 ? `$${(event.precio ?? 0).toFixed(2)}` : freeLabel(event.deporte)}</Text>
+            <Text style={styles.payTitle}>INSCRIPCIÓN — {(event.precio ?? 0) > 0 ? `$${precioConFee(event, user?.id, esSocio).toFixed(2)}` : freeLabel(event.deporte)}</Text>
             <TouchableOpacity
               style={styles.btnPay}
               onPress={handleInscribirmeCta}
@@ -1183,7 +1216,7 @@ export default function EventDetailScreen({ route, navigation }) {
               isPromoted ? (
                 <>
                   <Text style={[styles.registeredText, { color: COLORS.gold }]}>
-                    🎉 ¡Se liberó tu cupo! Pagá para confirmar tu lugar.
+                    🎉 ¡Se liberó tu cupo! Tenés 10 minutos para pagar y confirmar tu lugar (créditos o Yappy = al instante).
                   </Text>
                   <TouchableOpacity
                     style={styles.btnPay}
@@ -1207,6 +1240,71 @@ export default function EventDetailScreen({ route, navigation }) {
               <TouchableOpacity style={styles.btnGuest} onPress={() => setGuestModal(true)}>
                 <Text style={styles.btnGuestText}>👥 Llevar Invitado</Text>
               </TouchableOpacity>
+            )}
+            {myReg.status === 'confirmed' && esSocio && socioInvitadoDisponible && !invGratisOpen && (
+              <TouchableOpacity style={[styles.btnGuest, { borderColor: COLORS.gold }]} onPress={() => setInvGratisOpen(true)}>
+                <Text style={[styles.btnGuestText, { color: COLORS.gold }]}>🎁 Invitado GRATIS del mes (socio)</Text>
+              </TouchableOpacity>
+            )}
+            {myReg.status === 'confirmed' && invGratisOpen && (
+              <View style={{ marginTop: SPACING.sm, borderWidth: 1, borderColor: COLORS.gold, borderRadius: RADIUS.md, padding: SPACING.md, gap: 8 }}>
+                <Text style={{ fontFamily: FONTS.bodySemiBold, color: COLORS.gold, fontSize: 13 }}>🎁 Tu invitado gratis del mes (1 por ciclo de socio)</Text>
+                <TextInput
+                  style={{ borderWidth: 1, borderColor: COLORS.line, borderRadius: RADIUS.sm, color: COLORS.white, paddingHorizontal: 12, paddingVertical: 8, fontFamily: FONTS.body }}
+                  placeholder="Nombre del invitado" placeholderTextColor={COLORS.gray}
+                  value={invGratisNombre} onChangeText={setInvGratisNombre}
+                />
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  {['Masculino', 'Femenino'].map((g) => (
+                    <TouchableOpacity
+                      key={g} onPress={() => setInvGratisGenero(g)}
+                      style={{ flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: RADIUS.sm, borderWidth: 1, borderColor: invGratisGenero === g ? COLORS.gold : COLORS.line }}
+                    >
+                      <Text style={{ fontFamily: FONTS.bodySemiBold, color: invGratisGenero === g ? COLORS.gold : COLORS.gray2, fontSize: 13 }}>{g}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    style={[styles.btnGuest, { flex: 1, borderColor: COLORS.gold, marginTop: 0 }]}
+                    disabled={invGratisLoading}
+                    onPress={async () => {
+                      if (!invGratisNombre.trim() || !invGratisGenero) { Alert.alert('Falta info', 'Poné el nombre y el género del invitado.'); return; }
+                      setInvGratisLoading(true);
+                      try {
+                        const { data, error } = await supabase.rpc('usar_invitado_gratis_socio', {
+                          p_event_id: event.id, p_nombre: invGratisNombre.trim(), p_genero: invGratisGenero,
+                        });
+                        if (error) throw error;
+                        if (data?.ok === false) {
+                          const msgs = {
+                            no_socio: 'Tu carné de socio no está activo.',
+                            ya_usado_este_mes: 'Ya usaste tu invitado gratis este mes.',
+                            sin_cupo: 'No hay cupo disponible para tu invitado.',
+                            debes_estar_inscrito: 'Tenés que estar inscrito en el evento.',
+                            invitado_duplicado: 'Ya invitaste a alguien con ese nombre.',
+                            evento_no_disponible: 'El evento no está disponible.',
+                          };
+                          throw new Error(msgs[data.error] ?? data.error);
+                        }
+                        const nombreOk = invGratisNombre.trim();
+                        setInvGratisOpen(false); setSocioInvitadoDisponible(false); setInvGratisNombre(''); setInvGratisGenero(null);
+                        Alert.alert('🎁 ¡Listo!', `${nombreOk} quedó inscrito GRATIS con tu beneficio de socio.`);
+                        fetchEvent();
+                      } catch (e) {
+                        Alert.alert('No se pudo', e.message ?? 'Intentá de nuevo.');
+                      } finally {
+                        setInvGratisLoading(false);
+                      }
+                    }}
+                  >
+                    <Text style={[styles.btnGuestText, { color: COLORS.gold }]}>{invGratisLoading ? '...' : 'CONFIRMAR GRATIS'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={{ paddingHorizontal: 12, justifyContent: 'center' }} onPress={() => setInvGratisOpen(false)}>
+                    <Text style={{ color: COLORS.gray2, fontSize: 16 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             )}
             <TouchableOpacity style={styles.btnCancelReg} onPress={() => setCancelModal(true)}>
               <Text style={styles.btnCancelRegText}>Cancelar inscripción</Text>
@@ -1249,7 +1347,7 @@ export default function EventDetailScreen({ route, navigation }) {
         onPayYappy={payWithYappy}
         onPayEfectivo={payWithEfectivo}
         onPayMixto={payMixto}
-        amount={event.precio ?? 0}
+        amount={precioConFee(event, user?.id, esSocio)}
         walletBalance={walletBalance}
         loading={paying || yappyLoading}
         showEfectivo={!event.pago_solo_yappy || !!event.pago_efectivo_libre}
@@ -1275,7 +1373,7 @@ export default function EventDetailScreen({ route, navigation }) {
         onClose={() => setGuestModal(false)}
         eventId={event.id}
         eventNombre={event.nombre}
-        eventPrecio={event.precio ?? 0}
+        eventPrecio={precioConFee(event)}
         userId={user.id}
         walletBalance={walletBalance}
         onSuccess={fetchEvent}
@@ -1307,7 +1405,7 @@ export default function EventDetailScreen({ route, navigation }) {
                       : 'Ingresa tu número Yappy. '}
                     Recibirás una notificación para aprobar el cobro de{' '}
                     <Text style={{ color: COLORS.green, fontFamily: FONTS.bodyMedium }}>
-                      ${yappyStep === 'phone_mixto' ? mixtoYappy.toFixed(2) : (event?.precio ?? 0).toFixed(2)}
+                      ${yappyStep === 'phone_mixto' ? mixtoYappy.toFixed(2) : precioConFee(event, user?.id, esSocio).toFixed(2)}
                     </Text>
                     {yappyStep === 'phone_mixto' ? ' por Yappy.' : '.'}
                   </Text>
@@ -1349,7 +1447,7 @@ export default function EventDetailScreen({ route, navigation }) {
                     <ActivityIndicator color={COLORS.green} style={{ marginBottom: 12 }} />
                     <Text style={yappyStyles.openedTitle}>Esperando aprobación...</Text>
                     <Text style={yappyStyles.openedAmount}>
-                      ${yappyStep === 'polling_mixto' ? mixtoYappy.toFixed(2) : (event?.precio ?? 0).toFixed(2)}
+                      ${yappyStep === 'polling_mixto' ? mixtoYappy.toFixed(2) : precioConFee(event, user?.id, esSocio).toFixed(2)}
                     </Text>
                     <Text style={yappyStyles.openedSub}>
                       Abre tu app Yappy y acepta el cobro de Birrea2Play.{'\n'}

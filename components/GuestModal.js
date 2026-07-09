@@ -498,7 +498,7 @@ export default function GuestModal({
                 <View style={{ padding: SPACING.md, alignItems: 'center' }}>
                   <ActivityIndicator color={COLORS.gold} />
                 </View>
-              ) : efAllowed ? (
+              ) : !efBloq ? (
                 <TouchableOpacity
                   style={[styles.payBtn, styles.payBtnActive]}
                   onPress={payWithEfectivo}

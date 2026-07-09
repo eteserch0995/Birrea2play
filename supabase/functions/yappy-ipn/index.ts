@@ -67,7 +67,7 @@ function timingSafeHexEqual(left: string, right: string): boolean {
 }
 
 serve(async (req) => {
-  console.log('YAPPY_IPN_CODE_VERSION', { version: '2026-06-24-v7-confirmation-number' });
+  console.log('YAPPY_IPN_CODE_VERSION', { version: '2026-07-04-v8-saldo-cancha' });
 
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (req.method !== 'GET')    return err({ success: false, error: 'Method not allowed' }, 405);
@@ -270,6 +270,50 @@ serve(async (req) => {
         return err({ success: false, error: 'Abono cancha confirmation failed' }, 500);
       }
       console.log('YAPPY_IPN_ABONO_CANCHA_CONFIRMED', { orderId, reservaId: order.cancha_reserva_id });
+
+    } else if (orderTipo === 'saldo_cancha' && order.cancha_reserva_id) {
+      // Saldo restante de reserva de cancha (día de la reserva) — fee siempre $0.25
+      const { error: rpcErr } = await supabase.rpc('confirmar_saldo_cancha_yappy', {
+        p_reserva_id: order.cancha_reserva_id,
+        p_gestor_id:  order.user_id,
+        p_monto:      order.amount,
+        p_fee:        0.25,
+        p_order_id:   orderId,
+      });
+      if (rpcErr) {
+        console.error('YAPPY_IPN_SALDO_CANCHA_ERROR', { orderId, error: rpcErr.message });
+        return err({ success: false, error: 'Saldo cancha confirmation failed' }, 500);
+      }
+      console.log('YAPPY_IPN_SALDO_CANCHA_CONFIRMED', { orderId, reservaId: order.cancha_reserva_id });
+
+    } else if (orderTipo === 'mixto') {
+      // Pago MIXTO (parte Yappy de wallet+Yappy). El SERVIDOR completa la inscripción
+      // (debita los créditos + crea el registro 'mixto') apenas confirma el pago, para
+      // que NO dependa de que el cliente llame a inscribir_mixto. Antes, si el cliente
+      // perdía la carrera con este IPN (orden aún no 'executed') el usuario pagaba el
+      // Yappy y quedaba SIN inscripción. Idempotente: si el cliente ya la creó,
+      // completar_mixto_por_orden devuelve {already:true}. No acredita wallet.
+      // No se hace hard-fail (return 500) a propósito: si algo falla acá, el cliente
+      // sigue teniendo su inscribir_mixto como respaldo; evitamos tormentas de reintentos del IPN.
+      const { error: rpcErr } = await supabase.rpc('completar_mixto_por_orden', { p_order_id: orderId });
+      if (rpcErr) {
+        console.error('YAPPY_IPN_MIXTO_ERROR', { orderId, userId: order.user_id, error: rpcErr.message });
+      } else {
+        console.log('YAPPY_IPN_MIXTO_OK', { orderId, userId: order.user_id, amount: order.amount, event_id: order.event_id });
+      }
+
+    } else if (orderTipo === 'membresia_club') {
+      // Carné de Socio $5/mes — activa/renueva desde la fecha del pago (idempotente por orden)
+      const { error: rpcErr } = await supabase.rpc('activar_membresia_club', {
+        p_user_id:  order.user_id,
+        p_monto:    order.amount,
+        p_order_id: orderId,
+      });
+      if (rpcErr) {
+        console.error('YAPPY_IPN_MEMBRESIA_ERROR', { orderId, error: rpcErr.message });
+        return err({ success: false, error: 'Membership activation failed' }, 500);
+      }
+      console.log('YAPPY_IPN_MEMBRESIA_OK', { orderId, userId: order.user_id });
 
     } else if (orderTipo === 'wc_enrollment' && order.wc_enrollment_id) {
       // Inscripción al Mundial 2026 (Survivor o Polla)
