@@ -36,6 +36,9 @@ const FASE_LABEL = {
 const dispHome = (m) => m.home ?? (m.equipo_local ? { nombre: m.equipo_local } : null);
 const dispAway = (m) => m.away ?? (m.equipo_visitante ? { nombre: m.equipo_visitante } : null);
 
+// ms de un timestamp ISO (0 si falta/inválido) — desempate del auto-follow a la TV.
+const tMs = (iso) => { const t = Date.parse(iso ?? ''); return Number.isNaN(t) ? 0 : t; };
+
 // ── Punto rojo pulsante "EN VIVO" ─────────────────────────────────────────────
 function LiveDot({ size = 10 }) {
   const anim = useRef(new Animated.Value(1)).current;
@@ -66,6 +69,7 @@ export default function LiveBoardScreen({ route, navigation }) {
   const [matches, setMatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [manualIdx, setManualIdx] = useState(null); // null = partido "en juego" automático
+  const [lastActiveId, setLastActiveId] = useState(null); // partido que se está marcando (auto-follow a la TV)
   const [proj, setProj]       = useState(false);    // modo proyección (fullscreen/rotado)
   const [gol, setGol]         = useState(null);     // { nombre, color } al detectar gol
 
@@ -134,6 +138,9 @@ export default function LiveBoardScreen({ route, navigation }) {
         if (!p) continue;
         const h = m.goles_home ?? 0;
         const a = m.goles_away ?? 0;
+        // Auto-follow (opción 1): cualquier cambio de marcador (sube o baja) marca
+        // ese partido como el "en vivo" para destacarlo en la TV, si no terminó.
+        if ((h !== p.h || a !== p.a) && m.status !== 'finished') setLastActiveId(m.id);
         const scorer = h > p.h ? dispHome(m) : a > p.a ? dispAway(m) : null;
         if (scorer) {
           setGol({ nombre: scorer.nombre ?? '', color: scorer.color ?? COLORS.gold });
@@ -153,9 +160,26 @@ export default function LiveBoardScreen({ route, navigation }) {
   // ── Partido destacado ───────────────────────────────────────────────────────
   const playable = matches.filter((m) => dispHome(m) && dispAway(m));
   const autoIdx = (() => {
+    // Opción 1 — el destacado sigue al partido que se está marcando:
+    // 1) el último con cambio de marcador en esta sesión, si sigue sin terminar.
+    if (lastActiveId != null) {
+      const j = playable.findIndex((m) => m.id === lastActiveId && m.status !== 'finished');
+      if (j >= 0) return j;
+    }
+    // 2) al abrir a mitad de juego: un no-terminado que YA tiene marcador
+    //    (el más reciente por updated_at como desempate).
+    const scored = playable
+      .map((m, i) => ({ m, i }))
+      .filter(({ m }) => m.status !== 'finished' && ((m.goles_home ?? 0) > 0 || (m.goles_away ?? 0) > 0));
+    if (scored.length) {
+      scored.sort((a, b) => tMs(b.m.updated_at) - tMs(a.m.updated_at));
+      return scored[0].i;
+    }
+    // 3) el primer no terminado.
     const i = playable.findIndex((m) => m.status !== 'finished');
     if (i >= 0) return i;
-    return playable.length ? playable.length - 1 : -1; // todo terminado → último
+    // 4) todo terminado → el último.
+    return playable.length ? playable.length - 1 : -1;
   })();
   const idx = manualIdx == null
     ? autoIdx
