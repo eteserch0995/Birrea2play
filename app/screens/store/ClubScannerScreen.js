@@ -173,6 +173,10 @@ function CameraScanner({ onValidate, loading }) {
   const [active, setActive] = useState(false);
   const [permState, setPermState] = useState('unknown'); // 'unknown'|'prompt'|'granted'|'denied'
   const [cameraError, setCameraError] = useState(null);
+  const [zoom, setZoom] = useState(1);
+  const [focus, setFocus] = useState(0); // -1 a 1
+  const [supportsFocusDistance, setSupportsFocusDistance] = useState(false);
+  const touchStartRef = useRef(null);
 
   // Check camera permission state on mount and subscribe to changes
   useEffect(() => {
@@ -206,6 +210,63 @@ function CameraScanner({ onValidate, loading }) {
     }
     setActive(false);
   }, []);
+
+  // Pinch zoom handler
+  const handleTouchStart = useCallback((e) => {
+    if (e.touches.length === 2) {
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      const distance = Math.hypot(
+        touch2.clientX - touch1.clientX,
+        touch2.clientY - touch1.clientY
+      );
+      touchStartRef.current = { distance, zoom };
+    }
+  }, [zoom]);
+
+  const handleTouchMove = useCallback((e) => {
+    if (!touchStartRef.current || e.touches.length !== 2) return;
+
+    const touch1 = e.touches[0];
+    const touch2 = e.touches[1];
+    const currentDistance = Math.hypot(
+      touch2.clientX - touch1.clientX,
+      touch2.clientY - touch1.clientY
+    );
+
+    const ratio = currentDistance / touchStartRef.current.distance;
+    const newZoom = Math.max(1, Math.min(5, touchStartRef.current.zoom * ratio));
+    setZoom(newZoom);
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    touchStartRef.current = null;
+  }, []);
+
+  // Apply zoom and focus to video
+  const applyVideoTransforms = useCallback(() => {
+    if (!videoRef.current) return;
+
+    let transform = `scale(${zoom})`;
+    videoRef.current.style.transform = transform;
+
+    // Si el navegador soporta focusDistance, aplicar vía constraints
+    if (supportsFocusDistance && streamRef.current && focus !== 0) {
+      const videoTrack = streamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        const constraints = {
+          focusMode: focus < 0 ? 'continuous' : 'manual',
+          focusDistance: Math.max(0, focus + 1) * 20, // 0-20
+        };
+        videoTrack.applyConstraints({ advanced: [constraints] }).catch(() => {});
+      }
+    }
+  }, [zoom, focus, supportsFocusDistance]);
+
+  // Apply video transforms when zoom or focus changes
+  useEffect(() => {
+    applyVideoTransforms();
+  }, [zoom, focus, applyVideoTransforms]);
 
   useEffect(() => {
     return () => {
@@ -242,9 +303,28 @@ function CameraScanner({ onValidate, loading }) {
             video.style.width = '100%';
             video.style.borderRadius = '8px';
             video.style.display = 'block';
+            video.style.transformOrigin = 'center';
+            video.style.transition = 'transform 0.1s ease-out';
+            video.addEventListener('touchstart', handleTouchStart, false);
+            video.addEventListener('touchmove', handleTouchMove, false);
+            video.addEventListener('touchend', handleTouchEnd, false);
             videoRef.current = video;
             containerRef.current.appendChild(video);
           }
+
+          // Check for focusDistance support
+          const checkFocusSupport = async () => {
+            try {
+              const videoTrack = stream.getVideoTracks()[0];
+              if (videoTrack) {
+                const capabilities = videoTrack.getCapabilities?.();
+                if (capabilities && capabilities.focusDistance) {
+                  setSupportsFocusDistance(true);
+                }
+              }
+            } catch {}
+          };
+          checkFocusSupport();
 
           video.srcObject = stream;
           video.play().catch(() => {});
@@ -338,32 +418,74 @@ function CameraScanner({ onValidate, loading }) {
       )}
 
       {active && (
-        <View
-          ref={containerRef}
-          style={styles.videoContainer}
-          collapsable={false}
-        />
+        <>
+          <View
+            ref={containerRef}
+            style={styles.videoContainer}
+            collapsable={false}
+          />
+
+          {/* Zoom display */}
+          <View style={styles.controlsRow}>
+            <View style={styles.zoomDisplay}>
+              <Text style={styles.zoomLabel}>Zoom</Text>
+              <Text style={styles.zoomValue}>{zoom.toFixed(1)}x</Text>
+            </View>
+
+            {/* Focus control */}
+            <View style={styles.focusControl}>
+              <Text style={styles.focusLabel}>Enfoque</Text>
+              <View style={styles.focusButtonsRow}>
+                <WCButton
+                  label=”−”
+                  variant=”secondary”
+                  size=”sm”
+                  onPress={() => setFocus(Math.max(-1, focus - 0.2))}
+                  style={styles.focusBtn}
+                />
+                <View style={styles.focusSlider}>
+                  <View
+                    style={[
+                      styles.focusSliderFill,
+                      { width: `${((focus + 1) / 2) * 100}%` },
+                    ]}
+                  />
+                </View>
+                <WCButton
+                  label=”+”
+                  variant=”secondary”
+                  size=”sm”
+                  onPress={() => setFocus(Math.min(1, focus + 0.2))}
+                  style={styles.focusBtn}
+                />
+              </View>
+              <Text style={styles.focusTip}>
+                {supportsFocusDistance ? 'Enfoque automático' : 'Ajuste simulado'}
+              </Text>
+            </View>
+          </View>
+        </>
       )}
 
       {!active ? (
         <>
           <Text style={styles.permissionHint}>
-            Tocá el botón y luego elegí “Permitir” en el aviso de Chrome.
+            Tocá el botón y luego elegí “Permitir” en el aviso de Chrome. Podés hacer pinch zoom con dos dedos y ajustar el enfoque.
           </Text>
           <WCButton
-            label="Permitir cámara"
-            variant="gold"
-            size="lg"
+            label=”Permitir cámara”
+            variant=”gold”
+            size=”lg”
             onPress={startCamera}
             disabled={loading}
-            leadingIcon="📷"
+            leadingIcon=”📷”
           />
         </>
       ) : (
         <WCButton
-          label="Detener"
-          variant="ghost"
-          size="md"
+          label=”Detener”
+          variant=”ghost”
+          size=”md”
           onPress={stopCamera}
           style={styles.stopBtn}
         />
@@ -876,5 +998,68 @@ const styles = StyleSheet.create({
   },
   resetBtn: {
     marginTop: SPACING.xs,
+  },
+
+  // Zoom and focus controls
+  controlsRow: {
+    gap: SPACING.md,
+    marginTop: SPACING.sm,
+  },
+  zoomDisplay: {
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.line,
+  },
+  zoomLabel: {
+    fontFamily: FONTS.body,
+    color: COLORS.gray,
+    fontSize: 12,
+    marginBottom: 2,
+  },
+  zoomValue: {
+    fontFamily: FONTS.heading,
+    color: COLORS.gold,
+    fontSize: 20,
+    letterSpacing: 0.5,
+  },
+  focusControl: {
+    gap: SPACING.xs,
+  },
+  focusLabel: {
+    fontFamily: FONTS.bodyBold,
+    color: COLORS.white,
+    fontSize: 13,
+  },
+  focusButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+  },
+  focusBtn: {
+    minWidth: 40,
+    paddingHorizontal: SPACING.xs,
+  },
+  focusSlider: {
+    flex: 1,
+    height: 8,
+    backgroundColor: COLORS.card,
+    borderRadius: RADIUS.full,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.line,
+  },
+  focusSliderFill: {
+    height: '100%',
+    backgroundColor: COLORS.gold,
+    borderRadius: RADIUS.full,
+  },
+  focusTip: {
+    fontFamily: FONTS.body,
+    color: COLORS.gray,
+    fontSize: 11,
+    textAlign: 'center',
   },
 });
